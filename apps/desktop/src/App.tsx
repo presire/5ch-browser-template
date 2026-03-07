@@ -93,6 +93,7 @@ export default function App() {
   const [selectedResponse, setSelectedResponse] = useState<number>(1);
   const [threadReadMap, setThreadReadMap] = useState<Record<number, boolean>>({ 1: false, 2: true });
   const [threadMenu, setThreadMenu] = useState<{ x: number; y: number; threadId: number } | null>(null);
+  const [responseMenu, setResponseMenu] = useState<{ x: number; y: number; responseId: number } | null>(null);
 
   const fetchMenu = async () => {
     setStatus("loading...");
@@ -314,19 +315,27 @@ export default function App() {
   const composeMailValue = composeSage ? "sage" : composeMail;
   const boardItems = ["Favorite", "News", "Software", "Network", "NGT (test)"];
   const threadItems = [
-    { id: 1, title: "Probe thread", res: 999 },
-    { id: 2, title: "Auth test", res: 120 },
+    { id: 1, title: "Probe thread", res: 999, got: 24, speed: 2.5, lastLoad: "14:42", lastPost: "14:44" },
+    { id: 2, title: "Auth test", res: 120, got: 8, speed: 0.8, lastLoad: "13:08", lastPost: "13:09" },
   ];
   const responseItems = [
-    { id: 1, name: "名無しさん", time: "2026/03/07 10:00", text: "post flow trace ready" },
-    { id: 2, name: "名無しさん", time: "2026/03/07 10:02", text: "be/uplift/donguri login checked" },
-    { id: 3, name: "名無しさん", time: "2026/03/07 10:04", text: "next: subject/dat fetch integration" },
+    { id: 1, name: "Anonymous", time: "2026/03/07 10:00", text: "post flow trace ready" },
+    { id: 2, name: "Anonymous", time: "2026/03/07 10:02", text: "be/uplift/donguri login checked" },
+    { id: 3, name: "Anonymous", time: "2026/03/07 10:04", text: "next: subject/dat fetch integration" },
   ];
   const activeResponse = responseItems.find((r) => r.id === selectedResponse) ?? responseItems[0];
 
   const onThreadContextMenu = (e: ReactMouseEvent, threadId: number) => {
     e.preventDefault();
     setThreadMenu({ x: e.clientX, y: e.clientY, threadId });
+    setResponseMenu(null);
+  };
+
+  const onResponseContextMenu = (e: ReactMouseEvent, responseId: number) => {
+    e.preventDefault();
+    setSelectedResponse(responseId);
+    setResponseMenu({ x: e.clientX, y: e.clientY, responseId });
+    setThreadMenu(null);
   };
 
   const markThreadRead = (threadId: number, value: boolean) => {
@@ -334,8 +343,20 @@ export default function App() {
     setThreadMenu(null);
   };
 
+  const runResponseAction = (label: string) => {
+    if (!responseMenu) return;
+    setStatus(`response action: ${label} (#${responseMenu.responseId})`);
+    setResponseMenu(null);
+  };
+
   return (
-    <div className="shell" onClick={() => setThreadMenu(null)}>
+    <div
+      className="shell"
+      onClick={() => {
+        setThreadMenu(null);
+        setResponseMenu(null);
+      }}
+    >
       <header className="menu-bar">File Edit View Board Thread Tools Help</header>
       <div className="tool-bar">
         <button onClick={fetchMenu}>Refresh Menu</button>
@@ -369,6 +390,10 @@ export default function App() {
                 <th>No</th>
                 <th>Title</th>
                 <th>Res</th>
+                <th>Got</th>
+                <th>Speed</th>
+                <th>Last Load</th>
+                <th>Last Post</th>
               </tr>
             </thead>
             <tbody>
@@ -384,10 +409,14 @@ export default function App() {
                 >
                   <td>{t.id}</td>
                   <td>
-                    {threadReadMap[t.id] ? "" : "● "}
+                    {threadReadMap[t.id] ? "" : "* "}
                     {t.title}
                   </td>
                   <td>{t.res}</td>
+                  <td>{t.got}</td>
+                  <td>{t.speed.toFixed(1)}</td>
+                  <td>{t.lastLoad}</td>
+                  <td>{t.lastPost}</td>
                 </tr>
               ))}
             </tbody>
@@ -410,6 +439,7 @@ export default function App() {
                     key={r.id}
                     className={selectedResponse === r.id ? "selected-row" : ""}
                     onClick={() => setSelectedResponse(r.id)}
+                    onContextMenu={(e) => onResponseContextMenu(e, r.id)}
                   >
                     <td>{r.id}</td>
                     <td>{r.name}</td>
@@ -473,7 +503,7 @@ export default function App() {
         </section>
       </main>
       <footer className="status-bar">
-        BE:{beState} | UPLIFT:{upliftState} | DONGURI:EXPERIMENTAL | {updateState}
+        TS:-1 | US:-1 | API:ON | Ronin:ON | BE:{beState} | UPLIFT:{upliftState} | DONGURI:EXPERIMENTAL | {updateState}
       </footer>
       {composeOpen && (
         <section className="compose-window" role="dialog" aria-label="Write">
@@ -529,6 +559,16 @@ export default function App() {
         <div className="thread-menu" style={{ left: threadMenu.x, top: threadMenu.y }} onClick={(e) => e.stopPropagation()}>
           <button onClick={() => markThreadRead(threadMenu.threadId, true)}>Mark as Read</button>
           <button onClick={() => markThreadRead(threadMenu.threadId, false)}>Mark as Unread</button>
+        </div>
+      )}
+      {responseMenu && (
+        <div className="thread-menu response-menu" style={{ left: responseMenu.x, top: responseMenu.y }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => runResponseAction("quote this response")}>Quote This Response</button>
+          <button onClick={() => runResponseAction("quote with name")}>Quote with Name</button>
+          <button onClick={() => runResponseAction("copy response url")}>Copy Response URL</button>
+          <button onClick={() => runResponseAction("add to ng id")}>Add to NG ID</button>
+          <button onClick={() => runResponseAction("copy id to clipboard")}>Copy ID</button>
+          <button onClick={() => runResponseAction("settings for response")}>Response Settings</button>
         </div>
       )}
     </div>

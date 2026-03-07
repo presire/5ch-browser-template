@@ -155,9 +155,10 @@ body {
 .threads th,
 .threads td {
   border: 1px solid #beb29d;
-  font-size: 12px;
-  padding: 4px;
+  font-size: 11px;
+  padding: 3px 4px;
   text-align: left;
+  white-space: nowrap;
 }
 
 .selected-row td {
@@ -242,7 +243,7 @@ pre {
   border-top: 1px solid var(--line);
   background: #ddd4c5;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--sub);
 }
 
@@ -301,6 +302,14 @@ pre {
   gap: 2px;
   padding: 4px;
   min-width: 160px;
+}
+
+.response-menu {
+  min-width: 220px;
+}
+
+.response-menu button {
+  text-align: left;
 }
 
 @media (max-width: 980px) {
