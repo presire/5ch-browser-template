@@ -1,18 +1,13 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-type MenuInfo = {
-  topLevelKeys: number;
-  normalizedSample: string;
-};
-
+type MenuInfo = { topLevelKeys: number; normalizedSample: string };
 type AuthEnvStatus = {
   beEmailSet: boolean;
   bePasswordSet: boolean;
   upliftEmailSet: boolean;
   upliftPasswordSet: boolean;
 };
-
 type LoginOutcome = {
   provider: "Be" | "Uplift" | "Donguri";
   success: boolean;
@@ -21,12 +16,7 @@ type LoginOutcome = {
   cookieNames: string[];
   note: string;
 };
-
-type PostCookieReport = {
-  targetUrl: string;
-  cookieNames: string[];
-};
-
+type PostCookieReport = { targetUrl: string; cookieNames: string[] };
 type PostFormTokens = {
   threadUrl: string;
   postUrl: string;
@@ -36,7 +26,6 @@ type PostFormTokens = {
   oekakiThread1: string | null;
   hasMessageTextarea: boolean;
 };
-
 type PostConfirmResult = {
   postUrl: string;
   status: number;
@@ -45,13 +34,7 @@ type PostConfirmResult = {
   containsError: boolean;
   bodyPreview: string;
 };
-
-type PostFinalizePreview = {
-  actionUrl: string;
-  fieldNames: string[];
-  fieldCount: number;
-};
-
+type PostFinalizePreview = { actionUrl: string; fieldNames: string[]; fieldCount: number };
 type PostSubmitResult = {
   actionUrl: string;
   status: number;
@@ -59,7 +42,6 @@ type PostSubmitResult = {
   containsError: boolean;
   bodyPreview: string;
 };
-
 type UpdateCheckResult = {
   metadataUrl: string;
   currentVersion: string;
@@ -69,12 +51,7 @@ type UpdateCheckResult = {
   downloadPageUrl: string | null;
   currentPlatformKey: string;
   currentPlatformAsset:
-    | {
-        key: string;
-        sha256: string;
-        size: number;
-        filename: string;
-      }
+    | { key: string; sha256: string; size: number; filename: string }
     | null;
 };
 
@@ -160,9 +137,7 @@ export default function App() {
     try {
       const r = await invoke<PostConfirmResult>("probe_post_confirm_empty", { threadUrl });
       setPostConfirmProbe(
-        `status=${r.status} type=${r.contentType ?? "-"} confirm=${r.containsConfirm} error=${
-          r.containsError
-        } preview=${r.bodyPreview}`
+        `status=${r.status} type=${r.contentType ?? "-"} confirm=${r.containsConfirm} error=${r.containsError} preview=${r.bodyPreview}`
       );
     } catch (error) {
       setPostConfirmProbe(`error: ${String(error)}`);
@@ -204,9 +179,7 @@ export default function App() {
       });
       setUpdateResult(r);
       setUpdateProbe(
-        `current=${r.currentVersion} latest=${r.latestVersion} hasUpdate=${r.hasUpdate} releasedAt=${
-          r.releasedAt ?? "-"
-        } platform=${r.currentPlatformKey} asset=${r.currentPlatformAsset?.filename ?? "(none)"}`
+        `current=${r.currentVersion} latest=${r.latestVersion} hasUpdate=${r.hasUpdate} platform=${r.currentPlatformKey} asset=${r.currentPlatformAsset?.filename ?? "(none)"}`
       );
     } catch (error) {
       setUpdateProbe(`error: ${String(error)}`);
@@ -214,53 +187,100 @@ export default function App() {
   };
 
   const openDownloadPage = async () => {
-    if (!updateResult?.downloadPageUrl) {
-      return;
-    }
+    if (!updateResult?.downloadPageUrl) return;
     await invoke("open_external_url", { url: updateResult.downloadPageUrl });
   };
 
   return (
-    <main className="app-root">
-      <h1>5ch Browser (Phase 1 auth/fetch/update)</h1>
-      <p>Auth probes, post token extraction, and update check are wired.</p>
-      <button onClick={fetchMenu}>Fetch bbsmenu.json</button>
-      <pre>{status}</pre>
-      <button onClick={checkAuthEnv}>Check auth env</button>
-      <pre>{authStatus}</pre>
-      <button onClick={probeAuth}>Probe BE/UPLIFT/Donguri logins</button>
-      <pre>{loginProbe}</pre>
-      <button onClick={probePostCookieScope}>Probe cookie scope to bbs.cgi</button>
-      <pre>{postCookieProbe}</pre>
-      <label>
-        Thread URL
-        <input style={{ width: "100%" }} value={threadUrl} onChange={(e) => setThreadUrl(e.target.value)} />
-      </label>
-      <button onClick={probeThreadPostForm}>Probe dynamic bbs/key/time</button>
-      <pre>{postFormProbe}</pre>
-      <button onClick={probePostConfirmEmpty}>Probe confirm with empty message</button>
-      <pre>{postConfirmProbe}</pre>
-      <button onClick={probePostFinalizePreview}>Probe finalize form from confirm</button>
-      <pre>{postFinalizePreviewProbe}</pre>
-      <label style={{ display: "block" }}>
-        <input type="checkbox" checked={allowRealSubmit} onChange={(e) => setAllowRealSubmit(e.target.checked)} />{" "}
-        allow real final submit (danger)
-      </label>
-      <button onClick={probePostFinalizeSubmitEmpty}>Probe final submit (empty)</button>
-      <pre>{postFinalizeSubmitProbe}</pre>
-      <label>
-        latest.json URL
-        <input style={{ width: "100%" }} value={metadataUrl} onChange={(e) => setMetadataUrl(e.target.value)} />
-      </label>
-      <label>
-        Current Version
-        <input style={{ width: "100%" }} value={currentVersion} onChange={(e) => setCurrentVersion(e.target.value)} />
-      </label>
-      <button onClick={checkForUpdates}>Check for updates</button>
-      <pre>{updateProbe}</pre>
-      <button onClick={openDownloadPage} disabled={!updateResult?.hasUpdate || !updateResult.downloadPageUrl}>
-        Open download page
-      </button>
-    </main>
+    <div className="shell">
+      <header className="menu-bar">File Edit View Board Thread Tools Help</header>
+      <div className="tool-bar">
+        <button onClick={fetchMenu}>Refresh Menu</button>
+        <button onClick={checkAuthEnv}>Auth Status</button>
+        <button onClick={probeAuth}>Auth Probe</button>
+      </div>
+      <main className="layout">
+        <section className="pane boards">
+          <h2>Boards</h2>
+          <ul>
+            <li>Favorite</li>
+            <li>News</li>
+            <li>Software</li>
+            <li>Network</li>
+            <li>NGT (test)</li>
+          </ul>
+        </section>
+        <section className="pane threads">
+          <h2>Threads</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>No</th>
+                <th>Title</th>
+                <th>Res</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Probe thread</td>
+                <td>999</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Auth test</td>
+                <td>120</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+        <section className="pane responses">
+          <h2>Responses / Developer Tools</h2>
+          <div className="dev-grid">
+            <label>
+              Thread URL
+              <input value={threadUrl} onChange={(e) => setThreadUrl(e.target.value)} />
+            </label>
+            <label>
+              latest.json URL
+              <input value={metadataUrl} onChange={(e) => setMetadataUrl(e.target.value)} />
+            </label>
+            <label>
+              Current Version
+              <input value={currentVersion} onChange={(e) => setCurrentVersion(e.target.value)} />
+            </label>
+          </div>
+          <div className="dev-actions">
+            <button onClick={probePostCookieScope}>Cookie Scope</button>
+            <button onClick={probeThreadPostForm}>Post Tokens</button>
+            <button onClick={probePostConfirmEmpty}>Confirm</button>
+            <button onClick={probePostFinalizePreview}>Finalize Form</button>
+            <button onClick={probePostFinalizeSubmitEmpty}>Finalize Submit</button>
+            <button onClick={checkForUpdates}>Check Update</button>
+            <button onClick={openDownloadPage} disabled={!updateResult?.hasUpdate || !updateResult.downloadPageUrl}>
+              Open Download Page
+            </button>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={allowRealSubmit}
+                onChange={(e) => setAllowRealSubmit(e.target.checked)}
+              />
+              allow real final submit
+            </label>
+          </div>
+          <pre>{status}</pre>
+          <pre>{authStatus}</pre>
+          <pre>{loginProbe}</pre>
+          <pre>{postCookieProbe}</pre>
+          <pre>{postFormProbe}</pre>
+          <pre>{postConfirmProbe}</pre>
+          <pre>{postFinalizePreviewProbe}</pre>
+          <pre>{postFinalizeSubmitProbe}</pre>
+          <pre>{updateProbe}</pre>
+        </section>
+      </main>
+      <footer className="status-bar">BE/UPLIFT/DONGURI | API: standby</footer>
+    </div>
   );
 }

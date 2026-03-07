@@ -10,12 +10,13 @@
 - [x] 更新チェック実装（`latest.json`）
 - [x] 配布運用ドキュメント最終化
 - [x] `latest.json` ハッシュ生成スクリプト追加
+- [x] `latest.json` 構造バリデーション導入
 
 ## 直近タスク（優先順）
-1. `release`: `latest.json` をPages公開フローへ組み込み
-2. `core-fetch`: 実投稿フロー（confirm -> submit）本実装の実環境検証
-3. `apps/desktop`: Live5ch `geronimo` 互換UIの本実装
-4. `landing`: 文言/導線の本番向け調整
+1. `core-fetch`: 実投稿フロー（confirm -> submit）本実装の実環境検証
+2. `apps/desktop`: Live5ch `geronimo` 互換UIの詳細調整（操作/行表示）
+3. `landing`: 文言/導線の本番向け調整
+4. `release`: タグ作成〜latest.json更新の半自動化
 
 ## 決定事項
 - `5ch.net` は入力時点で `5ch.io` に正規化

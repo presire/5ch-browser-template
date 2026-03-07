@@ -56,6 +56,19 @@ After deploy, verify:
 - `https://<your-pages-domain>/latest.json` returns `200`.
 - JSON fields match the release.
 
+Local validation before deploy:
+
+```powershell
+cd apps/landing
+npm run check:latest
+```
+
+Strict validation for release metadata (no placeholders):
+
+```powershell
+python scripts/validate_latest_json.py --file apps/landing/public/latest.json --strict
+```
+
 ## 6. `latest.json` Format
 Example:
 
