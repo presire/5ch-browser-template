@@ -15,6 +15,8 @@
 - [x] 書き込みフロートを confirm/finalize 実行APIに接続
 - [x] `apps/landing` に latest metadata 表示を実装
 - [x] GitHub Actions CI（desktop/landing build）追加
+- [x] 投稿フロートに post flow trace（token/confirm/finalize/submit）追加
+- [x] 3ペインUIに選択状態とスレ右クリックメニュー枠を追加
 
 ## 直近タスク（優先順）
 1. `core-fetch`: 実投稿フロー（confirm -> submit）本実装の実環境検証

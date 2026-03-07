@@ -61,6 +61,18 @@ struct UpdateCheckResult {
     current_platform_asset: Option<UpdatePlatformAsset>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PostFlowTrace {
+    thread_url: String,
+    allow_real_submit: bool,
+    token_summary: Option<String>,
+    confirm_summary: Option<String>,
+    finalize_summary: Option<String>,
+    submit_summary: Option<String>,
+    blocked: bool,
+}
+
 #[tauri::command]
 async fn fetch_bbsmenu_summary() -> Result<MenuSummary, String> {
     core_store::init_portable_layout().map_err(|e| e.to_string())?;
@@ -286,6 +298,80 @@ async fn probe_post_finalize_submit_from_input(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn probe_post_flow_trace(
+    thread_url: String,
+    from: Option<String>,
+    mail: Option<String>,
+    message: Option<String>,
+    allow_real_submit: bool,
+) -> Result<PostFlowTrace, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("5ch-browser-template/0.1")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let tokens = fetch_post_form_tokens(&client, &thread_url)
+        .await
+        .map_err(|e| e.to_string())?;
+    let token_summary = Some(format!(
+        "post_url={} bbs={} key={} time={}",
+        tokens.post_url, tokens.bbs, tokens.key, tokens.time
+    ));
+
+    let (confirm, confirm_html) = submit_post_confirm_with_html(
+        &client,
+        &tokens,
+        from.as_deref().unwrap_or(""),
+        mail.as_deref().unwrap_or(""),
+        message.as_deref().unwrap_or(""),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let confirm_summary = Some(format!(
+        "status={} confirm={} error={}",
+        confirm.status, confirm.contains_confirm, confirm.contains_error
+    ));
+
+    let finalize = parse_confirm_submit_form(&confirm_html, &tokens.post_url).map_err(|e| e.to_string())?;
+    let finalize_summary = Some(format!(
+        "action={} fields={}",
+        finalize.action_url, finalize.field_count
+    ));
+
+    if !allow_real_submit {
+        return Ok(PostFlowTrace {
+            thread_url,
+            allow_real_submit,
+            token_summary,
+            confirm_summary,
+            finalize_summary,
+            submit_summary: None,
+            blocked: true,
+        });
+    }
+
+    let submitted = submit_post_finalize_from_confirm(&client, &confirm_html, &tokens.post_url)
+        .await
+        .map_err(|e| e.to_string())?;
+    let submit_summary = Some(format!(
+        "status={} error={} type={}",
+        submitted.status,
+        submitted.contains_error,
+        submitted.content_type.unwrap_or_else(|| "-".to_string())
+    ));
+
+    Ok(PostFlowTrace {
+        thread_url,
+        allow_real_submit,
+        token_summary,
+        confirm_summary,
+        finalize_summary,
+        submit_summary,
+        blocked: false,
+    })
+}
+
 fn parse_version_numbers(version: &str) -> Vec<u64> {
     let head = version.split('-').next().unwrap_or(version);
     head.split('.')
@@ -428,6 +514,7 @@ pub fn run() {
             probe_post_finalize_preview_from_input,
             probe_post_finalize_submit_empty,
             probe_post_finalize_submit_from_input,
+            probe_post_flow_trace,
             check_for_updates,
             open_external_url
         ])

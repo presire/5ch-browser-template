@@ -1,4 +1,4 @@
-import { useState, type KeyboardEventHandler } from "react";
+import { useState, type KeyboardEventHandler, type MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -54,6 +54,15 @@ type UpdateCheckResult = {
     | { key: string; sha256: string; size: number; filename: string }
     | null;
 };
+type PostFlowTrace = {
+  threadUrl: string;
+  allowRealSubmit: boolean;
+  tokenSummary: string | null;
+  confirmSummary: string | null;
+  finalizeSummary: string | null;
+  submitSummary: string | null;
+  blocked: boolean;
+};
 
 export default function App() {
   const [status, setStatus] = useState("not fetched");
@@ -77,6 +86,11 @@ export default function App() {
   const [composeBody, setComposeBody] = useState("");
   const [composePreview, setComposePreview] = useState(false);
   const [composeEnterSubmit, setComposeEnterSubmit] = useState(false);
+  const [postFlowTraceProbe, setPostFlowTraceProbe] = useState("not run");
+  const [selectedBoard, setSelectedBoard] = useState("Favorite");
+  const [selectedThread, setSelectedThread] = useState<number | null>(1);
+  const [threadReadMap, setThreadReadMap] = useState<Record<number, boolean>>({ 1: false, 2: true });
+  const [threadMenu, setThreadMenu] = useState<{ x: number; y: number; threadId: number } | null>(null);
 
   const fetchMenu = async () => {
     setStatus("loading...");
@@ -226,6 +240,30 @@ export default function App() {
     }
   };
 
+  const probePostFlowTraceFromCompose = async () => {
+    setPostFlowTraceProbe("running...");
+    try {
+      const r = await invoke<PostFlowTrace>("probe_post_flow_trace", {
+        threadUrl,
+        from: composeName || null,
+        mail: composeMailValue || null,
+        message: composeBody || null,
+        allowRealSubmit,
+      });
+      setPostFlowTraceProbe(
+        [
+          `blocked=${r.blocked} allowRealSubmit=${r.allowRealSubmit}`,
+          `token=${r.tokenSummary ?? "-"}`,
+          `confirm=${r.confirmSummary ?? "-"}`,
+          `finalize=${r.finalizeSummary ?? "-"}`,
+          `submit=${r.submitSummary ?? "-"}`,
+        ].join("\n")
+      );
+    } catch (error) {
+      setPostFlowTraceProbe(`error: ${String(error)}`);
+    }
+  };
+
   const checkForUpdates = async () => {
     setUpdateProbe("running...");
     setUpdateResult(null);
@@ -265,9 +303,24 @@ export default function App() {
   };
 
   const composeMailValue = composeSage ? "sage" : composeMail;
+  const boardItems = ["Favorite", "News", "Software", "Network", "NGT (test)"];
+  const threadItems = [
+    { id: 1, title: "Probe thread", res: 999 },
+    { id: 2, title: "Auth test", res: 120 },
+  ];
+
+  const onThreadContextMenu = (e: ReactMouseEvent, threadId: number) => {
+    e.preventDefault();
+    setThreadMenu({ x: e.clientX, y: e.clientY, threadId });
+  };
+
+  const markThreadRead = (threadId: number, value: boolean) => {
+    setThreadReadMap((prev) => ({ ...prev, [threadId]: value }));
+    setThreadMenu(null);
+  };
 
   return (
-    <div className="shell">
+    <div className="shell" onClick={() => setThreadMenu(null)}>
       <header className="menu-bar">File Edit View Board Thread Tools Help</header>
       <div className="tool-bar">
         <button onClick={fetchMenu}>Refresh Menu</button>
@@ -279,11 +332,13 @@ export default function App() {
         <section className="pane boards">
           <h2>Boards</h2>
           <ul>
-            <li>Favorite</li>
-            <li>News</li>
-            <li>Software</li>
-            <li>Network</li>
-            <li>NGT (test)</li>
+            {boardItems.map((name) => (
+              <li key={name}>
+                <button className={`board-item ${selectedBoard === name ? "selected" : ""}`} onClick={() => setSelectedBoard(name)}>
+                  {name}
+                </button>
+              </li>
+            ))}
           </ul>
         </section>
         <section className="pane threads">
@@ -297,16 +352,21 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>1</td>
-                <td>Probe thread</td>
-                <td>999</td>
-              </tr>
-              <tr>
-                <td>2</td>
-                <td>Auth test</td>
-                <td>120</td>
-              </tr>
+              {threadItems.map((t) => (
+                <tr
+                  key={t.id}
+                  className={selectedThread === t.id ? "selected-row" : ""}
+                  onClick={() => setSelectedThread(t.id)}
+                  onContextMenu={(e) => onThreadContextMenu(e, t.id)}
+                >
+                  <td>{t.id}</td>
+                  <td>
+                    {threadReadMap[t.id] ? "" : "● "}
+                    {t.title}
+                  </td>
+                  <td>{t.res}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </section>
@@ -353,6 +413,7 @@ export default function App() {
           <pre>{postConfirmProbe}</pre>
           <pre>{postFinalizePreviewProbe}</pre>
           <pre>{postFinalizeSubmitProbe}</pre>
+          <pre>{postFlowTraceProbe}</pre>
           <pre>{updateProbe}</pre>
         </section>
       </main>
@@ -405,8 +466,15 @@ export default function App() {
             <button onClick={probePostFinalizeSubmitFromCompose} disabled={!allowRealSubmit}>
               Submit
             </button>
+            <button onClick={probePostFlowTraceFromCompose}>Flow Trace</button>
           </div>
         </section>
+      )}
+      {threadMenu && (
+        <div className="thread-menu" style={{ left: threadMenu.x, top: threadMenu.y }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => markThreadRead(threadMenu.threadId, true)}>Mark as Read</button>
+          <button onClick={() => markThreadRead(threadMenu.threadId, false)}>Mark as Unread</button>
+        </div>
       )}
     </div>
   );
