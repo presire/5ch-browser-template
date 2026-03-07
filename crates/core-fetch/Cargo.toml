@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+core-parse = { path = "../core-parse" }
 reqwest = { version = "0.12", default-features = false, features = ["cookies", "json", "rustls-tls"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

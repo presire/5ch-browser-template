@@ -362,6 +362,7 @@ dependencies = [
 name = "core-fetch"
 version = "0.1.0"
 dependencies = [
+ "core-parse",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

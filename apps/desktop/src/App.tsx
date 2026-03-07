@@ -63,6 +63,12 @@ type PostFlowTrace = {
   submitSummary: string | null;
   blocked: boolean;
 };
+type ThreadListItem = {
+  threadKey: string;
+  title: string;
+  responseCount: number;
+  threadUrl: string;
+};
 
 export default function App() {
   const [status, setStatus] = useState("not fetched");
@@ -88,6 +94,8 @@ export default function App() {
   const [composePreview, setComposePreview] = useState(false);
   const [composeEnterSubmit, setComposeEnterSubmit] = useState(false);
   const [postFlowTraceProbe, setPostFlowTraceProbe] = useState("not run");
+  const [threadListProbe, setThreadListProbe] = useState("not run");
+  const [fetchedThreads, setFetchedThreads] = useState<ThreadListItem[]>([]);
   const [selectedBoard, setSelectedBoard] = useState("Favorite");
   const [selectedThread, setSelectedThread] = useState<number | null>(1);
   const [selectedResponse, setSelectedResponse] = useState<number>(1);
@@ -161,6 +169,25 @@ export default function App() {
     if (!next) return;
     setThreadUrl(next);
     setStatus(`thread target updated: ${next}`);
+  };
+
+  const fetchThreadListFromCurrent = async (targetThreadUrl?: string) => {
+    const url = (targetThreadUrl ?? threadUrl).trim();
+    if (!url) return;
+    setThreadListProbe("running...");
+    try {
+      const rows = await invoke<ThreadListItem[]>("fetch_thread_list", {
+        threadUrl: url,
+        limit: 80,
+      });
+      setFetchedThreads(rows);
+      setThreadListProbe(`ok rows=${rows.length}`);
+      if (rows.length > 0) {
+        setSelectedThread(1);
+      }
+    } catch (error) {
+      setThreadListProbe(`error: ${String(error)}`);
+    }
   };
 
   const probePostConfirmEmpty = async () => {
@@ -314,10 +341,24 @@ export default function App() {
 
   const composeMailValue = composeSage ? "sage" : composeMail;
   const boardItems = ["Favorite", "News", "Software", "Network", "NGT (test)"];
-  const threadItems = [
+  const fallbackThreadItems = [
     { id: 1, title: "Probe thread", res: 999, got: 24, speed: 2.5, lastLoad: "14:42", lastPost: "14:44" },
     { id: 2, title: "Auth test", res: 120, got: 8, speed: 0.8, lastLoad: "13:08", lastPost: "13:09" },
   ];
+  const threadItems = (
+    fetchedThreads.length > 0
+      ? fetchedThreads.map((t, i) => ({
+          id: i + 1,
+          title: t.title,
+          res: t.responseCount,
+          got: Math.max(t.responseCount - 1, 0),
+          speed: Number((Math.max(t.responseCount, 1) / 120).toFixed(1)),
+          lastLoad: "-",
+          lastPost: "-",
+          threadUrl: t.threadUrl,
+        }))
+      : fallbackThreadItems
+  ).slice(0, 80);
   const responseItems = [
     { id: 1, name: "Anonymous", time: "2026/03/07 10:00", text: "post flow trace ready" },
     { id: 2, name: "Anonymous", time: "2026/03/07 10:02", text: "be/uplift/donguri login checked" },
@@ -360,6 +401,7 @@ export default function App() {
       <header className="menu-bar">File Edit View Board Thread Tools Help</header>
       <div className="tool-bar">
         <button onClick={fetchMenu}>Refresh Menu</button>
+        <button onClick={() => fetchThreadListFromCurrent()}>Load Threads</button>
         <button onClick={checkAuthEnv}>Auth Status</button>
         <button onClick={probeAuth}>Auth Probe</button>
         <button onClick={() => setComposeOpen(true)}>Write</button>
@@ -367,7 +409,15 @@ export default function App() {
       <div className="address-bar">
         <span>URL</span>
         <input value={locationInput} onChange={(e) => setLocationInput(e.target.value)} />
-        <button onClick={applyLocationToThread}>Go</button>
+        <button
+          onClick={() => {
+            const next = locationInput.trim();
+            applyLocationToThread();
+            void fetchThreadListFromCurrent(next);
+          }}
+        >
+          Go
+        </button>
       </div>
       <main className="layout">
         <section className="pane boards">
@@ -404,6 +454,10 @@ export default function App() {
                   onClick={() => {
                     setSelectedThread(t.id);
                     setSelectedResponse(1);
+                    if ("threadUrl" in t && typeof t.threadUrl === "string") {
+                      setThreadUrl(t.threadUrl);
+                      setLocationInput(t.threadUrl);
+                    }
                   }}
                   onContextMenu={(e) => onThreadContextMenu(e, t.id)}
                 >
@@ -494,6 +548,7 @@ export default function App() {
             <pre>{loginProbe}</pre>
             <pre>{postCookieProbe}</pre>
             <pre>{postFormProbe}</pre>
+            <pre>{threadListProbe}</pre>
             <pre>{postConfirmProbe}</pre>
             <pre>{postFinalizePreviewProbe}</pre>
             <pre>{postFinalizeSubmitProbe}</pre>

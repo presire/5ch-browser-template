@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use thiserror::Error;
 use url::Url;
+use core_parse::parse_subject_line;
 
 pub const BBSMENU_URL: &str = "https://menu.5ch.io/bbsmenu.json";
 
@@ -68,10 +69,90 @@ pub struct PostSubmitResult {
     pub body_preview: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubjectThread {
+    pub thread_key: String,
+    pub title: String,
+    pub response_count: u32,
+    pub thread_url: String,
+}
+
 #[derive(Debug, Clone)]
 struct ConfirmSubmitForm {
     action_url: String,
     fields: Vec<(String, String)>,
+}
+
+pub fn resolve_subject_url_from_thread_url(thread_url: &str) -> Result<String, FetchError> {
+    let normalized = normalize_5ch_url(thread_url);
+    let parsed = Url::parse(&normalized)?;
+    let mut segs = parsed
+        .path_segments()
+        .ok_or_else(|| FetchError::Parse("path segments".into()))?;
+
+    let p0 = segs.next().unwrap_or_default();
+    let p1 = segs.next().unwrap_or_default();
+    let p2 = segs.next().unwrap_or_default();
+    let board = segs.next().unwrap_or_default();
+    if p0 != "test" || p1 != "read.cgi" || p2.is_empty() || board.is_empty() {
+        return Err(FetchError::Parse("thread url format".into()));
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| FetchError::Parse("thread host".into()))?;
+    Ok(format!("{}://{}/{}/subject.txt", parsed.scheme(), host, board))
+}
+
+pub async fn fetch_subject_threads(
+    client: &Client,
+    thread_url: &str,
+    limit: usize,
+) -> Result<Vec<SubjectThread>, FetchError> {
+    let subject_url = resolve_subject_url_from_thread_url(thread_url)?;
+    let response = client.get(&subject_url).send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(FetchError::HttpStatus(status));
+    }
+    let body = response.text().await?;
+
+    let base = Url::parse(&normalize_5ch_url(thread_url))?;
+    let host = base
+        .host_str()
+        .ok_or_else(|| FetchError::Parse("thread host".into()))?;
+    let mut segs = base
+        .path_segments()
+        .ok_or_else(|| FetchError::Parse("path segments".into()))?;
+    let _ = segs.next();
+    let _ = segs.next();
+    let _ = segs.next();
+    let board = segs
+        .next()
+        .ok_or_else(|| FetchError::Parse("board segment".into()))?;
+
+    let mut out = Vec::new();
+    for line in body.lines() {
+        if let Some(entry) = parse_subject_line(line) {
+            out.push(SubjectThread {
+                thread_key: entry.thread_key.clone(),
+                title: entry.title,
+                response_count: entry.response_count,
+                thread_url: format!(
+                    "{}://{}/test/read.cgi/{}/{}/",
+                    base.scheme(),
+                    host,
+                    board,
+                    entry.thread_key
+                ),
+            });
+            if out.len() >= limit {
+                break;
+            }
+        }
+    }
+    Ok(out)
 }
 
 pub fn build_cookie_client(user_agent: &str) -> Result<(Client, Arc<Jar>), FetchError> {
@@ -378,7 +459,7 @@ pub async fn submit_post_finalize_from_confirm(
 mod tests {
     use super::{
         cookie_names_for_url, normalize_5ch_url, parse_confirm_submit_form, parse_post_form_tokens,
-        probe_post_cookie_scope, seed_cookie,
+        probe_post_cookie_scope, resolve_subject_url_from_thread_url, seed_cookie,
     };
     use reqwest::cookie::Jar;
 
@@ -472,5 +553,12 @@ mod tests {
         assert!(parsed.field_names.iter().any(|n| n == "time"));
         assert!(parsed.field_names.iter().any(|n| n == "submit"));
         assert_eq!(parsed.field_count, 4);
+    }
+
+    #[test]
+    fn resolve_subject_url_from_thread_url_works() {
+        let u = resolve_subject_url_from_thread_url("https://mao.5ch.net/test/read.cgi/ngt/1234567890/")
+            .expect("subject url");
+        assert_eq!(u, "https://mao.5ch.net/ngt/subject.txt");
     }
 }
