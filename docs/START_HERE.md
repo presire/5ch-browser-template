@@ -14,6 +14,7 @@
 - ZIP配布（インストーラーなし）
 - Live5ch `geronimo` 互換UI
 - `BE` 対応必須
+- `どんぐり` 対応必須
 - `UPLIFT` 対応必須
 - ドメインは `5ch.io` 前提
 - BBS MENU: `https://menu.5ch.io/bbsmenu.json`
@@ -26,7 +27,7 @@
 - 更新確認: Pages上の `latest.json` を参照し、更新時は配布ページへ誘導
 
 ## 4. 次の優先タスク
-1. `core-auth` に BE/UPLIFT ログイン実装
+1. `core-auth` に BE/UPLIFT/どんぐり ログイン実装
 2. `core-fetch` 投稿系に Cookie Jar 同居（`Be3M`,`Be3D`,`sid`）実装
 3. 更新チェックAPI (`latest.json`) とアプリ内通知導線を実装
 4. Pages + GitHub Releases 運用手順を確定
@@ -35,3 +36,5 @@
 - 観測結果で確定していない項目は推測で固定しない。
 - 認証情報（メール/パスワード）はログへ出力しない。
 - Cookie値は保存しない（名前・属性のみ記録）。
+
+

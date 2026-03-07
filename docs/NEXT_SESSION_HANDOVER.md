@@ -1,8 +1,8 @@
 ﻿# NEXT SESSION HANDOVER
 
 ## 現在地（2026-03-07 JST）
-- 仕様書: `docs/5ch_browser_spec.md` は `v0.8`。
-- BE/UPLIFT の通信仕様は観測ベースで実装可能な粒度まで整理済み。
+- 仕様書: `docs/5ch_browser_spec.md` は `v1.0`。
+- BE/UPLIFT/どんぐり の通信仕様は観測ベースで実装可能な粒度まで整理済み。
 - 配布方針は確定: `Cloudflare Pages + GitHub Releases`。
 - Git は初期化済みで、`safe.directory` 設定済み（この環境から `git` 操作可能）。
 
@@ -24,17 +24,14 @@
   - `eid` は `.uplift.5ch.io` のため投稿先へは送信されない
 
 ## 実装優先タスク（次セッション）
-1. `core-auth` 実装
-   - BE front login (`/_login`) を実装
-   - UPLIFT login (`/log`) を実装
-2. `core-fetch` 投稿実装
-   - Cookie Jar のドメイン一致で送信Cookieを選択
+1. `core-fetch` 投稿実装
    - 投稿時に `bbs/key/time` を動的取得
-3. 更新確認実装
+   - confirm画面HTMLの透過表示
+2. 更新確認実装
    - `latest.json` 取得
    - semver比較
    - 更新ありなら配布ページを外部ブラウザで開く
-4. 配布運用文書
+3. 配布運用文書
    - Pages公開手順
    - Releases作成手順
    - `latest.json` 更新手順
@@ -51,3 +48,5 @@
 
 ## ブロッカー
 - なし（Phase 1実装に着手可能）
+
+

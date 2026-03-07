@@ -1,4 +1,8 @@
-﻿use core_fetch::{fetch_bbsmenu_json, normalize_5ch_url};
+use core_auth::{login_be_front, login_donguri, login_uplift, LoginOutcome};
+use core_fetch::{
+    build_cookie_client, fetch_bbsmenu_json, normalize_5ch_url, probe_post_cookie_scope, seed_cookie,
+    PostCookieReport,
+};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -26,9 +30,7 @@ async fn fetch_bbsmenu_summary() -> Result<MenuSummary, String> {
         .build()
         .map_err(|e| e.to_string())?;
 
-    let menu = fetch_bbsmenu_json(&client)
-        .await
-        .map_err(|e| e.to_string())?;
+    let menu = fetch_bbsmenu_json(&client).await.map_err(|e| e.to_string())?;
 
     let top_level_keys = menu.as_object().map(|o| o.len()).unwrap_or(0);
     let normalized_sample = normalize_5ch_url("https://egg.5ch.net/test/read.cgi/software/1/");
@@ -55,12 +57,59 @@ fn check_auth_env_status() -> AuthEnvStatus {
     }
 }
 
+#[tauri::command]
+async fn probe_auth_logins() -> Result<Vec<LoginOutcome>, String> {
+    let be_email = std::env::var("BE_EMAIL").unwrap_or_default();
+    let be_password = std::env::var("BE_PASSWORD").unwrap_or_default();
+    let uplift_email = std::env::var("UPLIFT_EMAIL").unwrap_or_default();
+    let uplift_password = std::env::var("UPLIFT_PASSWORD").unwrap_or_default();
+
+    let mut out = Vec::new();
+
+    if !be_email.is_empty() && !be_password.is_empty() {
+        out.push(login_be_front(&be_email, &be_password).await.map_err(|e| e.to_string())?);
+    }
+
+    if !uplift_email.is_empty() && !uplift_password.is_empty() {
+        out.push(login_uplift(&uplift_email, &uplift_password).await.map_err(|e| e.to_string())?);
+        out.push(login_donguri(&uplift_email, &uplift_password).await.map_err(|e| e.to_string())?);
+    }
+
+    Ok(out)
+}
+
+#[tauri::command]
+fn probe_post_cookie_scope_simulation() -> Result<PostCookieReport, String> {
+    let (_, jar) = build_cookie_client("5ch-browser-template/0.1").map_err(|e| e.to_string())?;
+
+    seed_cookie(&jar, "https://5ch.io/", "Be3M=dummy-be3m; Domain=.5ch.io; Path=/")
+        .map_err(|e| e.to_string())?;
+    seed_cookie(&jar, "https://5ch.io/", "Be3D=dummy-be3d; Domain=.5ch.io; Path=/")
+        .map_err(|e| e.to_string())?;
+    seed_cookie(
+        &jar,
+        "https://uplift.5ch.io/",
+        "sid=dummy-sid; Domain=.5ch.io; Path=/",
+    )
+    .map_err(|e| e.to_string())?;
+    seed_cookie(
+        &jar,
+        "https://uplift.5ch.io/",
+        "eid=dummy-eid; Domain=.uplift.5ch.io; Path=/",
+    )
+    .map_err(|e| e.to_string())?;
+
+    probe_post_cookie_scope(&jar, "https://mao.5ch.io/test/bbs.cgi").map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             fetch_bbsmenu_summary,
-            check_auth_env_status
+            check_auth_env_status,
+            probe_auth_logins,
+            probe_post_cookie_scope_simulation
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
