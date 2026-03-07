@@ -9,6 +9,7 @@
   - `core-fetch`: `bbs/key/time` 動的取得 + confirm + finalize submit基盤実装済み
   - 更新チェック: `latest.json` 取得/比較 + 配布ページ起動実装済み
   - `apps/landing`: Vite + React ランディング雛形追加済み
+  - `apps/desktop`: 上部URLバー + レスビューア/開発パネル分離UIを実装済み
 - Git は初期化済みで、`safe.directory` 設定済み（この環境から `git` 操作可能）。
 
 ## 仕様確定ポイント（重要）
@@ -38,7 +39,7 @@
    - ダウンロード導線文言/注意文言の調整
    - Cloudflare Pages プロジェクト設定（build dir: `apps/landing/dist`）
 4. geronimo互換UI本実装
-   - 3ペイン/ツールバー/ステータスバーの本配置
+   - 行情報表示、キーボードショートカット、ペインリサイズの追加
 
 ## 参照ドキュメント
 - 仕様: `docs/5ch_browser_spec.md`

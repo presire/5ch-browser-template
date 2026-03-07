@@ -70,6 +70,7 @@ export default function App() {
   const [loginProbe, setLoginProbe] = useState("not run");
   const [postCookieProbe, setPostCookieProbe] = useState("not run");
   const [threadUrl, setThreadUrl] = useState("https://mao.5ch.io/test/read.cgi/ngt/9240230711/");
+  const [locationInput, setLocationInput] = useState("https://mao.5ch.io/test/read.cgi/ngt/9240230711/");
   const [postFormProbe, setPostFormProbe] = useState("not run");
   const [postConfirmProbe, setPostConfirmProbe] = useState("not run");
   const [postFinalizePreviewProbe, setPostFinalizePreviewProbe] = useState("not run");
@@ -89,6 +90,7 @@ export default function App() {
   const [postFlowTraceProbe, setPostFlowTraceProbe] = useState("not run");
   const [selectedBoard, setSelectedBoard] = useState("Favorite");
   const [selectedThread, setSelectedThread] = useState<number | null>(1);
+  const [selectedResponse, setSelectedResponse] = useState<number>(1);
   const [threadReadMap, setThreadReadMap] = useState<Record<number, boolean>>({ 1: false, 2: true });
   const [threadMenu, setThreadMenu] = useState<{ x: number; y: number; threadId: number } | null>(null);
 
@@ -151,6 +153,13 @@ export default function App() {
     } catch (error) {
       setPostFormProbe(`error: ${String(error)}`);
     }
+  };
+
+  const applyLocationToThread = () => {
+    const next = locationInput.trim();
+    if (!next) return;
+    setThreadUrl(next);
+    setStatus(`thread target updated: ${next}`);
   };
 
   const probePostConfirmEmpty = async () => {
@@ -308,6 +317,12 @@ export default function App() {
     { id: 1, title: "Probe thread", res: 999 },
     { id: 2, title: "Auth test", res: 120 },
   ];
+  const responseItems = [
+    { id: 1, name: "名無しさん", time: "2026/03/07 10:00", text: "post flow trace ready" },
+    { id: 2, name: "名無しさん", time: "2026/03/07 10:02", text: "be/uplift/donguri login checked" },
+    { id: 3, name: "名無しさん", time: "2026/03/07 10:04", text: "next: subject/dat fetch integration" },
+  ];
+  const activeResponse = responseItems.find((r) => r.id === selectedResponse) ?? responseItems[0];
 
   const onThreadContextMenu = (e: ReactMouseEvent, threadId: number) => {
     e.preventDefault();
@@ -327,6 +342,11 @@ export default function App() {
         <button onClick={checkAuthEnv}>Auth Status</button>
         <button onClick={probeAuth}>Auth Probe</button>
         <button onClick={() => setComposeOpen(true)}>Write</button>
+      </div>
+      <div className="address-bar">
+        <span>URL</span>
+        <input value={locationInput} onChange={(e) => setLocationInput(e.target.value)} />
+        <button onClick={applyLocationToThread}>Go</button>
       </div>
       <main className="layout">
         <section className="pane boards">
@@ -356,7 +376,10 @@ export default function App() {
                 <tr
                   key={t.id}
                   className={selectedThread === t.id ? "selected-row" : ""}
-                  onClick={() => setSelectedThread(t.id)}
+                  onClick={() => {
+                    setSelectedThread(t.id);
+                    setSelectedResponse(1);
+                  }}
                   onContextMenu={(e) => onThreadContextMenu(e, t.id)}
                 >
                   <td>{t.id}</td>
@@ -371,50 +394,82 @@ export default function App() {
           </table>
         </section>
         <section className="pane responses">
-          <h2>Responses / Developer Tools</h2>
-          <div className="dev-grid">
-            <label>
-              Thread URL
-              <input value={threadUrl} onChange={(e) => setThreadUrl(e.target.value)} />
-            </label>
-            <label>
-              latest.json URL
-              <input value={metadataUrl} onChange={(e) => setMetadataUrl(e.target.value)} />
-            </label>
-            <label>
-              Current Version
-              <input value={currentVersion} onChange={(e) => setCurrentVersion(e.target.value)} />
-            </label>
+          <h2>Responses</h2>
+          <div className="response-layout">
+            <table className="response-table">
+              <thead>
+                <tr>
+                  <th>No</th>
+                  <th>Name</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {responseItems.map((r) => (
+                  <tr
+                    key={r.id}
+                    className={selectedResponse === r.id ? "selected-row" : ""}
+                    onClick={() => setSelectedResponse(r.id)}
+                  >
+                    <td>{r.id}</td>
+                    <td>{r.name}</td>
+                    <td>{r.time}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <article className="response-viewer">
+              <header>{activeResponse.name}</header>
+              <time>{activeResponse.time}</time>
+              <p>{activeResponse.text}</p>
+            </article>
           </div>
-          <div className="dev-actions">
-            <button onClick={probePostCookieScope}>Cookie Scope</button>
-            <button onClick={probeThreadPostForm}>Post Tokens</button>
-            <button onClick={probePostConfirmEmpty}>Confirm</button>
-            <button onClick={probePostFinalizePreview}>Finalize Form</button>
-            <button onClick={probePostFinalizeSubmitEmpty}>Finalize Submit</button>
-            <button onClick={checkForUpdates}>Check Update</button>
-            <button onClick={openDownloadPage} disabled={!updateResult?.hasUpdate || !updateResult.downloadPageUrl}>
-              Open Download Page
-            </button>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={allowRealSubmit}
-                onChange={(e) => setAllowRealSubmit(e.target.checked)}
-              />
-              allow real final submit
-            </label>
-          </div>
-          <pre>{status}</pre>
-          <pre>{authStatus}</pre>
-          <pre>{loginProbe}</pre>
-          <pre>{postCookieProbe}</pre>
-          <pre>{postFormProbe}</pre>
-          <pre>{postConfirmProbe}</pre>
-          <pre>{postFinalizePreviewProbe}</pre>
-          <pre>{postFinalizeSubmitProbe}</pre>
-          <pre>{postFlowTraceProbe}</pre>
-          <pre>{updateProbe}</pre>
+          <details className="dev-panel">
+            <summary>Developer Tools</summary>
+            <div className="dev-grid">
+              <label>
+                Thread URL
+                <input value={threadUrl} onChange={(e) => setThreadUrl(e.target.value)} />
+              </label>
+              <label>
+                latest.json URL
+                <input value={metadataUrl} onChange={(e) => setMetadataUrl(e.target.value)} />
+              </label>
+              <label>
+                Current Version
+                <input value={currentVersion} onChange={(e) => setCurrentVersion(e.target.value)} />
+              </label>
+            </div>
+            <div className="dev-actions">
+              <button onClick={probePostCookieScope}>Cookie Scope</button>
+              <button onClick={probeThreadPostForm}>Post Tokens</button>
+              <button onClick={probePostConfirmEmpty}>Confirm</button>
+              <button onClick={probePostFinalizePreview}>Finalize Form</button>
+              <button onClick={probePostFinalizeSubmitEmpty}>Finalize Submit</button>
+              <button onClick={checkForUpdates}>Check Update</button>
+              <button onClick={openDownloadPage} disabled={!updateResult?.hasUpdate || !updateResult.downloadPageUrl}>
+                Open Download Page
+              </button>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={allowRealSubmit}
+                  onChange={(e) => setAllowRealSubmit(e.target.checked)}
+                />
+                allow real final submit
+              </label>
+            </div>
+            <pre>{status}</pre>
+            <pre>{authStatus}</pre>
+            <pre>{loginProbe}</pre>
+            <pre>{postCookieProbe}</pre>
+            <pre>{postFormProbe}</pre>
+            <pre>{postConfirmProbe}</pre>
+            <pre>{postFinalizePreviewProbe}</pre>
+            <pre>{postFinalizeSubmitProbe}</pre>
+            <pre>{postFlowTraceProbe}</pre>
+            <pre>{updateProbe}</pre>
+          </details>
         </section>
       </main>
       <footer className="status-bar">

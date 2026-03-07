@@ -17,10 +17,12 @@
 - [x] GitHub Actions CI（desktop/landing build）追加
 - [x] 投稿フロートに post flow trace（token/confirm/finalize/submit）追加
 - [x] 3ペインUIに選択状態とスレ右クリックメニュー枠を追加
+- [x] 上部URLバーを追加し、表示URLから投稿対象URLへ反映できるように実装
+- [x] 右ペインをレスビューアとDeveloper Tools折りたたみに分離
 
 ## 直近タスク（優先順）
 1. `core-fetch`: 実投稿フロー（confirm -> submit）本実装の実環境検証
-2. `apps/desktop`: Live5ch `geronimo` 互換UIの詳細調整（操作/行表示）
+2. `apps/desktop`: Live5ch `geronimo` 互換UIの詳細調整（行情報/ショートカット/ペインリサイズ）
 3. `landing`: 文言/導線の本番向け調整
 4. `release`: タグ作成〜latest.json更新のワンショット運用定着
 
