@@ -4,6 +4,11 @@
 - 仕様書: `docs/5ch_browser_spec.md` は `v1.0`。
 - BE/UPLIFT/どんぐり の通信仕様は観測ベースで実装可能な粒度まで整理済み。
 - 配布方針は確定: `Cloudflare Pages (Vite + React) + GitHub Releases`。
+- 実装進捗:
+  - `core-auth`: BE/UPLIFT/どんぐり ログイン実装済み
+  - `core-fetch`: `bbs/key/time` 動的取得 + confirm + finalize submit基盤実装済み
+  - 更新チェック: `latest.json` 取得/比較 + 配布ページ起動実装済み
+  - `apps/landing`: Vite + React ランディング雛形追加済み
 - Git は初期化済みで、`safe.directory` 設定済み（この環境から `git` 操作可能）。
 
 ## 仕様確定ポイント（重要）
@@ -24,22 +29,22 @@
   - `eid` は `.uplift.5ch.io` のため投稿先へは送信されない
 
 ## 実装優先タスク（次セッション）
-1. `core-fetch` 投稿実装
-   - 投稿時に `bbs/key/time` を動的取得
-   - confirm画面HTMLの透過表示
-2. 更新確認実装
-   - `latest.json` 取得
-   - semver比較
-   - 更新ありなら配布ページを外部ブラウザで開く
-3. 配布運用文書
-   - Pages公開手順（Vite + React）
-   - Releases作成手順
-   - `latest.json` 更新手順
+1. `core-fetch` 実環境検証
+   - `allow_real_submit=true` で finalize submit の挙動確認
+2. リリース運用実地
+   - `scripts/generate_latest_json.py` で実ZIPから `latest.json` 生成
+   - `apps/landing/public/latest.json` へ反映
+3. ランディング本番化
+   - ダウンロード導線文言/注意文言の調整
+   - Cloudflare Pages プロジェクト設定（build dir: `apps/landing/dist`）
+4. geronimo互換UI本実装
+   - 3ペイン/ツールバー/ステータスバーの本配置
 
 ## 参照ドキュメント
 - 仕様: `docs/5ch_browser_spec.md`
 - 調査まとめ: `docs/BE_UPLIFT_RESEARCH_2026-03-07.md`
 - 進捗: `docs/PROGRESS_TRACKER.md`
+- 配布運用: `docs/DEPLOYMENT_RUNBOOK.md`
 
 ## 参照レポート（生データ）
 - `docs/BE_FRONT_LOGIN_PLAYWRIGHT_2026-03-07.json`

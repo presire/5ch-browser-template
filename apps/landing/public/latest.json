@@ -1,0 +1,17 @@
+{
+  "version": "0.0.0",
+  "released_at": "1970-01-01T00:00:00Z",
+  "download_page_url": "https://github.com/kiyohken2000/5ch-browser-template/releases",
+  "platforms": {
+    "windows-x64": {
+      "sha256": "",
+      "size": 0,
+      "filename": "5ch-browser-win-x64.zip"
+    },
+    "macos-arm64": {
+      "sha256": "",
+      "size": 0,
+      "filename": "5ch-browser-mac-arm64.zip"
+    }
+  }
+}

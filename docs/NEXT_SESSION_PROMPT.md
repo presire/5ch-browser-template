@@ -8,6 +8,7 @@
 - `docs/5ch_browser_spec.md`
 - `docs/BE_UPLIFT_RESEARCH_2026-03-07.md`
 - `docs/PROGRESS_TRACKER.md`
+- `docs/DEPLOYMENT_RUNBOOK.md`
 
 ## 固定要件（厳守）
 - Windows / macOS 両対応
@@ -25,13 +26,14 @@
 - アプリ内更新確認: 新版があれば配布ページへ誘導（自動インストールなし）
 
 ## 最初の実装タスク
-1. `core-fetch` に投稿処理実装
-   - Cookie Jar同居（投稿時実送信: `Be3M`,`Be3D`,`sid`）
-   - `bbs/key/time` 動的取得
-2. 更新確認実装
-   - `latest.json` 取得/比較
-   - 更新通知 + 配布ページ起動
-3. 実装後、仕様との差分を `docs/` に反映
+1. `core-fetch` 実環境検証
+   - finalize submit（`allow_real_submit=true`）の挙動確認
+2. リリース運用
+   - `scripts/generate_latest_json.py` で `latest.json` 生成
+   - `apps/landing/public/latest.json` 更新
+3. ランディング本番化
+   - `apps/landing` の文言調整
+   - Cloudflare Pages へデプロイ
 
 ## 進め方
 - 観測済み仕様を優先し、推測で固定しない

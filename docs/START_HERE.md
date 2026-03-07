@@ -8,6 +8,7 @@
 - `docs/pre_implementation_validation.md`
 - `docs/NEXT_SESSION_HANDOVER.md`
 - `docs/PROGRESS_TRACKER.md`
+- `docs/DEPLOYMENT_RUNBOOK.md`
 
 ## 2. 固定要件（変更禁止）
 - Windows / macOS 両対応
@@ -27,10 +28,10 @@
 - 更新確認: Pages上の `latest.json` を参照し、更新時は配布ページへ誘導
 
 ## 4. 次の優先タスク
-1. `core-fetch` 実投稿フロー（confirm -> submit）を実装
-2. 更新チェックAPI (`latest.json`) とアプリ内通知導線を実装
-3. Pages（Vite + React）+ GitHub Releases 運用手順を確定
-4. `latest.json` のハッシュ更新手順を自動化
+1. `core-fetch` 実投稿フロー（confirm -> submit）の実環境検証
+2. `scripts/generate_latest_json.py` を使ったリリース運用検証
+3. `apps/landing` をCloudflare Pagesへ本番デプロイ
+4. Live5ch `geronimo` 互換UIを本実装
 
 ## 5. 注意
 - 観測結果で確定していない項目は推測で固定しない。
