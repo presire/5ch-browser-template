@@ -90,14 +90,22 @@ pub fn resolve_subject_url_from_thread_url(thread_url: &str) -> Result<String, F
     let mut segs = parsed
         .path_segments()
         .ok_or_else(|| FetchError::Parse("path segments".into()))?;
-
-    let p0 = segs.next().unwrap_or_default();
-    let p1 = segs.next().unwrap_or_default();
-    let p2 = segs.next().unwrap_or_default();
-    let board = segs.next().unwrap_or_default();
-    if p0 != "test" || p1 != "read.cgi" || p2.is_empty() || board.is_empty() {
-        return Err(FetchError::Parse("thread url format".into()));
+    let parts = segs.by_ref().collect::<Vec<_>>();
+    if parts.is_empty() {
+        return Err(FetchError::Parse("path segments".into()));
     }
+
+    let board = if parts.len() >= 2 && parts[parts.len() - 1] == "subject.txt" {
+        parts[parts.len() - 2]
+    } else if parts.len() >= 4 && parts[0] == "test" && parts[1] == "read.cgi" {
+        parts[2]
+    } else if !parts[0].is_empty() && parts[0] != "test" {
+        parts[0]
+    } else {
+        return Err(FetchError::Parse(
+            "unsupported url; use thread url, board url, or subject.txt".into(),
+        ));
+    };
 
     let host = parsed
         .host_str()
@@ -118,19 +126,19 @@ pub async fn fetch_subject_threads(
     }
     let body = response.text().await?;
 
-    let base = Url::parse(&normalize_5ch_url(thread_url))?;
-    let host = base
+    let subject = Url::parse(&subject_url)?;
+    let host = subject
         .host_str()
         .ok_or_else(|| FetchError::Parse("thread host".into()))?;
-    let mut segs = base
+    let mut segs = subject
         .path_segments()
         .ok_or_else(|| FetchError::Parse("path segments".into()))?;
-    let _ = segs.next();
-    let _ = segs.next();
-    let _ = segs.next();
     let board = segs
         .next()
         .ok_or_else(|| FetchError::Parse("board segment".into()))?;
+    if board.is_empty() {
+        return Err(FetchError::Parse("board segment".into()));
+    }
 
     let mut out = Vec::new();
     for line in body.lines() {
@@ -141,7 +149,7 @@ pub async fn fetch_subject_threads(
                 response_count: entry.response_count,
                 thread_url: format!(
                     "{}://{}/test/read.cgi/{}/{}/",
-                    base.scheme(),
+                    subject.scheme(),
                     host,
                     board,
                     entry.thread_key
@@ -559,6 +567,12 @@ mod tests {
     fn resolve_subject_url_from_thread_url_works() {
         let u = resolve_subject_url_from_thread_url("https://mao.5ch.net/test/read.cgi/ngt/1234567890/")
             .expect("subject url");
-        assert_eq!(u, "https://mao.5ch.net/ngt/subject.txt");
+        assert_eq!(u, "https://5ch.io/ngt/subject.txt");
+    }
+
+    #[test]
+    fn resolve_subject_url_from_board_url_works() {
+        let u = resolve_subject_url_from_thread_url("https://mao.5ch.io/ngt/").expect("subject url");
+        assert_eq!(u, "https://mao.5ch.io/ngt/subject.txt");
     }
 }

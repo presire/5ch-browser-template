@@ -176,6 +176,7 @@ export default function App() {
     const url = (targetThreadUrl ?? threadUrl).trim();
     if (!url) return;
     setThreadListProbe("running...");
+    setStatus(`loading threads from: ${url}`);
     try {
       const rows = await invoke<ThreadListItem[]>("fetch_thread_list", {
         threadUrl: url,
@@ -184,11 +185,16 @@ export default function App() {
       setFetchedThreads(rows);
       setClosedThreadIds([]);
       setThreadListProbe(`ok rows=${rows.length}`);
+      setStatus(`threads loaded: ${rows.length}`);
       if (rows.length > 0) {
         setSelectedThread(1);
+      } else {
+        setStatus("threads loaded: 0 (board may be empty or parse failed)");
       }
     } catch (error) {
-      setThreadListProbe(`error: ${String(error)}`);
+      const msg = String(error);
+      setThreadListProbe(`error: ${msg}`);
+      setStatus(`thread load error: ${msg}`);
     }
   };
 
