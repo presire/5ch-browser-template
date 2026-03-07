@@ -46,6 +46,20 @@ type PostConfirmResult = {
   bodyPreview: string;
 };
 
+type PostFinalizePreview = {
+  actionUrl: string;
+  fieldNames: string[];
+  fieldCount: number;
+};
+
+type PostSubmitResult = {
+  actionUrl: string;
+  status: number;
+  contentType: string | null;
+  containsError: boolean;
+  bodyPreview: string;
+};
+
 type UpdateCheckResult = {
   metadataUrl: string;
   currentVersion: string;
@@ -63,6 +77,9 @@ export default function App() {
   const [threadUrl, setThreadUrl] = useState("https://mao.5ch.io/test/read.cgi/ngt/9240230711/");
   const [postFormProbe, setPostFormProbe] = useState("not run");
   const [postConfirmProbe, setPostConfirmProbe] = useState("not run");
+  const [postFinalizePreviewProbe, setPostFinalizePreviewProbe] = useState("not run");
+  const [postFinalizeSubmitProbe, setPostFinalizeSubmitProbe] = useState("not run");
+  const [allowRealSubmit, setAllowRealSubmit] = useState(false);
   const [metadataUrl, setMetadataUrl] = useState("");
   const [currentVersion, setCurrentVersion] = useState("0.1.0");
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
@@ -143,6 +160,31 @@ export default function App() {
     }
   };
 
+  const probePostFinalizePreview = async () => {
+    setPostFinalizePreviewProbe("running...");
+    try {
+      const r = await invoke<PostFinalizePreview>("probe_post_finalize_preview", { threadUrl });
+      setPostFinalizePreviewProbe(`action=${r.actionUrl} fields=${r.fieldCount} names=${r.fieldNames.join(",")}`);
+    } catch (error) {
+      setPostFinalizePreviewProbe(`error: ${String(error)}`);
+    }
+  };
+
+  const probePostFinalizeSubmitEmpty = async () => {
+    setPostFinalizeSubmitProbe("running...");
+    try {
+      const r = await invoke<PostSubmitResult>("probe_post_finalize_submit_empty", {
+        threadUrl,
+        allowRealSubmit,
+      });
+      setPostFinalizeSubmitProbe(
+        `status=${r.status} type=${r.contentType ?? "-"} error=${r.containsError} preview=${r.bodyPreview}`
+      );
+    } catch (error) {
+      setPostFinalizeSubmitProbe(`error: ${String(error)}`);
+    }
+  };
+
   const checkForUpdates = async () => {
     setUpdateProbe("running...");
     setUpdateResult(null);
@@ -187,6 +229,14 @@ export default function App() {
       <pre>{postFormProbe}</pre>
       <button onClick={probePostConfirmEmpty}>Probe confirm with empty message</button>
       <pre>{postConfirmProbe}</pre>
+      <button onClick={probePostFinalizePreview}>Probe finalize form from confirm</button>
+      <pre>{postFinalizePreviewProbe}</pre>
+      <label style={{ display: "block" }}>
+        <input type="checkbox" checked={allowRealSubmit} onChange={(e) => setAllowRealSubmit(e.target.checked)} />{" "}
+        allow real final submit (danger)
+      </label>
+      <button onClick={probePostFinalizeSubmitEmpty}>Probe final submit (empty)</button>
+      <pre>{postFinalizeSubmitProbe}</pre>
       <label>
         latest.json URL
         <input style={{ width: "100%" }} value={metadataUrl} onChange={(e) => setMetadataUrl(e.target.value)} />

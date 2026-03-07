@@ -13,7 +13,7 @@
 ## 直近タスク（優先順）
 1. `docs`: 運用手順（Pages deploy / Releases作成 / latest.json更新）
 2. `release`: `latest.json` 署名/ハッシュ更新フローの自動化
-3. `core-fetch`: 実投稿フロー（confirm -> submit）最終実装
+3. `core-fetch`: 実投稿フロー（confirm -> submit）本実装の実環境検証
 4. `apps/desktop`: Live5ch `geronimo` 互換UIの本実装
 
 ## 決定事項

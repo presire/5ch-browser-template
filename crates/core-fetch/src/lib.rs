@@ -50,6 +50,30 @@ pub struct PostConfirmResult {
     pub body_preview: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostFinalizePreview {
+    pub action_url: String,
+    pub field_names: Vec<String>,
+    pub field_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostSubmitResult {
+    pub action_url: String,
+    pub status: u16,
+    pub content_type: Option<String>,
+    pub contains_error: bool,
+    pub body_preview: String,
+}
+
+#[derive(Debug, Clone)]
+struct ConfirmSubmitForm {
+    action_url: String,
+    fields: Vec<(String, String)>,
+}
+
 pub fn build_cookie_client(user_agent: &str) -> Result<(Client, Arc<Jar>), FetchError> {
     let jar = Arc::new(Jar::default());
     let client = Client::builder()
@@ -199,6 +223,17 @@ pub async fn submit_post_confirm(
     mail: &str,
     message: &str,
 ) -> Result<PostConfirmResult, FetchError> {
+    let (result, _) = submit_post_confirm_with_html(client, tokens, from, mail, message).await?;
+    Ok(result)
+}
+
+pub async fn submit_post_confirm_with_html(
+    client: &Client,
+    tokens: &PostFormTokens,
+    from: &str,
+    mail: &str,
+    message: &str,
+) -> Result<(PostConfirmResult, String), FetchError> {
     let mut fields: Vec<(&str, String)> = vec![
         ("FROM", from.to_string()),
         ("mail", mail.to_string()),
@@ -223,12 +258,117 @@ pub async fn submit_post_confirm(
     let contains_confirm = body.contains("confirm");
     let contains_error = body.contains("error");
     let body_preview: String = body.chars().take(240).collect();
-
-    Ok(PostConfirmResult {
+    let result = PostConfirmResult {
         post_url: tokens.post_url.clone(),
         status,
         content_type,
         contains_confirm,
+        contains_error,
+        body_preview,
+    };
+
+    Ok((result, body))
+}
+
+fn find_first_confirm_form(html: &str) -> Option<&str> {
+    let mut start = 0usize;
+    while let Some(open_rel) = html[start..].find("<form") {
+        let open = start + open_rel;
+        let tail = &html[open..];
+        let close_rel = tail.find("</form>")?;
+        let close = open + close_rel + "</form>".len();
+        let form = &html[open..close];
+        let has_bbs = form.contains("name=\"bbs\"") || form.contains("name='bbs'");
+        let has_key = form.contains("name=\"key\"") || form.contains("name='key'");
+        let has_time = form.contains("name=\"time\"") || form.contains("name='time'");
+        if has_bbs && has_key && has_time {
+            return Some(form);
+        }
+        start = close;
+    }
+    None
+}
+
+fn parse_input_fields(form_html: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    while let Some(rel) = form_html[pos..].find("<input") {
+        let input_start = pos + rel;
+        let end = match form_html[input_start..].find('>') {
+            Some(v) => input_start + v + 1,
+            None => break,
+        };
+        let input = &form_html[input_start..end];
+        if let Some(name) = extract_attr(input, "name") {
+            let value = extract_attr(input, "value").unwrap_or_default();
+            out.push((name, value));
+        }
+        pos = end;
+    }
+    out
+}
+
+pub fn parse_confirm_submit_form(confirm_html: &str, fallback_post_url: &str) -> Result<PostFinalizePreview, FetchError> {
+    let form = find_first_confirm_form(confirm_html).ok_or_else(|| FetchError::Parse("confirm form".into()))?;
+    let action_raw = extract_attr(form, "action").unwrap_or_else(|| fallback_post_url.to_string());
+    let action_url = if action_raw == fallback_post_url {
+        action_raw
+    } else {
+        resolve_post_url(fallback_post_url, &action_raw)?
+    };
+    let fields = parse_input_fields(form);
+    if fields.is_empty() {
+        return Err(FetchError::Parse("confirm form fields".into()));
+    }
+    let mut field_names = fields.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>();
+    field_names.sort();
+    field_names.dedup();
+
+    Ok(PostFinalizePreview {
+        action_url,
+        field_count: fields.len(),
+        field_names,
+    })
+}
+
+fn parse_confirm_submit_form_internal(
+    confirm_html: &str,
+    fallback_post_url: &str,
+) -> Result<ConfirmSubmitForm, FetchError> {
+    let form = find_first_confirm_form(confirm_html).ok_or_else(|| FetchError::Parse("confirm form".into()))?;
+    let action_raw = extract_attr(form, "action").unwrap_or_else(|| fallback_post_url.to_string());
+    let action_url = if action_raw == fallback_post_url {
+        action_raw
+    } else {
+        resolve_post_url(fallback_post_url, &action_raw)?
+    };
+    let fields = parse_input_fields(form);
+    if fields.is_empty() {
+        return Err(FetchError::Parse("confirm form fields".into()));
+    }
+    Ok(ConfirmSubmitForm { action_url, fields })
+}
+
+pub async fn submit_post_finalize_from_confirm(
+    client: &Client,
+    confirm_html: &str,
+    fallback_post_url: &str,
+) -> Result<PostSubmitResult, FetchError> {
+    let form = parse_confirm_submit_form_internal(confirm_html, fallback_post_url)?;
+    let response = client.post(&form.action_url).form(&form.fields).send().await?;
+    let status = response.status().as_u16();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let body = response.text().await?;
+    let contains_error = body.contains("error");
+    let body_preview: String = body.chars().take(240).collect();
+    Ok(PostSubmitResult {
+        action_url: form.action_url,
+        status,
+        content_type,
         contains_error,
         body_preview,
     })
@@ -237,7 +377,8 @@ pub async fn submit_post_confirm(
 #[cfg(test)]
 mod tests {
     use super::{
-        cookie_names_for_url, normalize_5ch_url, parse_post_form_tokens, probe_post_cookie_scope, seed_cookie,
+        cookie_names_for_url, normalize_5ch_url, parse_confirm_submit_form, parse_post_form_tokens,
+        probe_post_cookie_scope, seed_cookie,
     };
     use reqwest::cookie::Jar;
 
@@ -312,5 +453,24 @@ mod tests {
         assert_eq!(tokens.time, "1741320000");
         assert_eq!(tokens.oekaki_thread1, Some("1".to_string()));
         assert!(tokens.has_message_textarea);
+    }
+
+    #[test]
+    fn parse_confirm_submit_form_from_html() {
+        let html = r#"
+        <form action="/test/bbs.cgi" method="post">
+          <input type="hidden" name="bbs" value="ngt">
+          <input type="hidden" name="key" value="9240230711">
+          <input type="hidden" name="time" value="1741320000">
+          <input type="hidden" name="submit" value="final">
+        </form>
+        "#;
+        let parsed = parse_confirm_submit_form(html, "https://mao.5ch.io/test/bbs.cgi").unwrap();
+        assert_eq!(parsed.action_url, "https://mao.5ch.io/test/bbs.cgi");
+        assert!(parsed.field_names.iter().any(|n| n == "bbs"));
+        assert!(parsed.field_names.iter().any(|n| n == "key"));
+        assert!(parsed.field_names.iter().any(|n| n == "time"));
+        assert!(parsed.field_names.iter().any(|n| n == "submit"));
+        assert_eq!(parsed.field_count, 4);
     }
 }

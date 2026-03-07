@@ -1,7 +1,9 @@
 use core_auth::{login_be_front, login_donguri, login_uplift, LoginOutcome};
 use core_fetch::{
     build_cookie_client, fetch_bbsmenu_json, fetch_post_form_tokens, normalize_5ch_url, probe_post_cookie_scope,
-    seed_cookie, submit_post_confirm, PostConfirmResult, PostCookieReport, PostFormTokens,
+    parse_confirm_submit_form, seed_cookie, submit_post_confirm, submit_post_confirm_with_html,
+    submit_post_finalize_from_confirm, PostConfirmResult, PostCookieReport, PostFinalizePreview, PostFormTokens,
+    PostSubmitResult,
 };
 use serde::{Deserialize, Serialize};
 use std::process::Command;
@@ -144,6 +146,44 @@ async fn probe_post_confirm_empty(thread_url: String) -> Result<PostConfirmResul
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn probe_post_finalize_preview(thread_url: String) -> Result<PostFinalizePreview, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("5ch-browser-template/0.1")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let tokens = fetch_post_form_tokens(&client, &thread_url)
+        .await
+        .map_err(|e| e.to_string())?;
+    let (_, confirm_html) = submit_post_confirm_with_html(&client, &tokens, "", "", "")
+        .await
+        .map_err(|e| e.to_string())?;
+    parse_confirm_submit_form(&confirm_html, &tokens.post_url).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn probe_post_finalize_submit_empty(
+    thread_url: String,
+    allow_real_submit: bool,
+) -> Result<PostSubmitResult, String> {
+    if !allow_real_submit {
+        return Err("blocked: set allow_real_submit=true to execute final submit".to_string());
+    }
+    let client = reqwest::Client::builder()
+        .user_agent("5ch-browser-template/0.1")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let tokens = fetch_post_form_tokens(&client, &thread_url)
+        .await
+        .map_err(|e| e.to_string())?;
+    let (_, confirm_html) = submit_post_confirm_with_html(&client, &tokens, "", "", "")
+        .await
+        .map_err(|e| e.to_string())?;
+    submit_post_finalize_from_confirm(&client, &confirm_html, &tokens.post_url)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 fn parse_version_numbers(version: &str) -> Vec<u64> {
     let head = version.split('-').next().unwrap_or(version);
     head.split('.')
@@ -253,6 +293,8 @@ pub fn run() {
             probe_post_cookie_scope_simulation,
             probe_thread_post_form,
             probe_post_confirm_empty,
+            probe_post_finalize_preview,
+            probe_post_finalize_submit_empty,
             check_for_updates,
             open_external_url
         ])
