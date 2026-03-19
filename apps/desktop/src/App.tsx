@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEventHandler, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEventHandler, type MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -70,6 +70,18 @@ type ThreadListItem = {
   threadUrl: string;
 };
 
+const MIN_BOARD_PANE_PX = 160;
+const MIN_THREAD_PANE_PX = 280;
+const MIN_RESPONSE_PANE_PX = 360;
+const SPLITTER_PX = 6;
+
+type ResizeDragState =
+  | { mode: "board-thread"; startX: number; startBoardPx: number; startThreadPx: number }
+  | { mode: "thread-response"; startX: number; startBoardPx: number; startThreadPx: number }
+  | { mode: "response-rows"; startY: number; startResponseTopRatio: number; responseLayoutHeight: number };
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
 export default function App() {
   const [status, setStatus] = useState("not fetched");
   const [authStatus, setAuthStatus] = useState("not checked");
@@ -103,6 +115,11 @@ export default function App() {
   const [threadReadMap, setThreadReadMap] = useState<Record<number, boolean>>({ 1: false, 2: true });
   const [threadMenu, setThreadMenu] = useState<{ x: number; y: number; threadId: number } | null>(null);
   const [responseMenu, setResponseMenu] = useState<{ x: number; y: number; responseId: number } | null>(null);
+  const [boardPanePx, setBoardPanePx] = useState(220);
+  const [threadPanePx, setThreadPanePx] = useState(420);
+  const [responseTopRatio, setResponseTopRatio] = useState(42);
+  const resizeDragRef = useRef<ResizeDragState | null>(null);
+  const responseLayoutRef = useRef<HTMLDivElement | null>(null);
 
   const fetchMenu = async () => {
     setStatus("loading...");
@@ -399,6 +416,31 @@ export default function App() {
     setResponseMenu(null);
   };
 
+  const beginHorizontalResize = (mode: "board-thread" | "thread-response", event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    resizeDragRef.current = {
+      mode,
+      startX: event.clientX,
+      startBoardPx: boardPanePx,
+      startThreadPx: threadPanePx,
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+  };
+
+  const beginResponseRowResize = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const layoutHeight = responseLayoutRef.current?.clientHeight ?? 360;
+    resizeDragRef.current = {
+      mode: "response-rows",
+      startY: event.clientY,
+      startResponseTopRatio: responseTopRatio,
+      responseLayoutHeight: layoutHeight,
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "row-resize";
+  };
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "r") {
@@ -431,6 +473,78 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [threadUrl, selectedThread, visibleThreadItems]);
 
+  useEffect(() => {
+    const ensurePaneBounds = () => {
+      const maxBoard = Math.max(
+        MIN_BOARD_PANE_PX,
+        window.innerWidth - MIN_THREAD_PANE_PX - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+      );
+      const nextBoard = clamp(boardPanePx, MIN_BOARD_PANE_PX, maxBoard);
+      const maxThread = Math.max(
+        MIN_THREAD_PANE_PX,
+        window.innerWidth - nextBoard - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+      );
+      const nextThread = clamp(threadPanePx, MIN_THREAD_PANE_PX, maxThread);
+      if (nextBoard !== boardPanePx) setBoardPanePx(nextBoard);
+      if (nextThread !== threadPanePx) setThreadPanePx(nextThread);
+    };
+
+    ensurePaneBounds();
+    window.addEventListener("resize", ensurePaneBounds);
+    return () => window.removeEventListener("resize", ensurePaneBounds);
+  }, [boardPanePx, threadPanePx]);
+
+  useEffect(() => {
+    const onMouseMove = (event: MouseEvent) => {
+      const drag = resizeDragRef.current;
+      if (!drag) return;
+
+      if (drag.mode === "response-rows") {
+        const deltaRatio = (event.clientY - drag.startY) / Math.max(drag.responseLayoutHeight, 1) * 100;
+        const nextRatio = clamp(drag.startResponseTopRatio + deltaRatio, 24, 76);
+        setResponseTopRatio(nextRatio);
+        return;
+      }
+
+      const deltaX = event.clientX - drag.startX;
+      if (drag.mode === "board-thread") {
+        const maxBoard = Math.max(
+          MIN_BOARD_PANE_PX,
+          window.innerWidth - MIN_THREAD_PANE_PX - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+        );
+        const nextBoard = clamp(drag.startBoardPx + deltaX, MIN_BOARD_PANE_PX, maxBoard);
+        const maxThread = Math.max(
+          MIN_THREAD_PANE_PX,
+          window.innerWidth - nextBoard - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+        );
+        setBoardPanePx(nextBoard);
+        setThreadPanePx((prev) => clamp(prev, MIN_THREAD_PANE_PX, maxThread));
+        return;
+      }
+
+      const maxThread = Math.max(
+        MIN_THREAD_PANE_PX,
+        window.innerWidth - drag.startBoardPx - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+      );
+      const nextThread = clamp(drag.startThreadPx + deltaX, MIN_THREAD_PANE_PX, maxThread);
+      setThreadPanePx(nextThread);
+    };
+
+    const onMouseUp = () => {
+      if (!resizeDragRef.current) return;
+      resizeDragRef.current = null;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
+
   return (
     <div
       className="shell"
@@ -461,7 +575,12 @@ export default function App() {
           Go
         </button>
       </div>
-      <main className="layout">
+      <main
+        className="layout"
+        style={{
+          gridTemplateColumns: `${boardPanePx}px ${SPLITTER_PX}px ${threadPanePx}px ${SPLITTER_PX}px minmax(${MIN_RESPONSE_PANE_PX}px, 1fr)`,
+        }}
+      >
         <section className="pane boards">
           <h2>Boards</h2>
           <ul>
@@ -474,6 +593,14 @@ export default function App() {
             ))}
           </ul>
         </section>
+        <div
+          className="pane-splitter"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize boards and threads"
+          onMouseDown={(e) => beginHorizontalResize("board-thread", e)}
+          onClick={(e) => e.stopPropagation()}
+        />
         <section className="pane threads">
           <h2>Threads</h2>
           <table>
@@ -518,9 +645,21 @@ export default function App() {
             </tbody>
           </table>
         </section>
+        <div
+          className="pane-splitter"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize threads and responses"
+          onMouseDown={(e) => beginHorizontalResize("thread-response", e)}
+          onClick={(e) => e.stopPropagation()}
+        />
         <section className="pane responses">
           <h2>Responses</h2>
-          <div className="response-layout">
+          <div
+            ref={responseLayoutRef}
+            className="response-layout"
+            style={{ gridTemplateRows: `minmax(120px, ${responseTopRatio}%) ${SPLITTER_PX}px 1fr` }}
+          >
             <table className="response-table">
               <thead>
                 <tr>
@@ -545,6 +684,14 @@ export default function App() {
                 ))}
               </tbody>
             </table>
+            <div
+              className="row-splitter"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize response list and viewer"
+              onMouseDown={beginResponseRowResize}
+              onClick={(e) => e.stopPropagation()}
+            />
             <article className="response-viewer">
               <header>{activeResponse.name}</header>
               <time>{activeResponse.time}</time>
