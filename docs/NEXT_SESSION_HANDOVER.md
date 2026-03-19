@@ -48,6 +48,11 @@
   - `fetch_board_categories`: bbsmenu.json パーサー修正（`menu_list` → `category_content`、49カテゴリ/1115板取得成功）
   - `apps/desktop`: E2E テスト追加（`npm run test:e2e` = Tauri + Playwright via WebView2 CDP）
   - E2E 12項目 PASS: runtime検出/bbsmenu取得/板カテゴリ/スレ一覧/レス取得/auth状態/投稿フォーム/DOM操作/書き込みUI
+  - `apps/desktop`: お気に入り板/スレ管理（core-store永続化 + Favoritesカテゴリ + 星トグル）
+  - `apps/desktop`: NGワード/ID/名前フィルタリング（NGパネルUI + レスポンス非表示 + 永続化）
+  - `apps/desktop`: 既読管理の永続化（core-store read_status.json）
+  - `apps/desktop`: 投稿結果フィードバック（compose窓にOK/NGバー）
+  - `apps/desktop`: smoke-ui 31項目（お気に入り/NGパネル/レスメタ追加）
 - Git は初期化済みで、`safe.directory` 設定済み（この環境から `git` 操作可能）。
 - safe probe 実環境検証 (2026-03-19):
   - 全4モード（anonymous/uplift/be_front/be_uplift）で GET=200, confirm=200
@@ -73,6 +78,8 @@
   - `3eb47fb` (`scripts: block real submit probe when message is empty`)
   - `17a3f54` (`core-fetch: add subject-url resolution regression tests`)
   - `a46b991` (`scripts: add post-flow probe runner with strict exit behavior`)
+  - `e1ce816` (`desktop: add favorites, NG filtering, and persistence via core-store`)
+  - `33f74ec` (`desktop: add read status persistence and post result feedback`)
 
 ## 仕様確定ポイント（重要）
 - 5ch基盤:
@@ -97,10 +104,9 @@
    - 必要時のみ `-AllowRealSubmit -RealSubmitToken I_UNDERSTAND_REAL_POST -Message "<non-empty>"` で実送信検証
    - board URL 入力（例: `https://mao.5ch.io/ngt/`）でのスレ一覧取得を実環境確認
 2. geronimo互換UI継続改善
-   - お気に入り板/スレ管理機能
-   - NG ワード/ID フィルタリング
-   - 既読管理（SQLite 永続化）
-   - 投稿結果フィードバック（成功/失敗表示）
+   - スレ自動更新（定期リロード + 差分取得）
+   - お気に入りスレ一覧ペインの表示切り替え
+   - スレ検索機能（タイトル部分一致）
 3. リリース運用実地
    - `scripts/prepare_release_metadata.py` で実ZIPから `latest.json` 生成 + strict検証
    - `apps/landing/public/latest.json` へ反映
