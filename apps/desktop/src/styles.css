@@ -59,6 +59,20 @@ body {
   background: var(--line);
 }
 
+.auto-refresh-toggle {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--sub);
+  cursor: pointer;
+}
+
+.auto-refresh-toggle input {
+  width: auto;
+  margin: 0;
+}
+
 .shortcut-hint {
   margin-left: auto;
   font-size: 10px;
@@ -206,6 +220,26 @@ body {
 .board-item.selected {
   background: #d8ccb6;
   border: 1px solid #a89574;
+}
+
+.threads-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.threads-header h2 {
+  margin: 0;
+}
+
+.thread-search {
+  flex: 1;
+  margin-top: 0;
+  padding: 3px 6px;
+  font-size: 11px;
+  border: 1px solid #ad9f87;
+  background: #faf8f3;
 }
 
 .threads table {

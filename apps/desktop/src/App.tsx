@@ -184,6 +184,9 @@ export default function App() {
   const [ngPanelOpen, setNgPanelOpen] = useState(false);
   const [ngInput, setNgInput] = useState("");
   const [ngInputType, setNgInputType] = useState<"words" | "ids" | "names">("words");
+  const [threadSearchQuery, setThreadSearchQuery] = useState("");
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState(60);
   const [selectedBoard, setSelectedBoard] = useState("Favorite");
   const [selectedThread, setSelectedThread] = useState<number | null>(1);
   const [closedThreadIds, setClosedThreadIds] = useState<number[]>([]);
@@ -672,7 +675,13 @@ export default function App() {
         }))
       : fallbackThreadItems
   ).slice(0, 80);
-  const visibleThreadItems = threadItems.filter((t) => !closedThreadIds.includes(t.id));
+  const visibleThreadItems = threadItems.filter((t) => {
+    if (closedThreadIds.includes(t.id)) return false;
+    if (threadSearchQuery.trim()) {
+      return t.title.toLowerCase().includes(threadSearchQuery.trim().toLowerCase());
+    }
+    return true;
+  });
   const selectedThreadItem = visibleThreadItems.find((t) => t.id === selectedThread) ?? null;
   const unreadThreadCount = visibleThreadItems.filter((t) => !threadReadMap[t.id]).length;
   const selectedThreadLabel = selectedThreadItem ? `#${selectedThreadItem.id}` : "-";
@@ -1088,6 +1097,14 @@ export default function App() {
     row?.scrollIntoView({ block: "nearest" });
   }, [selectedResponse]);
 
+  useEffect(() => {
+    if (!autoRefreshEnabled || !isTauriRuntime()) return;
+    const id = setInterval(() => {
+      void fetchResponsesFromCurrent();
+    }, autoRefreshInterval * 1000);
+    return () => clearInterval(id);
+  }, [autoRefreshEnabled, autoRefreshInterval, threadUrl]);
+
   return (
     <div
       className="shell"
@@ -1113,6 +1130,14 @@ export default function App() {
         <button onClick={reopenLastClosedThread} disabled={!hasReopenableClosedThread}>
           Undo Close
         </button>
+        <label className="auto-refresh-toggle">
+          <input
+            type="checkbox"
+            checked={autoRefreshEnabled}
+            onChange={(e) => setAutoRefreshEnabled(e.target.checked)}
+          />
+          Auto ({autoRefreshInterval}s)
+        </label>
         <button onClick={() => setNgPanelOpen((v) => !v)}>NG Filter</button>
         <button onClick={resetLayout}>Reset Layout</button>
         <span className="shortcut-hint">
@@ -1220,7 +1245,15 @@ export default function App() {
           onClick={(e) => e.stopPropagation()}
         />
         <section className="pane threads">
-          <h2>Threads</h2>
+          <div className="threads-header">
+            <h2>Threads</h2>
+            <input
+              className="thread-search"
+              value={threadSearchQuery}
+              onChange={(e) => setThreadSearchQuery(e.target.value)}
+              placeholder="Search..."
+            />
+          </div>
           <div className="pane-meta">
             <strong>Rows</strong> {visibleThreadItems.length}/{threadItems.length} | <strong>Closed</strong>{" "}
             {closedThreadIds.length} | <strong>Selected</strong>{" "}

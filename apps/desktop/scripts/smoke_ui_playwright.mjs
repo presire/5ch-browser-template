@@ -274,6 +274,24 @@ try {
   assert(responseMeta.includes("Rows"), "response pane meta should show Rows");
   console.log("smoke-ui: response pane meta ok");
 
+  // thread search input exists and filters
+  const threadSearch = await page.$(".thread-search");
+  assert(threadSearch, "thread search input should exist");
+  await threadSearch.fill("nonexistentxyz123");
+  await new Promise((r) => setTimeout(r, 100));
+  const filteredRows = await page.$$eval(".threads tbody tr", (rows) => rows.length);
+  assert(filteredRows === 0, `search filter should hide all rows for nonsense query, got ${filteredRows}`);
+  await threadSearch.fill("");
+  await new Promise((r) => setTimeout(r, 100));
+  const restoredRows = await page.$$eval(".threads tbody tr", (rows) => rows.length);
+  assert(restoredRows > 0, "clearing search should restore thread rows");
+  console.log("smoke-ui: thread search filter ok");
+
+  // auto-refresh toggle exists
+  const autoRefreshToggle = await page.$(".auto-refresh-toggle input");
+  assert(autoRefreshToggle, "auto-refresh toggle should exist in toolbar");
+  console.log("smoke-ui: auto-refresh toggle ok");
+
   console.log("smoke-ui: ok");
 } finally {
   if (browser) {
