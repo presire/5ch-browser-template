@@ -400,6 +400,11 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+}
+.response-id-cell:hover {
+  text-decoration: underline;
+  color: #204f8a;
 }
 
 .row-splitter {
@@ -557,6 +562,12 @@ body {
 }
 
 .selected-row td {
+  background: #e8dcc5;
+}
+.threads tbody tr:nth-child(even) td {
+  background: #f5f0e6;
+}
+.threads tbody tr:nth-child(even).selected-row td {
   background: #e8dcc5;
 }
 .response-layout tbody tr:nth-child(even) td {

@@ -1234,7 +1234,12 @@ export default function App() {
       }
       if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
         e.preventDefault();
-        appendComposeQuote(`>>${selectedResponse}`);
+        const sel = window.getSelection()?.toString().trim();
+        if (sel) {
+          appendComposeQuote(`>>${selectedResponse}\n${sel}`);
+        } else {
+          appendComposeQuote(`>>${selectedResponse}`);
+        }
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -2044,7 +2049,9 @@ export default function App() {
             <span>{composeBody.length}文字</span>
             <span>{composeBody.split("\n").length}行</span>
           </div>
-          {composePreview && <pre className="compose-preview">{composeBody || "(空)"}</pre>}
+          {composePreview && (
+            <div className="compose-preview" dangerouslySetInnerHTML={renderResponseBody(composeBody || "(空)")} />
+          )}
           <div className="compose-actions">
             <button onClick={probePostConfirmFromCompose}>確認</button>
             <button onClick={probePostFinalizePreviewFromCompose}>最終フォーム</button>

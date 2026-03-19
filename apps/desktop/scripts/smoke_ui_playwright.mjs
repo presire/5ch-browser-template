@@ -715,6 +715,45 @@ try {
   assert(idCell, "response ID cell should exist");
   console.log("smoke-ui: id popup structure ok");
 
+  // --- thread row striping ---
+  const threadRows = await page.$$(".threads tbody tr");
+  if (threadRows.length >= 2) {
+    const bg0 = await threadRows[0].evaluate((el) => window.getComputedStyle(el.querySelector("td")).backgroundColor);
+    const bg1 = await threadRows[1].evaluate((el) => window.getComputedStyle(el.querySelector("td")).backgroundColor);
+    assert(bg0 !== bg1, "thread rows should have alternating backgrounds");
+  }
+  console.log("smoke-ui: thread row striping ok");
+
+  // --- compose preview renders HTML ---
+  await page.evaluate(() => {
+    const rows = document.querySelectorAll(".threads tbody tr");
+    if (rows[0]) rows[0].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await new Promise((r) => setTimeout(r, 200));
+  await page.keyboard.press("r");
+  await new Promise((r) => setTimeout(r, 200));
+  const previewCheckbox = await page.$('.compose-window input[type="checkbox"]');
+  // Find the プレビュー checkbox (first unchecked one or search by label)
+  const checkboxes = await page.$$('.compose-window input[type="checkbox"]');
+  for (const cb of checkboxes) {
+    const label = await cb.evaluate((el) => el.parentElement?.textContent?.trim());
+    if (label?.includes("プレビュー")) {
+      await cb.click();
+      break;
+    }
+  }
+  await new Promise((r) => setTimeout(r, 200));
+  const previewDiv = await page.$(".compose-preview");
+  assert(previewDiv, "compose preview should render as div");
+  const previewTag = await previewDiv.evaluate((el) => el.tagName.toLowerCase());
+  assert(previewTag === "div", `compose preview should be div, got ${previewTag}`);
+  console.log("smoke-ui: compose preview html ok");
+
+  // close compose
+  const composeCloseEnd = await page.$(".compose-header button:last-child");
+  if (composeCloseEnd) await composeCloseEnd.click();
+  await new Promise((r) => setTimeout(r, 100));
+
   console.log("smoke-ui: ok");
 } finally {
   if (browser) {
