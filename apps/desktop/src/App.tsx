@@ -74,6 +74,10 @@ const MIN_BOARD_PANE_PX = 160;
 const MIN_THREAD_PANE_PX = 280;
 const MIN_RESPONSE_PANE_PX = 360;
 const SPLITTER_PX = 6;
+const DEFAULT_BOARD_PANE_PX = 220;
+const DEFAULT_THREAD_PANE_PX = 420;
+const DEFAULT_RESPONSE_TOP_RATIO = 42;
+const LAYOUT_PREFS_KEY = "desktop.layoutPrefs.v1";
 
 type ResizeDragState =
   | { mode: "board-thread"; startX: number; startBoardPx: number; startThreadPx: number }
@@ -115,9 +119,9 @@ export default function App() {
   const [threadReadMap, setThreadReadMap] = useState<Record<number, boolean>>({ 1: false, 2: true });
   const [threadMenu, setThreadMenu] = useState<{ x: number; y: number; threadId: number } | null>(null);
   const [responseMenu, setResponseMenu] = useState<{ x: number; y: number; responseId: number } | null>(null);
-  const [boardPanePx, setBoardPanePx] = useState(220);
-  const [threadPanePx, setThreadPanePx] = useState(420);
-  const [responseTopRatio, setResponseTopRatio] = useState(42);
+  const [boardPanePx, setBoardPanePx] = useState(DEFAULT_BOARD_PANE_PX);
+  const [threadPanePx, setThreadPanePx] = useState(DEFAULT_THREAD_PANE_PX);
+  const [responseTopRatio, setResponseTopRatio] = useState(DEFAULT_RESPONSE_TOP_RATIO);
   const resizeDragRef = useRef<ResizeDragState | null>(null);
   const responseLayoutRef = useRef<HTMLDivElement | null>(null);
 
@@ -416,6 +420,14 @@ export default function App() {
     setResponseMenu(null);
   };
 
+  const resetLayout = () => {
+    setBoardPanePx(DEFAULT_BOARD_PANE_PX);
+    setThreadPanePx(DEFAULT_THREAD_PANE_PX);
+    setResponseTopRatio(DEFAULT_RESPONSE_TOP_RATIO);
+    localStorage.removeItem(LAYOUT_PREFS_KEY);
+    setStatus("layout reset");
+  };
+
   const beginHorizontalResize = (mode: "board-thread" | "thread-response", event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
     resizeDragRef.current = {
@@ -472,6 +484,23 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [threadUrl, selectedThread, visibleThreadItems]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LAYOUT_PREFS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        boardPanePx?: number;
+        threadPanePx?: number;
+        responseTopRatio?: number;
+      };
+      if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
+      if (typeof parsed.threadPanePx === "number") setThreadPanePx(parsed.threadPanePx);
+      if (typeof parsed.responseTopRatio === "number") setResponseTopRatio(parsed.responseTopRatio);
+    } catch {
+      // ignore invalid localStorage payload
+    }
+  }, []);
 
   useEffect(() => {
     const ensurePaneBounds = () => {
@@ -545,6 +574,15 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const payload = JSON.stringify({
+      boardPanePx,
+      threadPanePx,
+      responseTopRatio,
+    });
+    localStorage.setItem(LAYOUT_PREFS_KEY, payload);
+  }, [boardPanePx, threadPanePx, responseTopRatio]);
+
   return (
     <div
       className="shell"
@@ -560,6 +598,7 @@ export default function App() {
         <button onClick={checkAuthEnv}>Auth Status</button>
         <button onClick={probeAuth}>Auth Probe</button>
         <button onClick={() => setComposeOpen(true)}>Write</button>
+        <button onClick={resetLayout}>Reset Layout</button>
         <span className="shortcut-hint">Shortcuts: Ctrl+Shift+R | Ctrl/Cmd+W | Ctrl+Alt+/ (Cmd+Option+/)</span>
       </div>
       <div className="address-bar">
