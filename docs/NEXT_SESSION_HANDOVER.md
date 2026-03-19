@@ -85,6 +85,11 @@
   - `apps/desktop`: 書き込みプレビューHTML化（>>N / URL描画）
   - `apps/desktop`: テキスト選択引用（R キーで選択テキスト引用）
   - `apps/desktop`: smoke-ui 64項目
+  - `apps/desktop`: ダークテーマ（全コンポーネント対応 + 永続化）
+  - `apps/desktop`: NG正規表現対応（`/pattern/` 構文）
+  - `apps/desktop`: 栞機能（レス位置保存/復元 + ナビバーボタン + スレダブルクリック）
+  - `apps/desktop`: 設定パネル（表示/書き込み/認証/情報）
+  - `apps/desktop`: smoke-ui 68項目
 - Git は初期化済みで、`safe.directory` 設定済み（この環境から `git` 操作可能）。
 - safe probe 実環境検証 (2026-03-19):
   - 全4モード（anonymous/uplift/be_front/be_uplift）で GET=200, confirm=200
@@ -120,6 +125,8 @@
   - `02e74ee` (`desktop: add response ID column with occurrence count and back-reference display`)
   - `1c61934` (`desktop: add ID popup, speed bar, and response row striping`)
   - `83ab141` (`desktop: add compose preview, text selection quoting, and row striping`)
+  - `b9daef6` (`desktop: add dark theme, NG regex, and bookmark navigation`)
+  - `ff4ad16` (`desktop: add settings panel, thread double-click bookmark jump`)
 
 ## 仕様確定ポイント（重要）
 - 5ch基盤:
@@ -146,9 +153,9 @@
 2. geronimo互換UI継続改善
    - スレ一覧の列幅ドラッグリサイズ
    - レス本文の画像プレフェッチ/キャッシュ
-   - スレの栞（ブックマーク位置）機能
-   - NG正規表現対応
-   - テーマ切り替え（ダーク/ライト）
+   - スレ書き込みログ/履歴
+   - ポータブル `data/` ディレクトリ対応
+   - ファイルログ出力
 3. リリース運用実地
    - `scripts/prepare_release_metadata.py` で実ZIPから `latest.json` 生成 + strict検証
    - `apps/landing/public/latest.json` へ反映

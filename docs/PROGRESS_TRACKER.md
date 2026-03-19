@@ -103,6 +103,13 @@
 - [x] desktop: テキスト選択引用（R キーで選択テキストも含めて引用）
 - [x] desktop: ID セルにホバーエフェクト追加
 - [x] desktop: smoke-ui テスト 64項目
+- [x] desktop: ダークテーマ（表示 → ダークテーマ、全コンポーネント対応 + 永続化）
+- [x] desktop: NG正規表現対応（`/pattern/` 構文でワード/名前/スレタイを正規表現マッチ）
+- [x] desktop: 栞（ブックマーク）機能（レス位置をlocalStorageに保存、タブ切替/閉じ時に自動保存）
+- [x] desktop: レスナビに栞ボタン追加（保存位置へジャンプ）
+- [x] desktop: スレ行ダブルクリックで栞位置へジャンプ
+- [x] desktop: 設定パネル（表示/書き込み/認証状態/情報の4セクション）
+- [x] desktop: smoke-ui テスト 68項目
 
 ## 直近タスク（優先順）
 1. `core-fetch`: 非空メッセージでの confirm form 検出を確認（safe probe 完了: 2026-03-19）

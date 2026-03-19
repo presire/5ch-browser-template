@@ -1,31 +1,31 @@
-# Deployment Runbook
+# デプロイ手順書
 
-## 1. Goal
-- Landing page is hosted on Cloudflare Pages (Vite + React static site).
-- ZIP binaries are hosted on GitHub Releases.
-- App update metadata is served as `latest.json` from Pages.
+## 1. 概要
+- ランディングページは Cloudflare Pages でホスティング（Vite + React 静的サイト）。
+- ZIP バイナリは GitHub Releases でホスティング。
+- アプリ更新メタデータは `latest.json` として Pages から配信。
 
-Repository location:
-- Landing app: `apps/landing`
-- Metadata file: `apps/landing/public/latest.json`
+リポジトリ上の配置:
+- ランディングアプリ: `apps/landing`
+- メタデータファイル: `apps/landing/public/latest.json`
 
-## 2. Release Artifacts
+## 2. リリース成果物
 - Windows: `5ch-browser-win-x64.zip`
 - macOS: `5ch-browser-mac-arm64.zip`
 
-Keep file names stable for easier automation.
+自動化しやすいようファイル名は固定とする。
 
-## 3. GitHub Release Procedure
-1. Build ZIP artifacts for both platforms.
-2. Create a release tag (example: `v0.2.0`).
-3. Upload ZIP files to the release.
-4. Copy the public release page URL.
+## 3. GitHub Release 手順
+1. 両プラットフォーム用の ZIP 成果物をビルドする。
+2. リリースタグを作成する（例: `v0.2.0`）。
+3. ZIP ファイルをリリースにアップロードする。
+4. 公開リリースページの URL をコピーする。
 
-Example:
+例:
 - `https://github.com/kiyohken2000/5ch-browser-template/releases/tag/v0.2.0`
 
-## 4. Generate `latest.json`
-Use the one-shot script from repository root:
+## 4. `latest.json` の生成
+リポジトリルートからワンショットスクリプトを実行:
 
 ```powershell
 python scripts/prepare_release_metadata.py `
@@ -36,17 +36,17 @@ python scripts/prepare_release_metadata.py `
   --mac-zip "C:\path\to\5ch-browser-mac-arm64.zip"
 ```
 
-This command:
-1. generates metadata with SHA-256 hashes and sizes
-2. validates the result in strict mode
+このコマンドは以下を実行する:
+1. SHA-256 ハッシュとファイルサイズを含むメタデータを生成
+2. strict モードで結果を検証
 
-Output path:
-- `apps/landing/public/latest.json` (default)
+出力先:
+- `apps/landing/public/latest.json`（デフォルト）
 
-## 5. Cloudflare Pages Deploy
-1. Place generated `latest.json` in landing project `public/latest.json`.
-2. Update landing page content if needed.
-3. Build landing:
+## 5. Cloudflare Pages デプロイ
+1. 生成された `latest.json` をランディングプロジェクトの `public/latest.json` に配置する。
+2. 必要に応じてランディングページの内容を更新する。
+3. ランディングをビルドする:
 
 ```powershell
 cd apps/landing
@@ -54,34 +54,34 @@ npm install
 npm run build
 ```
 
-4. Deploy Pages using `apps/landing/dist`.
+4. `apps/landing/dist` を使って Pages にデプロイする。
 
-After deploy, verify:
-- `https://<your-pages-domain>/latest.json` returns `200`.
-- JSON fields match the release.
+デプロイ後の確認事項:
+- `https://<Pages ドメイン>/latest.json` が `200` を返すこと。
+- JSON の各フィールドがリリース内容と一致すること。
 
-Local validation before deploy:
+デプロイ前のローカル検証:
 
 ```powershell
 cd apps/landing
 npm run check:latest
 ```
 
-Strict validation for release metadata (no placeholders):
+リリースメタデータの strict 検証（プレースホルダー不可）:
 
 ```powershell
 python scripts/validate_latest_json.py --file apps/landing/public/latest.json --strict
 ```
 
-Landing-local shortcut:
+ランディング側のショートカット:
 
 ```powershell
 cd apps/landing
 npm run check:latest:strict
 ```
 
-## 6. `latest.json` Format
-Example:
+## 6. `latest.json` のフォーマット
+例:
 
 ```json
 {
@@ -103,14 +103,14 @@ Example:
 }
 ```
 
-## 7. Post-Release Verification
-1. Desktop app: run update check against deployed `latest.json`.
-2. Confirm:
-   - `hasUpdate=true` for older app versions
-   - `hasUpdate=false` for current version
-3. Confirm "Open download page" opens release page.
+## 7. リリース後の確認
+1. デスクトップアプリ: デプロイ済み `latest.json` に対して更新チェックを実行する。
+2. 確認事項:
+   - 古いバージョンのアプリでは `hasUpdate=true` となること
+   - 現行バージョンでは `hasUpdate=false` となること
+3. 「ダウンロードページを開く」でリリースページが開くことを確認する。
 
-## 8. Operational Rules
-- Do not host ZIP files on Pages.
-- Keep `latest.json` cache TTL short.
-- Never include secrets in `latest.json`.
+## 8. 運用ルール
+- ZIP ファイルを Pages でホスティングしないこと。
+- `latest.json` のキャッシュ TTL は短く設定すること。
+- `latest.json` にシークレット情報を含めないこと。
