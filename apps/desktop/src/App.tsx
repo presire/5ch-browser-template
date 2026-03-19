@@ -394,6 +394,7 @@ export default function App() {
       : fallbackThreadItems
   ).slice(0, 80);
   const visibleThreadItems = threadItems.filter((t) => !closedThreadIds.includes(t.id));
+  const selectedThreadItem = visibleThreadItems.find((t) => t.id === selectedThread) ?? null;
   const responseItems = [
     { id: 1, name: "Anonymous", time: "2026/03/07 10:00", text: "post flow trace ready" },
     { id: 2, name: "Anonymous", time: "2026/03/07 10:02", text: "be/uplift/donguri login checked" },
@@ -419,6 +420,54 @@ export default function App() {
   const markThreadRead = (threadId: number, value: boolean) => {
     setThreadReadMap((prev) => ({ ...prev, [threadId]: value }));
     setThreadMenu(null);
+  };
+
+  const closeThread = (threadId: number) => {
+    const ids = visibleThreadItems.map((t) => t.id);
+    const idx = ids.indexOf(threadId);
+    if (idx < 0) return;
+    setClosedThreadIds((prev) => (prev.includes(threadId) ? prev : [...prev, threadId]));
+    setSelectedThread((prev) => {
+      if (prev !== threadId) return prev;
+      const nextIds = ids.filter((id) => id !== threadId);
+      return nextIds.length > 0 ? nextIds[Math.min(idx, nextIds.length - 1)] : null;
+    });
+    setThreadMenu(null);
+    setStatus(`thread closed: #${threadId}`);
+  };
+
+  const closeOtherThreads = (threadId: number) => {
+    const keep = threadItems.find((t) => t.id === threadId);
+    if (!keep) return;
+    const nextClosed = threadItems.filter((t) => t.id !== threadId).map((t) => t.id);
+    setClosedThreadIds(nextClosed);
+    setSelectedThread(threadId);
+    setThreadMenu(null);
+    setStatus(`other threads closed; keep #${threadId}`);
+  };
+
+  const reopenAllThreads = () => {
+    setClosedThreadIds([]);
+    if (selectedThread == null && threadItems.length > 0) setSelectedThread(threadItems[0].id);
+    setThreadMenu(null);
+    setStatus("all threads reopened");
+  };
+
+  const copyThreadUrl = async (threadId: number) => {
+    const target = threadItems.find((t) => t.id === threadId);
+    if (!target || !("threadUrl" in target) || typeof target.threadUrl !== "string") {
+      setStatus(`thread url not found: #${threadId}`);
+      setThreadMenu(null);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(target.threadUrl);
+      setStatus(`thread url copied: #${threadId}`);
+    } catch {
+      setStatus(`thread url: ${target.threadUrl}`);
+    } finally {
+      setThreadMenu(null);
+    }
   };
 
   const runResponseAction = (label: string) => {
@@ -671,6 +720,11 @@ export default function App() {
         />
         <section className="pane threads">
           <h2>Threads</h2>
+          <div className="pane-meta">
+            <strong>Rows</strong> {visibleThreadItems.length}/{threadItems.length} | <strong>Closed</strong>{" "}
+            {closedThreadIds.length} | <strong>Selected</strong>{" "}
+            {selectedThreadItem ? `#${selectedThreadItem.id} ${selectedThreadItem.res}res` : "(none)"}
+          </div>
           <table>
             <thead>
               <tr>
@@ -723,6 +777,10 @@ export default function App() {
         />
         <section className="pane responses">
           <h2>Responses</h2>
+          <div className="pane-meta">
+            <strong>Rows</strong> {responseItems.length} | <strong>Selected</strong> #{activeResponse.id}/
+            {responseItems.length} | <strong>Split</strong> {Math.round(responseTopRatio)}%
+          </div>
           <div
             ref={responseLayoutRef}
             className="response-layout"
@@ -872,6 +930,12 @@ export default function App() {
         <div className="thread-menu" style={{ left: threadMenu.x, top: threadMenu.y }} onClick={(e) => e.stopPropagation()}>
           <button onClick={() => markThreadRead(threadMenu.threadId, true)}>Mark as Read</button>
           <button onClick={() => markThreadRead(threadMenu.threadId, false)}>Mark as Unread</button>
+          <button onClick={() => closeThread(threadMenu.threadId)}>Close Thread</button>
+          <button onClick={() => closeOtherThreads(threadMenu.threadId)}>Close Others</button>
+          <button onClick={reopenAllThreads} disabled={closedThreadIds.length === 0}>
+            Reopen All
+          </button>
+          <button onClick={() => void copyThreadUrl(threadMenu.threadId)}>Copy Thread URL</button>
         </div>
       )}
       {responseMenu && (

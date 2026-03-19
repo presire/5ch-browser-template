@@ -97,6 +97,19 @@ body {
   color: var(--sub);
 }
 
+.pane-meta {
+  margin: 0 0 8px;
+  border: 1px solid #b7aa95;
+  background: #f5f0e6;
+  padding: 4px 6px;
+  font-size: 11px;
+  color: var(--sub);
+}
+
+.pane-meta strong {
+  color: #463d30;
+}
+
 .boards ul {
   margin: 0;
   padding-left: 18px;
@@ -337,6 +350,10 @@ pre {
   gap: 2px;
   padding: 4px;
   min-width: 160px;
+}
+
+.thread-menu button {
+  text-align: left;
 }
 
 .response-menu {
