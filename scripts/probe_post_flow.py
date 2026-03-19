@@ -303,6 +303,9 @@ def main() -> int:
     report_path = Path(args.report_path).resolve()
 
     allow_real_submit = bool(args.allow_real_submit and args.real_submit_token == REAL_SUBMIT_TOKEN)
+    if allow_real_submit and not args.message.strip():
+        print("ERROR: real submit requires non-empty --message", file=sys.stderr)
+        return 2
 
     anon = requests.Session()
     anon.headers.update({"User-Agent": UA})

@@ -1,5 +1,5 @@
 {
-  "executed_at": "2026-03-19T19:11:44.092706",
+  "executed_at": "2026-03-19T19:18:16.633721",
   "thread_url": "https://mao.5ch.io/test/read.cgi/ngt/9240230711/",
   "allow_real_submit_requested": false,
   "allow_real_submit_effective": false,
@@ -106,8 +106,7 @@
       "confirm_location": null,
       "confirm_markers": [
         "confirm",
-        "error",
-        "login"
+        "error"
       ],
       "confirm_form_action": null,
       "confirm_form_field_names": [],

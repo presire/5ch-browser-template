@@ -24,6 +24,7 @@
   - `apps/desktop`: Webプレビューでは thread fetch を抑止し、Tauri必須メッセージを表示
   - `CI`: Windowsジョブで desktop smoke-ui を実行するよう更新
   - `scripts/probe_post_flow.py`: confirm/finalize解析を追加し、real submit を二重ガード化
+  - `scripts/probe_post_flow.py`: real submit時は非空 `--message` 必須（空本文を事前拒否）
 - Git は初期化済みで、`safe.directory` 設定済み（この環境から `git` 操作可能）。
 - 直近反映コミット:
   - `d7d1666` (`desktop: add draggable pane splitters for three-pane layout`)

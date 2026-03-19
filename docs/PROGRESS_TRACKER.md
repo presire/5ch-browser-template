@@ -32,6 +32,7 @@
 - [x] スレ復元操作を追加（Reopen Last / `Ctrl/Cmd+Shift+W`）
 - [x] CIに desktop UIスモークテストを追加（Windows job）
 - [x] `scripts/probe_post_flow.py` を拡張（confirm解析 + finalize解析 + real submit二重ガード）
+- [x] `scripts/probe_post_flow.py` real submit時に空本文を拒否する事前ガードを追加
 - [x] ツールバーに `Undo Close` を追加し、`Ctrl/Cmd+W` 経由の履歴復元も統一
 - [x] ステータスバーを実データ連動化（TS/US/Board/Thread/Res/Runtime）
 - [x] Webプレビュー時の `fetch_thread_list` 呼び出しをガード（Tauri必須を明示）
