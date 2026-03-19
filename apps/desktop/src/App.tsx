@@ -479,11 +479,31 @@ export default function App() {
         const idx = ids.indexOf(cur);
         const next = ids[(idx + 1 + ids.length) % ids.length];
         setSelectedThread(next);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && e.key === "ArrowLeft") {
+        e.preventDefault();
+        setThreadPanePx((prev) => Math.max(prev - 24, MIN_THREAD_PANE_PX));
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && e.key === "ArrowRight") {
+        e.preventDefault();
+        setThreadPanePx((prev) => prev + 24);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && e.key === "ArrowUp") {
+        e.preventDefault();
+        setResponseTopRatio((prev) => clamp(prev - 3, 24, 76));
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && e.key === "ArrowDown") {
+        e.preventDefault();
+        setResponseTopRatio((prev) => clamp(prev + 3, 24, 76));
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [threadUrl, selectedThread, visibleThreadItems]);
+  }, [selectedThread, visibleThreadItems]);
 
   useEffect(() => {
     try {
@@ -599,7 +619,9 @@ export default function App() {
         <button onClick={probeAuth}>Auth Probe</button>
         <button onClick={() => setComposeOpen(true)}>Write</button>
         <button onClick={resetLayout}>Reset Layout</button>
-        <span className="shortcut-hint">Shortcuts: Ctrl+Shift+R | Ctrl/Cmd+W | Ctrl+Alt+/ (Cmd+Option+/)</span>
+        <span className="shortcut-hint">
+          Shortcuts: Ctrl+Shift+R | Ctrl/Cmd+W | Ctrl+Alt+/ | Ctrl/Cmd+Alt+Arrows
+        </span>
       </div>
       <div className="address-bar">
         <span>URL</span>
