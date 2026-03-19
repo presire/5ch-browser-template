@@ -33,6 +33,8 @@
 - [x] CIに desktop UIスモークテストを追加（Windows job）
 - [x] `scripts/probe_post_flow.py` を拡張（confirm解析 + finalize解析 + real submit二重ガード）
 - [x] ツールバーに `Undo Close` を追加し、`Ctrl/Cmd+W` 経由の履歴復元も統一
+- [x] ステータスバーを実データ連動化（TS/US/Board/Thread/Res/Runtime）
+- [x] Webプレビュー時の `fetch_thread_list` 呼び出しをガード（Tauri必須を明示）
 
 ## 直近タスク（優先順）
 1. `core-fetch`: 実投稿フロー（confirm -> submit）本実装の実環境検証

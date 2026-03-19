@@ -20,6 +20,8 @@
   - `apps/desktop`: Playwright UIスモークテストを追加（`npm run test:smoke-ui`）
   - `apps/desktop`: スレ復元操作を追加（`Reopen Last` / `Ctrl/Cmd+Shift+W`）
   - `apps/desktop`: ツールバーから `Undo Close` 操作可能（ショートカット閉鎖履歴と統一）
+  - `apps/desktop`: ステータスバーを実データ連動化し、`Runtime`（TAURI/WEB）を表示
+  - `apps/desktop`: Webプレビューでは thread fetch を抑止し、Tauri必須メッセージを表示
   - `CI`: Windowsジョブで desktop smoke-ui を実行するよう更新
   - `scripts/probe_post_flow.py`: confirm/finalize解析を追加し、real submit を二重ガード化
 - Git は初期化済みで、`safe.directory` 設定済み（この環境から `git` 操作可能）。
@@ -37,6 +39,8 @@
   - `aa12d22` (`desktop: hide and cleanup cmd processes in smoke-ui runner`)
   - `16217f6` (`scripts: extend post flow probe with confirm/finalize safety flow`)
   - `678af95` (`desktop: add undo-close toolbar action and fix close history`)
+  - `dd6b8aa` (`desktop: make status bar dynamic and support Enter in URL bar`)
+  - `286156a` (`desktop: show runtime mode and guard thread fetch outside tauri`)
 
 ## 仕様確定ポイント（重要）
 - 5ch基盤:
