@@ -103,6 +103,7 @@ const DEFAULT_THREAD_PANE_PX = 420;
 const DEFAULT_RESPONSE_TOP_RATIO = 42;
 const LAYOUT_PREFS_KEY = "desktop.layoutPrefs.v1";
 const COMPOSE_PREFS_KEY = "desktop.composePrefs.v1";
+const BOOKMARK_KEY = "desktop.bookmarks.v1";
 const MENU_EDGE_PADDING = 8;
 
 type ResizeDragState =
@@ -231,6 +232,7 @@ export default function App() {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [fontSize, setFontSize] = useState(12);
+  const [darkMode, setDarkMode] = useState(false);
   const [idPopup, setIdPopup] = useState<{ x: number; y: number; id: string } | null>(null);
   const [composePos, setComposePos] = useState<{ x: number; y: number } | null>(null);
   const composeDragRef = useRef<{ startX: number; startY: number; startPosX: number; startPosY: number } | null>(null);
@@ -375,15 +377,24 @@ export default function App() {
     setStatus(`removed NG ${type}: ${value}`);
   };
 
+  const ngMatch = (pattern: string, target: string): boolean => {
+    if (pattern.startsWith("/") && pattern.endsWith("/") && pattern.length > 2) {
+      try {
+        return new RegExp(pattern.slice(1, -1), "i").test(target);
+      } catch {
+        return false;
+      }
+    }
+    return target.toLowerCase().includes(pattern.toLowerCase());
+  };
+
   const isNgFiltered = (resp: { name: string; time: string; text: string }): boolean => {
     if (ngFilters.words.length === 0 && ngFilters.ids.length === 0 && ngFilters.names.length === 0) return false;
-    const bodyLower = resp.text.toLowerCase();
-    const nameLower = resp.name.toLowerCase();
     for (const w of ngFilters.words) {
-      if (bodyLower.includes(w.toLowerCase())) return true;
+      if (ngMatch(w, resp.text)) return true;
     }
     for (const n of ngFilters.names) {
-      if (nameLower.includes(n.toLowerCase())) return true;
+      if (ngMatch(n, resp.name)) return true;
     }
     // ID is typically in dateAndId like "2026/03/07(金) 10:00:00.00 ID:abcdef"
     if (ngFilters.ids.length > 0) {
@@ -395,6 +406,24 @@ export default function App() {
       }
     }
     return false;
+  };
+
+  const saveBookmark = (url: string, responseNo: number) => {
+    try {
+      const raw = localStorage.getItem(BOOKMARK_KEY);
+      const data: Record<string, number> = raw ? JSON.parse(raw) : {};
+      data[url] = responseNo;
+      localStorage.setItem(BOOKMARK_KEY, JSON.stringify(data));
+    } catch { /* ignore */ }
+  };
+
+  const loadBookmark = (url: string): number | null => {
+    try {
+      const raw = localStorage.getItem(BOOKMARK_KEY);
+      if (!raw) return null;
+      const data: Record<string, number> = JSON.parse(raw);
+      return data[url] ?? null;
+    } catch { return null; }
   };
 
   const toggleCategory = (name: string) => {
@@ -413,12 +442,14 @@ export default function App() {
         const curUrl = threadTabs[activeTabIndex].threadUrl;
         const cached = tabCacheRef.current.get(curUrl);
         if (cached) cached.selectedResponse = selectedResponse;
+        saveBookmark(curUrl, selectedResponse);
       }
       setActiveTabIndex(existingIndex);
       const cached = tabCacheRef.current.get(url);
       if (cached && cached.responses.length > 0) {
         setFetchedResponses(cached.responses);
-        setSelectedResponse(cached.selectedResponse);
+        const bm = loadBookmark(url);
+        setSelectedResponse(bm ?? cached.selectedResponse);
       }
       setThreadUrl(url);
       setLocationInput(url);
@@ -428,12 +459,14 @@ export default function App() {
       const curUrl = threadTabs[activeTabIndex].threadUrl;
       const cached = tabCacheRef.current.get(curUrl);
       if (cached) cached.selectedResponse = selectedResponse;
+      saveBookmark(curUrl, selectedResponse);
     }
     const newTabs = [...threadTabs, { threadUrl: url, title }];
     setThreadTabs(newTabs);
     setActiveTabIndex(newTabs.length - 1);
     setFetchedResponses([]);
-    setSelectedResponse(1);
+    const bm = loadBookmark(url);
+    setSelectedResponse(bm ?? 1);
     setThreadUrl(url);
     setLocationInput(url);
     void fetchResponsesFromCurrent(url);
@@ -441,6 +474,7 @@ export default function App() {
 
   const closeTab = (index: number) => {
     if (index < 0 || index >= threadTabs.length) return;
+    if (index === activeTabIndex) saveBookmark(threadTabs[index].threadUrl, selectedResponse);
     tabCacheRef.current.delete(threadTabs[index].threadUrl);
     const nextTabs = threadTabs.filter((_, i) => i !== index);
     setThreadTabs(nextTabs);
@@ -857,7 +891,7 @@ export default function App() {
   const visibleThreadItems = threadItems
     .filter((t) => {
       if (closedThreadIds.includes(t.id)) return false;
-      if (ngFilters.words.some((w) => t.title.toLowerCase().includes(w.toLowerCase()))) return false;
+      if (ngFilters.words.some((w) => ngMatch(w, t.title))) return false;
       if (threadSearchQuery.trim()) {
         return t.title.toLowerCase().includes(threadSearchQuery.trim().toLowerCase());
       }
@@ -1255,11 +1289,13 @@ export default function App() {
         threadPanePx?: number;
         responseTopRatio?: number;
         fontSize?: number;
+        darkMode?: boolean;
       };
       if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
       if (typeof parsed.threadPanePx === "number") setThreadPanePx(parsed.threadPanePx);
       if (typeof parsed.responseTopRatio === "number") setResponseTopRatio(parsed.responseTopRatio);
       if (typeof parsed.fontSize === "number") setFontSize(parsed.fontSize);
+      if (typeof parsed.darkMode === "boolean") setDarkMode(parsed.darkMode);
     } catch {
       // ignore invalid localStorage payload
     }
@@ -1370,9 +1406,10 @@ export default function App() {
       threadPanePx,
       responseTopRatio,
       fontSize,
+      darkMode,
     });
     localStorage.setItem(LAYOUT_PREFS_KEY, payload);
-  }, [boardPanePx, threadPanePx, responseTopRatio, fontSize]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, fontSize, darkMode]);
 
   useEffect(() => {
     localStorage.setItem(COMPOSE_PREFS_KEY, JSON.stringify({ name: composeName, mail: composeMail, sage: composeSage }));
@@ -1401,7 +1438,7 @@ export default function App() {
 
   return (
     <div
-      className="shell"
+      className={`shell${darkMode ? " dark" : ""}`}
       style={{ fontSize: `${fontSize}px` }}
       onClick={() => {
         setThreadMenu(null);
@@ -1433,6 +1470,8 @@ export default function App() {
             { text: "文字サイズリセット", action: () => setFontSize(12) },
             { text: "sep" },
             { text: "レイアウトリセット", action: () => resetLayout() },
+            { text: "sep" },
+            { text: darkMode ? "ライトテーマ" : "ダークテーマ", action: () => setDarkMode((v) => !v) },
           ]},
           { label: "板", items: [
             { text: "板一覧を取得", action: () => fetchBoardCategories() },
@@ -1863,6 +1902,17 @@ export default function App() {
                 onMouseDown={beginResponseRowResize}
                 onClick={(e) => e.stopPropagation()}
               />
+              <button onClick={() => {
+                const bm = loadBookmark(threadUrl);
+                if (bm && visibleResponseItems.some((r) => r.id === bm)) {
+                  setSelectedResponse(bm);
+                  setStatus(`栞: >>${bm}`);
+                } else {
+                  setStatus("栞なし");
+                }
+              }}>
+                栞
+              </button>
               <button onClick={() => { if (visibleResponseItems.length > 0) setSelectedResponse(visibleResponseItems[visibleResponseItems.length - 1].id); }}>
                 最新
               </button>

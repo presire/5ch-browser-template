@@ -1175,3 +1175,260 @@ pre {
     grid-template-rows: 1fr;
   }
 }
+
+/* ===== Dark Theme ===== */
+.dark {
+  --bg: #1e1e1e;
+  --panel: #252526;
+  --line: #3c3c3c;
+  --ink: #d4d4d4;
+  --sub: #9e9e9e;
+  --accent: #e07040;
+  --bg-light: #2d2d30;
+  color: var(--ink);
+  background: var(--bg);
+}
+.dark .menu-bar {
+  background: #2d2d30;
+  color: var(--sub);
+  border-color: var(--line);
+}
+.dark .menu-item:hover,
+.dark .menu-item-active {
+  background: #3c3c3c;
+}
+.dark .menu-dropdown {
+  background: #2d2d30;
+  border-color: #555;
+  box-shadow: 2px 2px 6px rgba(0,0,0,0.4);
+}
+.dark .menu-dropdown button:hover {
+  background: #3c3c3c;
+}
+.dark .toolbar {
+  background: #2d2d30;
+  border-color: var(--line);
+}
+.dark .toolbar button {
+  background: #3a3a3a;
+  color: var(--ink);
+  border-color: #555;
+}
+.dark .toolbar button:hover {
+  background: #4a4a4a;
+}
+.dark .url-bar {
+  background: #2d2d30;
+  border-color: var(--line);
+}
+.dark .url-bar input {
+  background: #1e1e1e;
+  color: var(--ink);
+  border-color: #555;
+}
+.dark .pane {
+  background: var(--panel);
+}
+.dark .pane-splitter {
+  background: #3c3c3c;
+}
+.dark .threads th,
+.dark .threads td {
+  border-color: #3c3c3c;
+  color: var(--ink);
+}
+.dark .threads th {
+  background: linear-gradient(#3a3a3a 0, #333 100%);
+  color: var(--sub);
+}
+.dark .response-layout table th {
+  background: linear-gradient(#3a3a3a 0, #333 100%);
+  color: var(--sub);
+  border-color: #3c3c3c;
+}
+.dark .response-layout table td {
+  border-color: #3c3c3c;
+  color: var(--ink);
+}
+.dark .selected-row td {
+  background: #37373d;
+}
+.dark .threads tbody tr:nth-child(even) td {
+  background: #2a2a2e;
+}
+.dark .threads tbody tr:nth-child(even).selected-row td {
+  background: #37373d;
+}
+.dark .response-layout tbody tr:nth-child(even) td {
+  background: #2a2a2e;
+}
+.dark .response-layout tbody tr:nth-child(even).selected-row td {
+  background: #37373d;
+}
+.dark .unread-row td {
+  font-weight: 700;
+}
+.dark .response-viewer {
+  background: #1e1e1e;
+  color: var(--ink);
+}
+.dark .response-viewer article {
+  background: #252526;
+  border-color: #3c3c3c;
+}
+.dark .anchor-ref {
+  color: #6cb6ff;
+}
+.dark .body-link {
+  color: #6cb6ff;
+}
+.dark .back-refs {
+  border-color: #3c3c3c;
+  color: #888;
+}
+.dark .status-bar {
+  background: #2d2d30;
+  border-color: var(--line);
+  color: var(--sub);
+}
+.dark .thread-tab-bar {
+  background: #2d2d30;
+  border-color: var(--line);
+}
+.dark .thread-tab {
+  background: #333;
+  border-color: #3c3c3c;
+  color: var(--sub);
+}
+.dark .thread-tab.active {
+  background: #1e1e1e;
+  color: var(--ink);
+}
+.dark .compose-window {
+  background: #2d2d30;
+  border-color: #555;
+  color: var(--ink);
+  box-shadow: 2px 2px 12px rgba(0,0,0,0.5);
+}
+.dark .compose-header {
+  background: #333;
+  border-color: #3c3c3c;
+}
+.dark .compose-fields input,
+.dark .compose-body {
+  background: #1e1e1e;
+  color: var(--ink);
+  border-color: #555;
+}
+.dark .compose-actions button {
+  background: #3a3a3a;
+  color: var(--ink);
+  border-color: #555;
+}
+.dark .compose-actions button:hover {
+  background: #4a4a4a;
+}
+.dark .dev-panel {
+  background: #252526;
+  border-color: var(--line);
+  color: var(--ink);
+}
+.dark .ng-panel {
+  background: #2d2d30;
+  border-color: #555;
+  color: var(--ink);
+}
+.dark .ng-panel input {
+  background: #1e1e1e;
+  color: var(--ink);
+  border-color: #555;
+}
+.dark .board-item {
+  color: var(--ink);
+}
+.dark .board-item:hover,
+.dark .board-item.selected {
+  background: #37373d;
+}
+.dark .category-header {
+  color: var(--sub);
+}
+.dark .anchor-popup,
+.dark .id-popup {
+  background: #2d2d30;
+  border-color: #555;
+  box-shadow: 2px 2px 6px rgba(0,0,0,0.4);
+  color: var(--ink);
+}
+.dark .id-popup-item:hover {
+  background: #37373d;
+}
+.dark .lightbox-actions button,
+.dark .lightbox-open {
+  background: #333;
+  color: var(--ink);
+  border-color: #555;
+}
+.dark .shortcuts-panel {
+  background: #2d2d30;
+  border-color: #555;
+  color: var(--ink);
+}
+.dark .shortcuts-header {
+  background: #333;
+  border-color: #3c3c3c;
+}
+.dark .shortcut-row kbd {
+  background: #1e1e1e;
+  border-color: #555;
+  color: var(--ink);
+}
+.dark .pane-meta {
+  background: #2d2d30;
+  color: var(--sub);
+  border-color: #3c3c3c;
+}
+.dark .response-nav-bar {
+  background: #2d2d30;
+  border-color: #3c3c3c;
+}
+.dark .response-nav-bar button {
+  background: #3a3a3a;
+  color: var(--ink);
+  border-color: #555;
+}
+.dark .speed-bar {
+  background: rgba(224, 112, 64, 0.2);
+}
+.dark .response-id-cell {
+  color: #888;
+}
+.dark .response-id-cell:hover {
+  color: #6cb6ff;
+}
+.dark .compose-preview {
+  background: #1e1e1e;
+  border-color: #3c3c3c;
+  color: var(--ink);
+}
+.dark .pane-tab-bar button {
+  background: #333;
+  color: var(--sub);
+  border-color: #3c3c3c;
+}
+.dark .pane-tab-bar button.active {
+  background: #252526;
+  color: var(--ink);
+}
+.dark .new-count.has-new {
+  color: #e07040;
+}
+.dark .response-no {
+  color: #6cb6ff;
+}
+.dark .thread-search input,
+.dark .response-jump {
+  background: #1e1e1e;
+  color: var(--ink);
+  border-color: #555;
+}

@@ -754,6 +754,57 @@ try {
   if (composeCloseEnd) await composeCloseEnd.click();
   await new Promise((r) => setTimeout(r, 100));
 
+  // --- dark mode toggle ---
+  const viewMenuForDark = await page.$('.menu-item:has-text("表示")');
+  await viewMenuForDark.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const darkBtn = await page.$('.menu-dropdown button:has-text("ダークテーマ")');
+  assert(darkBtn, "view menu should have dark theme toggle");
+  await darkBtn.click();
+  await new Promise((r) => setTimeout(r, 200));
+  const hasDarkClass = await page.$eval(".shell", (el) => el.classList.contains("dark"));
+  assert(hasDarkClass, "shell should have dark class after toggle");
+  // verify dark background color is applied
+  const darkBg = await page.$eval(".shell", (el) => window.getComputedStyle(el).backgroundColor);
+  assert(darkBg !== "rgb(215, 208, 195)", `dark mode should change background, got ${darkBg}`);
+  // toggle back to light
+  await viewMenuForDark.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const lightBtn = await page.$('.menu-dropdown button:has-text("ライトテーマ")');
+  assert(lightBtn, "dark mode menu should say ライトテーマ");
+  await lightBtn.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const noDarkClass = await page.$eval(".shell", (el) => !el.classList.contains("dark"));
+  assert(noDarkClass, "shell should not have dark class after light toggle");
+  console.log("smoke-ui: dark mode toggle ok");
+
+  // --- bookmark button ---
+  const bookmarkBtn = await page.$('.response-nav-bar button:has-text("栞")');
+  assert(bookmarkBtn, "response nav bar should have bookmark button");
+  console.log("smoke-ui: bookmark button ok");
+
+  // --- NG regex ---
+  // Test regex pattern matching via NG panel
+  const ngBtnForRegex = await page.$(".ng-filter-toggle");
+  if (ngBtnForRegex) await ngBtnForRegex.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const ngWordInputRegex = await page.$('.ng-panel input[type="text"]');
+  if (ngWordInputRegex) {
+    await ngWordInputRegex.fill("/認証.+/");
+    await ngWordInputRegex.press("Enter");
+    await new Promise((r) => setTimeout(r, 200));
+    const threadCountAfterRegex = await page.$$eval(".threads tbody tr", (els) => els.length);
+    assert(threadCountAfterRegex < 2, `NG regex should filter thread, got ${threadCountAfterRegex}`);
+    // remove regex
+    const removeBtnRegex = await page.$('.ng-panel button:has-text("×")');
+    if (removeBtnRegex) await removeBtnRegex.click();
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const ngCloseBtnRegex = await page.$('.ng-panel button:has-text("閉じる")');
+  if (ngCloseBtnRegex) await ngCloseBtnRegex.click();
+  await new Promise((r) => setTimeout(r, 100));
+  console.log("smoke-ui: ng regex ok");
+
   console.log("smoke-ui: ok");
 } finally {
   if (browser) {
