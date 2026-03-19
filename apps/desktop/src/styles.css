@@ -1147,6 +1147,71 @@ pre {
   font-size: 11px;
 }
 
+.settings-panel {
+  background: #efe7d8;
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 24px rgba(20, 20, 20, 0.3);
+  width: min(480px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #e0d5c2;
+}
+.settings-header button {
+  margin-left: auto;
+}
+.settings-body {
+  padding: 8px 12px;
+}
+.settings-body fieldset {
+  border: 1px solid #beb29d;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+.settings-body legend {
+  font-weight: 700;
+  font-size: 12px;
+  padding: 0 4px;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.settings-row input[type="number"] {
+  width: 60px;
+}
+.settings-row select {
+  padding: 2px 4px;
+}
+
+.dark .settings-panel {
+  background: #2d2d30;
+  border-color: #555;
+  color: var(--ink);
+}
+.dark .settings-header {
+  background: #333;
+  border-color: #3c3c3c;
+}
+.dark .settings-body fieldset {
+  border-color: #555;
+}
+.dark .settings-body select,
+.dark .settings-body input[type="number"] {
+  background: #1e1e1e;
+  color: var(--ink);
+  border-color: #555;
+}
+
 .thread-tab[draggable="true"] {
   cursor: grab;
 }

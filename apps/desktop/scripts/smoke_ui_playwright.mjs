@@ -805,6 +805,27 @@ try {
   await new Promise((r) => setTimeout(r, 100));
   console.log("smoke-ui: ng regex ok");
 
+  // --- settings panel ---
+  const fileMenuForSettings = await page.$('.menu-item:has-text("ファイル")');
+  await fileMenuForSettings.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const settingsBtn = await page.$('.menu-dropdown button:has-text("設定")');
+  assert(settingsBtn, "file menu should have settings button");
+  await settingsBtn.click();
+  await new Promise((r) => setTimeout(r, 200));
+  const settingsPanel = await page.$(".settings-panel");
+  assert(settingsPanel, "settings panel should open");
+  // verify fieldsets exist
+  const legends = await page.$$eval(".settings-body legend", (els) => els.map((e) => e.textContent?.trim()));
+  assert(legends.includes("表示"), `settings should have 表示 section, got ${legends}`);
+  assert(legends.includes("書き込み"), `settings should have 書き込み section, got ${legends}`);
+  assert(legends.includes("認証状態"), `settings should have 認証状態 section, got ${legends}`);
+  assert(legends.includes("情報"), `settings should have 情報 section, got ${legends}`);
+  // close settings
+  await page.click('.settings-header button:has-text("閉じる")');
+  await new Promise((r) => setTimeout(r, 100));
+  console.log("smoke-ui: settings panel ok");
+
   console.log("smoke-ui: ok");
 } finally {
   if (browser) {

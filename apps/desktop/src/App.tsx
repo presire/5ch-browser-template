@@ -231,6 +231,7 @@ export default function App() {
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; tabIndex: number } | null>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [fontSize, setFontSize] = useState(12);
   const [darkMode, setDarkMode] = useState(false);
   const [idPopup, setIdPopup] = useState<{ x: number; y: number; id: string } | null>(null);
@@ -1456,6 +1457,8 @@ export default function App() {
             { text: "sep" },
             { text: "書き込み", action: () => { setComposeOpen(true); setComposePos(null); } },
             { text: "sep" },
+            { text: "設定", action: () => setSettingsOpen(true) },
+            { text: "sep" },
             { text: "終了", action: () => window.close() },
           ]},
           { label: "編集", items: [
@@ -1744,6 +1747,15 @@ export default function App() {
                         // persist read status
                         const ft = fetchedThreads[t.id - 1];
                         if (ft) void persistReadStatus(threadUrl, ft.threadKey, ft.responseCount);
+                      }
+                    }}
+                    onDoubleClick={() => {
+                      if ("threadUrl" in t && typeof t.threadUrl === "string") {
+                        const bm = loadBookmark(t.threadUrl);
+                        if (bm) {
+                          setSelectedResponse(bm);
+                          setStatus(`栞: >>${bm}`);
+                        }
                       }
                     }}
                     onContextMenu={(e) => onThreadContextMenu(e, t.id)}
@@ -2294,6 +2306,57 @@ export default function App() {
                   <span>{desc}</span>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {settingsOpen && (
+        <div className="lightbox-overlay" onClick={() => setSettingsOpen(false)}>
+          <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
+            <header className="settings-header">
+              <strong>設定</strong>
+              <button onClick={() => setSettingsOpen(false)}>閉じる</button>
+            </header>
+            <div className="settings-body">
+              <fieldset>
+                <legend>表示</legend>
+                <label className="settings-row">
+                  <span>テーマ</span>
+                  <select value={darkMode ? "dark" : "light"} onChange={(e) => setDarkMode(e.target.value === "dark")}>
+                    <option value="light">ライト</option>
+                    <option value="dark">ダーク</option>
+                  </select>
+                </label>
+                <label className="settings-row">
+                  <span>文字サイズ</span>
+                  <input type="number" value={fontSize} min={8} max={20} onChange={(e) => setFontSize(Number(e.target.value))} />
+                </label>
+                <label className="settings-row">
+                  <span>自動更新間隔 (秒)</span>
+                  <input type="number" value={autoRefreshInterval} min={10} max={600} onChange={(e) => setAutoRefreshInterval(Number(e.target.value))} />
+                </label>
+              </fieldset>
+              <fieldset>
+                <legend>書き込み</legend>
+                <label className="settings-row">
+                  <input type="checkbox" checked={composeEnterSubmit} onChange={(e) => setComposeEnterSubmit(e.target.checked)} />
+                  <span>Enterで投稿</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={composeSage} onChange={(e) => setComposeSage(e.target.checked)} />
+                  <span>sage</span>
+                </label>
+              </fieldset>
+              <fieldset>
+                <legend>認証状態</legend>
+                <div className="settings-row"><span>Runtime</span><span>{isTauriRuntime() ? "Tauri" : "Web"}</span></div>
+                <div className="settings-row"><span>Auth</span><span>{authStatus}</span></div>
+              </fieldset>
+              <fieldset>
+                <legend>情報</legend>
+                <div className="settings-row"><span>バージョン</span><span>{currentVersion}</span></div>
+                <div className="settings-row"><span>スモークテスト</span><span>67項目</span></div>
+              </fieldset>
             </div>
           </div>
         </div>
