@@ -217,6 +217,8 @@ export default function App() {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [tabDragIndex, setTabDragIndex] = useState<number | null>(null);
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; tabIndex: number } | null>(null);
+  const [composePos, setComposePos] = useState<{ x: number; y: number } | null>(null);
+  const composeDragRef = useRef<{ startX: number; startY: number; startPosX: number; startPosY: number } | null>(null);
   const [boardPanePx, setBoardPanePx] = useState(DEFAULT_BOARD_PANE_PX);
   const [threadPanePx, setThreadPanePx] = useState(DEFAULT_THREAD_PANE_PX);
   const [responseTopRatio, setResponseTopRatio] = useState(DEFAULT_RESPONSE_TOP_RATIO);
@@ -1219,6 +1221,14 @@ export default function App() {
 
   useEffect(() => {
     const onMouseMove = (event: MouseEvent) => {
+      const cdrag = composeDragRef.current;
+      if (cdrag) {
+        setComposePos({
+          x: cdrag.startPosX + (event.clientX - cdrag.startX),
+          y: cdrag.startPosY + (event.clientY - cdrag.startY),
+        });
+        return;
+      }
       const drag = resizeDragRef.current;
       if (!drag) return;
 
@@ -1254,6 +1264,12 @@ export default function App() {
     };
 
     const onMouseUp = () => {
+      if (composeDragRef.current) {
+        composeDragRef.current = null;
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        return;
+      }
       if (!resizeDragRef.current) return;
       resizeDragRef.current = null;
       document.body.style.userSelect = "";
@@ -1319,7 +1335,7 @@ export default function App() {
         <button onClick={checkAuthEnv}>認証状態</button>
         <button onClick={probeAuth}>認証テスト</button>
         <span className="tool-sep" />
-        <button onClick={() => setComposeOpen(true)}>書き込み</button>
+        <button onClick={() => { setComposeOpen(true); setComposePos(null); }}>書き込み</button>
         <button onClick={reopenLastClosedThread} disabled={!hasReopenableClosedThread}>
           閉じたスレを戻す
         </button>
@@ -1656,14 +1672,22 @@ export default function App() {
                 ))}
               </tbody>
             </table>
-            <div
-              className="row-splitter"
-              role="separator"
-              aria-orientation="horizontal"
-              aria-label="Resize response list and viewer"
-              onMouseDown={beginResponseRowResize}
-              onClick={(e) => e.stopPropagation()}
-            />
+            <div className="response-nav-bar">
+              <button onClick={() => { if (visibleResponseItems.length > 0) setSelectedResponse(visibleResponseItems[0].id); }}>
+                先頭
+              </button>
+              <div
+                className="row-splitter-inline"
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label="Resize response list and viewer"
+                onMouseDown={beginResponseRowResize}
+                onClick={(e) => e.stopPropagation()}
+              />
+              <button onClick={() => { if (visibleResponseItems.length > 0) setSelectedResponse(visibleResponseItems[visibleResponseItems.length - 1].id); }}>
+                最新
+              </button>
+            </div>
             <article
               className="response-viewer"
               onClick={(e) => {
@@ -1763,8 +1787,29 @@ export default function App() {
         DONGURI:EXPERIMENTAL | {updateState}
       </footer>
       {composeOpen && (
-        <section className="compose-window" role="dialog" aria-label="書き込み">
-          <header className="compose-header">
+        <section
+          className="compose-window"
+          role="dialog"
+          aria-label="書き込み"
+          style={composePos ? { right: "auto", bottom: "auto", left: composePos.x, top: composePos.y } : undefined}
+        >
+          <header
+            className="compose-header"
+            onMouseDown={(e) => {
+              if ((e.target as HTMLElement).tagName === "BUTTON") return;
+              e.preventDefault();
+              const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+              composeDragRef.current = {
+                startX: e.clientX,
+                startY: e.clientY,
+                startPosX: rect.left,
+                startPosY: rect.top,
+              };
+              if (!composePos) setComposePos({ x: rect.left, y: rect.top });
+              document.body.style.userSelect = "none";
+              document.body.style.cursor = "move";
+            }}
+          >
             <strong>書き込み</strong>
             <span className="compose-target" title={threadUrl}>
               {selectedThreadItem ? selectedThreadItem.title : threadUrl}

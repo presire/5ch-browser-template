@@ -481,6 +481,28 @@ try {
   });
   console.log("smoke-ui: thread menu browser open ok");
 
+  // --- response nav bar ---
+  const navBarFirst = await page.$('.response-nav-bar button:has-text("先頭")');
+  assert(navBarFirst, "response nav bar should have 先頭 button");
+  const navBarLatest = await page.$('.response-nav-bar button:has-text("最新")');
+  assert(navBarLatest, "response nav bar should have 最新 button");
+  const rowSplitterInline = await page.$(".row-splitter-inline");
+  assert(rowSplitterInline, "response nav bar should have inline row splitter");
+  console.log("smoke-ui: response nav bar ok");
+
+  // --- draggable compose window ---
+  // open compose and verify header is present for dragging
+  await page.evaluate(() => {
+    document.querySelector(".shell")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await new Promise((r) => setTimeout(r, 100));
+  await page.click(".tool-bar button:has-text('書き込み')");
+  await page.waitForSelector(".compose-window");
+  const composeHeader = await page.$(".compose-header");
+  assert(composeHeader, "compose window should have draggable header");
+  await page.click(".compose-header button:has-text('閉じる')");
+  console.log("smoke-ui: draggable compose ok");
+
   console.log("smoke-ui: ok");
 } finally {
   if (browser) {

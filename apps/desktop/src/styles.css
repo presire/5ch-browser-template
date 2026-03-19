@@ -287,10 +287,42 @@ body {
 
 .response-layout {
   display: grid;
-  grid-template-rows: minmax(160px, 42%) 6px 1fr;
+  grid-template-rows: minmax(160px, 42%) auto 1fr;
   gap: 0;
   min-height: 340px;
   overflow: hidden;
+}
+
+.response-nav-bar {
+  display: flex;
+  align-items: stretch;
+  background: #e4dccf;
+  border-top: 1px solid #b7aa95;
+  border-bottom: 1px solid #b7aa95;
+}
+
+.response-nav-bar button {
+  padding: 1px 8px;
+  font-size: 10px;
+  border: none;
+  background: transparent;
+  color: var(--sub);
+  cursor: pointer;
+}
+
+.response-nav-bar button:hover {
+  background: #d8cfc0;
+}
+
+.row-splitter-inline {
+  flex: 1;
+  min-height: 6px;
+  background: linear-gradient(#c8ba9f 0, #b7a78b 50%, #c8ba9f 100%);
+  cursor: row-resize;
+}
+
+.row-splitter-inline:hover {
+  background: linear-gradient(#c78e5f 0, #b7784a 50%, #c78e5f 100%);
 }
 
 .response-table {
