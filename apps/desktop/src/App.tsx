@@ -182,6 +182,7 @@ export default function App() {
   const [threadReadMap, setThreadReadMap] = useState<Record<number, boolean>>({ 1: false, 2: true });
   const [threadMenu, setThreadMenu] = useState<{ x: number; y: number; threadId: number } | null>(null);
   const [responseMenu, setResponseMenu] = useState<{ x: number; y: number; responseId: number } | null>(null);
+  const [anchorPopup, setAnchorPopup] = useState<{ x: number; y: number; responseId: number } | null>(null);
   const [boardPanePx, setBoardPanePx] = useState(DEFAULT_BOARD_PANE_PX);
   const [threadPanePx, setThreadPanePx] = useState(DEFAULT_THREAD_PANE_PX);
   const [responseTopRatio, setResponseTopRatio] = useState(DEFAULT_RESPONSE_TOP_RATIO);
@@ -1127,7 +1128,24 @@ export default function App() {
                 const no = Number(anchor.dataset.anchor);
                 if (no > 0 && responseItems.some((r) => r.id === no)) {
                   setSelectedResponse(no);
+                  setAnchorPopup(null);
                   setStatus(`jumped to >>${no}`);
+                }
+              }}
+              onMouseOver={(e) => {
+                const target = e.target as HTMLElement;
+                const anchor = target.closest<HTMLElement>(".anchor-ref");
+                if (!anchor) { return; }
+                const no = Number(anchor.dataset.anchor);
+                if (no > 0 && responseItems.some((r) => r.id === no)) {
+                  const rect = anchor.getBoundingClientRect();
+                  setAnchorPopup({ x: rect.left, y: rect.bottom + 4, responseId: no });
+                }
+              }}
+              onMouseOut={(e) => {
+                const target = e.target as HTMLElement;
+                if (target.closest(".anchor-ref")) {
+                  setAnchorPopup(null);
                 }
               }}
             >
@@ -1275,6 +1293,19 @@ export default function App() {
           <button onClick={() => void runResponseAction("settings")}>Response Settings</button>
         </div>
       )}
+      {anchorPopup && (() => {
+        const popupResp = responseItems.find((r) => r.id === anchorPopup.responseId);
+        if (!popupResp) return null;
+        return (
+          <div className="anchor-popup" style={{ left: anchorPopup.x, top: anchorPopup.y }}>
+            <div className="anchor-popup-header">
+              <span className="response-viewer-no">{popupResp.id}</span> {popupResp.name}
+              <time>{popupResp.time}</time>
+            </div>
+            <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(popupResp.text)} />
+          </div>
+        );
+      })()}
     </div>
   );
 }

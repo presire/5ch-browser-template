@@ -321,6 +321,34 @@ body {
   text-decoration: underline;
 }
 
+.anchor-popup {
+  position: fixed;
+  z-index: 60;
+  max-width: 480px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid #8f826b;
+  background: #fffdfa;
+  box-shadow: 0 4px 12px rgba(20, 20, 20, 0.22);
+  padding: 6px 8px;
+  pointer-events: none;
+}
+
+.anchor-popup-header {
+  font-size: 11px;
+  color: var(--sub);
+  margin-bottom: 4px;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.anchor-popup-body {
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
 .threads th {
   border: 1px solid #beb29d;
   font-size: 11px;
