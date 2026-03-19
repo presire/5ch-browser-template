@@ -83,6 +83,8 @@ type ThreadResponseItem = {
   dateAndId: string;
   body: string;
 };
+type BoardEntry = { boardName: string; url: string };
+type BoardCategory = { categoryName: string; boards: BoardEntry[] };
 
 const MIN_BOARD_PANE_PX = 160;
 const MIN_THREAD_PANE_PX = 280;
@@ -135,7 +137,10 @@ const renderResponseBody = (html: string): { __html: string } => {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
   safe = safe.replace(/\n/g, "<br>");
-  safe = safe.replace(/&gt;&gt;(\d+)/g, '<span class="anchor-ref">&gt;&gt;$1</span>');
+  safe = safe.replace(
+    /&gt;&gt;(\d+)/g,
+    '<span class="anchor-ref" data-anchor="$1" role="link" tabindex="0">&gt;&gt;$1</span>'
+  );
   return { __html: safe };
 };
 
@@ -167,6 +172,8 @@ export default function App() {
   const [responseListProbe, setResponseListProbe] = useState("not run");
   const [fetchedThreads, setFetchedThreads] = useState<ThreadListItem[]>([]);
   const [fetchedResponses, setFetchedResponses] = useState<ThreadResponseItem[]>([]);
+  const [boardCategories, setBoardCategories] = useState<BoardCategory[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [selectedBoard, setSelectedBoard] = useState("Favorite");
   const [selectedThread, setSelectedThread] = useState<number | null>(1);
   const [closedThreadIds, setClosedThreadIds] = useState<number[]>([]);
@@ -191,6 +198,36 @@ export default function App() {
     } catch (error) {
       setStatus(`error: ${String(error)}`);
     }
+  };
+
+  const fetchBoardCategories = async () => {
+    if (!isTauriRuntime()) {
+      setStatus("board fetch requires tauri runtime");
+      return;
+    }
+    setStatus("loading boards...");
+    try {
+      const cats = await invoke<BoardCategory[]>("fetch_board_categories");
+      setBoardCategories(cats);
+      setStatus(`boards loaded: ${cats.length} categories, ${cats.reduce((s, c) => s + c.boards.length, 0)} boards`);
+    } catch (error) {
+      setStatus(`board load error: ${String(error)}`);
+    }
+  };
+
+  const toggleCategory = (name: string) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
+
+  const selectBoard = (board: BoardEntry) => {
+    setSelectedBoard(board.boardName);
+    setLocationInput(board.url);
+    setThreadUrl(board.url);
+    void fetchThreadListFromCurrent(board.url);
   };
 
   const checkAuthEnv = async () => {
@@ -896,7 +933,7 @@ export default function App() {
         ))}
       </header>
       <div className="tool-bar">
-        <button onClick={fetchMenu}>Refresh Menu</button>
+        <button onClick={() => { void fetchMenu(); void fetchBoardCategories(); }}>Refresh Menu</button>
         <button onClick={() => fetchThreadListFromCurrent()}>Load Threads</button>
         <button onClick={() => fetchResponsesFromCurrent()}>Load Responses</button>
         <span className="tool-sep" />
@@ -926,16 +963,50 @@ export default function App() {
         }}
       >
         <section className="pane boards">
-          <h2>Boards</h2>
-          <ul>
-            {boardItems.map((name) => (
-              <li key={name}>
-                <button className={`board-item ${selectedBoard === name ? "selected" : ""}`} onClick={() => setSelectedBoard(name)}>
-                  {name}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <div className="boards-header">
+            <h2>Boards</h2>
+            <button className="boards-fetch" onClick={fetchBoardCategories}>Fetch</button>
+          </div>
+          {boardCategories.length > 0 ? (
+            <div className="board-tree">
+              {boardCategories.map((cat) => (
+                <div key={cat.categoryName} className="board-category">
+                  <button
+                    className="category-toggle"
+                    onClick={() => toggleCategory(cat.categoryName)}
+                  >
+                    <span className="category-arrow">{expandedCategories.has(cat.categoryName) ? "\u25BC" : "\u25B6"}</span>
+                    {cat.categoryName} ({cat.boards.length})
+                  </button>
+                  {expandedCategories.has(cat.categoryName) && (
+                    <ul className="category-boards">
+                      {cat.boards.map((b) => (
+                        <li key={b.url}>
+                          <button
+                            className={`board-item ${selectedBoard === b.boardName ? "selected" : ""}`}
+                            onClick={() => selectBoard(b)}
+                            title={b.url}
+                          >
+                            {b.boardName}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <ul>
+              {boardItems.map((name) => (
+                <li key={name}>
+                  <button className={`board-item ${selectedBoard === name ? "selected" : ""}`} onClick={() => setSelectedBoard(name)}>
+                    {name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
         <div
           className="pane-splitter"
@@ -1047,7 +1118,19 @@ export default function App() {
               onMouseDown={beginResponseRowResize}
               onClick={(e) => e.stopPropagation()}
             />
-            <article className="response-viewer">
+            <article
+              className="response-viewer"
+              onClick={(e) => {
+                const target = e.target as HTMLElement;
+                const anchor = target.closest<HTMLElement>(".anchor-ref");
+                if (!anchor) return;
+                const no = Number(anchor.dataset.anchor);
+                if (no > 0 && responseItems.some((r) => r.id === no)) {
+                  setSelectedResponse(no);
+                  setStatus(`jumped to >>${no}`);
+                }
+              }}
+            >
               <header>
                 <span className="response-viewer-no">{activeResponse.id}</span> {activeResponse.name}
               </header>
@@ -1114,6 +1197,9 @@ export default function App() {
         <section className="compose-window" role="dialog" aria-label="Write">
           <header className="compose-header">
             <strong>Write</strong>
+            <span className="compose-target" title={threadUrl}>
+              {selectedThreadItem ? selectedThreadItem.title : threadUrl}
+            </span>
             <button onClick={() => setComposeOpen(false)}>Close</button>
           </header>
           <div className="compose-grid">
@@ -1149,6 +1235,10 @@ export default function App() {
             onKeyDown={onComposeBodyKeyDown}
             placeholder="message"
           />
+          <div className="compose-meta">
+            <span>{composeBody.length} chars</span>
+            <span>{composeBody.split("\n").length} lines</span>
+          </div>
           {composePreview && <pre className="compose-preview">{composeBody || "(empty)"}</pre>}
           <div className="compose-actions">
             <button onClick={probePostConfirmFromCompose}>Confirm</button>

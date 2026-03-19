@@ -129,13 +129,65 @@ body {
   color: #463d30;
 }
 
+.boards-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.boards-header h2 {
+  margin: 0;
+}
+
+.boards-fetch {
+  font-size: 10px;
+  padding: 2px 6px;
+  margin-left: auto;
+}
+
+.board-tree {
+  overflow-y: auto;
+}
+
+.board-category {
+  margin-bottom: 2px;
+}
+
+.category-toggle {
+  width: 100%;
+  text-align: left;
+  background: linear-gradient(180deg, #e4dccf 0%, #d5cbb6 100%);
+  border: 1px solid #b7aa95;
+  padding: 3px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.category-toggle:hover {
+  background: linear-gradient(180deg, #dbd2c2 0%, #cbc0a8 100%);
+}
+
+.category-arrow {
+  display: inline-block;
+  width: 12px;
+  font-size: 9px;
+}
+
+.category-boards {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .boards ul {
   margin: 0;
   padding-left: 18px;
 }
 
 .boards li {
-  padding: 3px 0;
+  padding: 0;
 }
 
 .board-item {
@@ -143,7 +195,12 @@ body {
   text-align: left;
   background: transparent;
   border: 0;
-  padding: 4px 6px;
+  padding: 3px 6px 3px 20px;
+  font-size: 11px;
+}
+
+.board-item:hover {
+  background: #e0d8c8;
 }
 
 .board-item.selected {
@@ -402,11 +459,24 @@ pre {
 
 .compose-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 8px;
   border-bottom: 1px solid var(--line);
   padding: 8px;
   background: #e0d5c2;
+}
+
+.compose-header button {
+  margin-left: auto;
+}
+
+.compose-target {
+  flex: 1;
+  font-size: 11px;
+  color: var(--sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .compose-grid {
@@ -423,6 +493,14 @@ pre {
   background: #fffdfa;
   padding: 8px;
   resize: vertical;
+}
+
+.compose-meta {
+  display: flex;
+  gap: 12px;
+  padding: 2px 8px;
+  font-size: 10px;
+  color: var(--sub);
 }
 
 .compose-preview {

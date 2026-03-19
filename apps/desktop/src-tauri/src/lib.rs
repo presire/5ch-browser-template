@@ -61,6 +61,20 @@ struct UpdateCheckResult {
     current_platform_asset: Option<UpdatePlatformAsset>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BoardCategory {
+    category_name: String,
+    boards: Vec<BoardEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BoardEntry {
+    board_name: String,
+    url: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PostFlowTrace {
@@ -564,11 +578,54 @@ fn open_external_url(url: String) -> Result<(), String> {
     Err("unsupported platform".to_string())
 }
 
+#[tauri::command]
+async fn fetch_board_categories() -> Result<Vec<BoardCategory>, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("5ch-browser-template/0.1")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let menu = fetch_bbsmenu_json(&client).await.map_err(|e| e.to_string())?;
+
+    let obj = menu.as_object().ok_or("bbsmenu is not an object")?;
+    let mut categories: Vec<BoardCategory> = Vec::new();
+
+    for (key, value) in obj.iter() {
+        if let Some(arr) = value.as_array() {
+            let mut boards: Vec<BoardEntry> = Vec::new();
+            for item in arr {
+                let board_name = item
+                    .get("board_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let url = item
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .map(|u| normalize_5ch_url(u))
+                    .unwrap_or_default();
+                if !board_name.is_empty() && !url.is_empty() {
+                    boards.push(BoardEntry { board_name, url });
+                }
+            }
+            if !boards.is_empty() {
+                categories.push(BoardCategory {
+                    category_name: key.clone(),
+                    boards,
+                });
+            }
+        }
+    }
+
+    Ok(categories)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             fetch_bbsmenu_summary,
+            fetch_board_categories,
             check_auth_env_status,
             probe_auth_logins,
             probe_post_cookie_scope_simulation,
