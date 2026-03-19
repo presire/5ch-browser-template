@@ -70,6 +70,21 @@
   - `apps/desktop`: 書き込みウィンドウのドラッグ移動
   - `apps/desktop`: スレ右クリックに「ブラウザで開く」追加
   - `apps/desktop`: smoke-ui 50項目
+  - `apps/desktop`: メニューバードロップダウン（ファイル/表示/ヘルプ + hover切替）
+  - `apps/desktop`: ショートカット一覧ダイアログ
+  - `apps/desktop`: 文字サイズ設定（拡大/縮小/リセット + 永続化）
+  - `apps/desktop`: URL自動リンク化（非画像URLをクリッカブルリンクに変換）
+  - `apps/desktop`: スレタイNGフィルタ（NGワードでスレ一覧をフィルタ + 右クリックで追加）
+  - `apps/desktop`: 自動更新時にスレ一覧もサイレントリフレッシュ
+  - `apps/desktop`: 被参照表示（レスビューアに >>N 参照元レス番号一覧）
+  - `apps/desktop`: 書き込み名前/メール/sage の永続化（localStorage）
+  - `apps/desktop`: レス一覧にID列追加（ID抽出 + 出現回数）
+  - `apps/desktop`: IDクリックポップアップ（同ID全レス一覧 + NG追加 + ジャンプ）
+  - `apps/desktop`: 勢いカラムにバー表示（勢い視覚化）
+  - `apps/desktop`: レス一覧/スレ一覧の偶数行色分け
+  - `apps/desktop`: 書き込みプレビューHTML化（>>N / URL描画）
+  - `apps/desktop`: テキスト選択引用（R キーで選択テキスト引用）
+  - `apps/desktop`: smoke-ui 64項目
 - Git は初期化済みで、`safe.directory` 設定済み（この環境から `git` 操作可能）。
 - safe probe 実環境検証 (2026-03-19):
   - 全4モード（anonymous/uplift/be_front/be_uplift）で GET=200, confirm=200
@@ -100,6 +115,11 @@
   - `3b40eb8` (`desktop: add thread search filter and auto-refresh toggle`)
   - `470230c` (`desktop: add board pane tabs with favorite threads view`)
   - `b481fa4` (`desktop: extend E2E tests to 28 items covering new features`)
+  - `3a9252b` (`desktop: add menu dropdowns, shortcuts help, and font size setting`)
+  - `a91de07` (`desktop: add URL linkification, thread NG filter, back-refs, and compose persistence`)
+  - `02e74ee` (`desktop: add response ID column with occurrence count and back-reference display`)
+  - `1c61934` (`desktop: add ID popup, speed bar, and response row striping`)
+  - `83ab141` (`desktop: add compose preview, text selection quoting, and row striping`)
 
 ## 仕様確定ポイント（重要）
 - 5ch基盤:
@@ -124,9 +144,11 @@
    - 必要時のみ `-AllowRealSubmit -RealSubmitToken I_UNDERSTAND_REAL_POST -Message "<non-empty>"` で実送信検証
    - board URL 入力（例: `https://mao.5ch.io/ngt/`）でのスレ一覧取得を実環境確認
 2. geronimo互換UI継続改善
-   - メニューバー各項目のドロップダウン実装
-   - キーボードショートカット一覧ヘルプ
-   - スレ/レスの文字サイズ設定
+   - スレ一覧の列幅ドラッグリサイズ
+   - レス本文の画像プレフェッチ/キャッシュ
+   - スレの栞（ブックマーク位置）機能
+   - NG正規表現対応
+   - テーマ切り替え（ダーク/ライト）
 3. リリース運用実地
    - `scripts/prepare_release_metadata.py` で実ZIPから `latest.json` 生成 + strict検証
    - `apps/landing/public/latest.json` へ反映

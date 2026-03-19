@@ -87,6 +87,22 @@
 - [x] desktop: レスナビゲーションバー（先頭/最新ボタン + インラインスプリッター）
 - [x] desktop: 書き込みウィンドウのドラッグ移動
 - [x] desktop: smoke-ui テスト 50項目
+- [x] desktop: メニューバードロップダウン実装（ファイル/表示/ヘルプ）
+- [x] desktop: ショートカット一覧ダイアログ（ヘルプ → ショートカット）
+- [x] desktop: 文字サイズ設定（表示 → 拡大/縮小/リセット + localStorage永続化）
+- [x] desktop: URL自動リンク化（レス本文中の非画像URLをクリッカブルリンクに変換）
+- [x] desktop: スレタイNGフィルタ（NGワードでスレ一覧をフィルタ + 右クリックで追加）
+- [x] desktop: 自動更新時にスレ一覧もサイレントリフレッシュ
+- [x] desktop: 被参照表示（レスビューアに >>N で参照されたレス番号一覧を表示）
+- [x] desktop: 書き込み名前/メール/sage の永続化（localStorage）
+- [x] desktop: レス一覧にID列追加（ID抽出 + 出現回数表示）
+- [x] desktop: IDクリックポップアップ（同ID全レス一覧 + NG追加 + ジャンプ）
+- [x] desktop: 勢いカラムにバー表示（スレ勢い視覚化）
+- [x] desktop: レス一覧/スレ一覧の偶数行色分け
+- [x] desktop: 書き込みプレビューHTML化（>>N / URL描画）
+- [x] desktop: テキスト選択引用（R キーで選択テキストも含めて引用）
+- [x] desktop: ID セルにホバーエフェクト追加
+- [x] desktop: smoke-ui テスト 64項目
 
 ## 直近タスク（優先順）
 1. `core-fetch`: 非空メッセージでの confirm form 検出を確認（safe probe 完了: 2026-03-19）
