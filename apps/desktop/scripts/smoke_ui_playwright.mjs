@@ -73,6 +73,18 @@ try {
   assert(rowsAfterClose === Math.max(rowsBefore - 1, 0), "close thread action did not reduce rows");
   console.log("smoke-ui: close thread ok");
 
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "w", ctrlKey: true, bubbles: true }));
+  });
+  const rowsAfterShortcutClose = await page.$$eval(".threads tbody tr", (rows) => rows.length);
+  assert(rowsAfterShortcutClose === Math.max(rowsBefore - 2, 0), "close thread shortcut did not reduce rows");
+  console.log("smoke-ui: close thread shortcut ok");
+
+  await page.click(".tool-bar button:has-text('Undo Close')");
+  const rowsAfterUndoClose = await page.$$eval(".threads tbody tr", (rows) => rows.length);
+  assert(rowsAfterUndoClose >= rowsAfterShortcutClose + 1, "undo close button did not reopen one thread");
+  console.log("smoke-ui: undo close button ok");
+
   await page.click(".threads tbody tr:first-child", { button: "right" });
   await page.click('.thread-menu button:has-text("Reopen Last")');
   const rowsAfterReopenLast = await page.$$eval(".threads tbody tr", (rows) => rows.length);

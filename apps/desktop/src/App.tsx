@@ -481,6 +481,8 @@ export default function App() {
     setStatus(`thread reopened: #${reopened}`);
   };
 
+  const hasReopenableClosedThread = closedThreadHistory.some((id) => closedThreadIds.includes(id));
+
   const copyThreadUrl = async (threadId: number) => {
     const target = threadItems.find((t) => t.id === threadId);
     if (!target || !("threadUrl" in target) || typeof target.threadUrl !== "string") {
@@ -602,12 +604,7 @@ export default function App() {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "w") {
         e.preventDefault();
         if (selectedThread == null) return;
-        const ids = visibleThreadItems.map((t) => t.id);
-        const idx = ids.indexOf(selectedThread);
-        if (idx < 0) return;
-        setClosedThreadIds((prev) => [...prev, selectedThread]);
-        const nextIds = ids.filter((id) => id !== selectedThread);
-        setSelectedThread(nextIds.length > 0 ? nextIds[Math.min(idx, nextIds.length - 1)] : null);
+        closeThread(selectedThread);
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "w") {
@@ -782,6 +779,9 @@ export default function App() {
         <button onClick={checkAuthEnv}>Auth Status</button>
         <button onClick={probeAuth}>Auth Probe</button>
         <button onClick={() => setComposeOpen(true)}>Write</button>
+        <button onClick={reopenLastClosedThread} disabled={!hasReopenableClosedThread}>
+          Undo Close
+        </button>
         <button onClick={resetLayout}>Reset Layout</button>
         <span className="shortcut-hint">
           Shortcuts: Ctrl+Shift+R | Ctrl/Cmd+W | Ctrl/Cmd+Shift+W | Ctrl+Alt+/ | Ctrl/Cmd+Alt+Arrows | Ctrl/Cmd+Arrows
@@ -1040,7 +1040,7 @@ export default function App() {
           <button onClick={() => markThreadRead(threadMenu.threadId, false)}>Mark as Unread</button>
           <button onClick={() => closeThread(threadMenu.threadId)}>Close Thread</button>
           <button onClick={() => closeOtherThreads(threadMenu.threadId)}>Close Others</button>
-          <button onClick={reopenLastClosedThread} disabled={closedThreadIds.length === 0}>
+          <button onClick={reopenLastClosedThread} disabled={!hasReopenableClosedThread}>
             Reopen Last
           </button>
           <button onClick={reopenAllThreads} disabled={closedThreadIds.length === 0}>
