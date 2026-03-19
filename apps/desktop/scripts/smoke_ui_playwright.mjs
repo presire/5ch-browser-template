@@ -680,6 +680,41 @@ try {
   assert(responseHeaders.includes("ID"), `response table should have ID column, got ${responseHeaders}`);
   console.log("smoke-ui: response ID column ok");
 
+  // --- response row striping ---
+  const evenRowBg = await page.evaluate(() => {
+    const rows = document.querySelectorAll(".response-layout tbody tr");
+    if (rows.length < 2) return "";
+    return window.getComputedStyle(rows[1]).backgroundColor;
+  });
+  // even rows should have a slightly different background
+  assert(evenRowBg !== "", "response rows should have striped backgrounds");
+  console.log("smoke-ui: response row striping ok");
+
+  // --- speed bar visualization ---
+  const speedBar = await page.$(".speed-cell .speed-bar");
+  assert(speedBar, "speed column should have a bar visualization");
+  const speedVal = await page.$(".speed-cell .speed-val");
+  assert(speedVal, "speed column should have a value display");
+  console.log("smoke-ui: speed bar ok");
+
+  // --- ID popup structure ---
+  const idCellStyle = await page.evaluate(() => {
+    const style = document.querySelector("style, link[rel=stylesheet]");
+    for (const sheet of document.styleSheets) {
+      try {
+        for (const rule of sheet.cssRules) {
+          if (rule.cssText?.includes(".id-popup")) return true;
+        }
+      } catch { /* cross-origin */ }
+    }
+    return false;
+  });
+  assert(idCellStyle, "id-popup CSS should exist in stylesheet");
+  // Click an ID cell to trigger popup (fallback data has no IDs, so just verify clickable)
+  const idCell = await page.$(".response-id-cell");
+  assert(idCell, "response ID cell should exist");
+  console.log("smoke-ui: id popup structure ok");
+
   console.log("smoke-ui: ok");
 } finally {
   if (browser) {

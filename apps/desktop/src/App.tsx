@@ -231,6 +231,7 @@ export default function App() {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [fontSize, setFontSize] = useState(12);
+  const [idPopup, setIdPopup] = useState<{ x: number; y: number; id: string } | null>(null);
   const [composePos, setComposePos] = useState<{ x: number; y: number } | null>(null);
   const composeDragRef = useRef<{ startX: number; startY: number; startPosX: number; startPosY: number } | null>(null);
   const [boardPanePx, setBoardPanePx] = useState(DEFAULT_BOARD_PANE_PX);
@@ -1402,6 +1403,7 @@ export default function App() {
         setResponseMenu(null);
         setTabMenu(null);
         setOpenMenu(null);
+        setIdPopup(null);
       }}
     >
       <header className="menu-bar">
@@ -1709,7 +1711,10 @@ export default function App() {
                     <td className={`new-count ${(threadLastReadCount[t.id] ?? 0) > 0 && t.res - (threadLastReadCount[t.id] ?? 0) > 0 ? "has-new" : ""}`}>
                       {(threadLastReadCount[t.id] ?? 0) > 0 ? Math.max(0, t.res - threadLastReadCount[t.id]) : "-"}
                     </td>
-                    <td>{t.speed.toFixed(1)}</td>
+                    <td className="speed-cell">
+                      <span className="speed-bar" style={{ width: `${Math.min(100, t.speed * 2)}%` }} />
+                      <span className="speed-val">{t.speed.toFixed(1)}</span>
+                    </td>
                     <td>{t.lastLoad}</td>
                     <td>{t.lastPost}</td>
                   </tr>
@@ -1819,7 +1824,17 @@ export default function App() {
                       {r.id}
                     </td>
                     <td>{r.name}</td>
-                    <td className="response-id-cell">
+                    <td
+                      className="response-id-cell"
+                      onClick={(e) => {
+                        const id = extractId(r.time);
+                        if (id) {
+                          e.stopPropagation();
+                          const rect = (e.target as HTMLElement).getBoundingClientRect();
+                          setIdPopup({ x: rect.left, y: rect.bottom + 2, id });
+                        }
+                      }}
+                    >
                       {(() => {
                         const id = extractId(r.time);
                         const count = id ? (idCountMap.get(id) ?? 0) : 0;
@@ -2166,6 +2181,30 @@ export default function App() {
               <time>{popupResp.time}</time>
             </div>
             <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(popupResp.text)} />
+          </div>
+        );
+      })()}
+      {idPopup && (() => {
+        const idResponses = responseItems.filter((r) => extractId(r.time) === idPopup.id);
+        return (
+          <div className="id-popup" style={{ left: idPopup.x, top: idPopup.y }} onClick={(e) => e.stopPropagation()}>
+            <div className="id-popup-header">
+              ID:{idPopup.id} ({idResponses.length}件)
+              <button onClick={() => { addNgEntry("ids", idPopup.id); setIdPopup(null); }}>NG追加</button>
+              <button onClick={() => setIdPopup(null)}>×</button>
+            </div>
+            <div className="id-popup-list">
+              {idResponses.map((r) => (
+                <div
+                  key={r.id}
+                  className="id-popup-item"
+                  onClick={() => { setSelectedResponse(r.id); setIdPopup(null); }}
+                >
+                  <span className="response-viewer-no">{r.id}</span>
+                  <span className="id-popup-text" dangerouslySetInnerHTML={renderResponseBody(r.text)} />
+                </div>
+              ))}
+            </div>
           </div>
         );
       })()}
