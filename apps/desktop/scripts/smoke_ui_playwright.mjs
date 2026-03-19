@@ -503,6 +503,59 @@ try {
   await page.click(".compose-header button:has-text('閉じる')");
   console.log("smoke-ui: draggable compose ok");
 
+  // --- menu dropdown ---
+  const fileMenuItem = await page.$('.menu-item:has-text("ファイル")');
+  assert(fileMenuItem, "menu bar should have ファイル menu item");
+  await fileMenuItem.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const dropdown = await page.$(".menu-dropdown");
+  assert(dropdown, "clicking menu item should open dropdown");
+  const dropdownItems = await page.$$eval(".menu-dropdown button", (els) => els.map((el) => el.textContent));
+  assert(dropdownItems.length >= 3, `dropdown should have items, got ${dropdownItems.length}`);
+  // close dropdown
+  await page.evaluate(() => {
+    document.querySelector(".shell")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await new Promise((r) => setTimeout(r, 100));
+  console.log("smoke-ui: menu dropdown ok");
+
+  // --- shortcuts dialog ---
+  const helpMenuItem = await page.$('.menu-item:has-text("ヘルプ")');
+  await helpMenuItem.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const shortcutBtn = await page.$('.menu-dropdown button:has-text("ショートカット一覧")');
+  assert(shortcutBtn, "help menu should have shortcuts item");
+  await shortcutBtn.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const shortcutsPanel = await page.$(".shortcuts-panel");
+  assert(shortcutsPanel, "shortcuts panel should be visible");
+  const kbds = await page.$$eval(".shortcut-row kbd", (els) => els.length);
+  assert(kbds >= 10, `shortcuts should list at least 10 keys, got ${kbds}`);
+  // close
+  await page.click(".shortcuts-header button:has-text('閉じる')");
+  await new Promise((r) => setTimeout(r, 100));
+  console.log("smoke-ui: shortcuts dialog ok");
+
+  // --- font size setting ---
+  const viewMenuItem = await page.$('.menu-item:has-text("表示")');
+  await viewMenuItem.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const fontSizeBtn = await page.$('.menu-dropdown button:has-text("文字サイズ拡大")');
+  assert(fontSizeBtn, "view menu should have font size increase");
+  await fontSizeBtn.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const shellFontSize = await page.$eval(".shell", (el) => window.getComputedStyle(el).fontSize);
+  assert(shellFontSize === "13px", `font size should be 13px after increase, got ${shellFontSize}`);
+  // reset font size
+  await viewMenuItem.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const resetBtn = await page.$('.menu-dropdown button:has-text("文字サイズリセット")');
+  await resetBtn.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const shellFontReset = await page.$eval(".shell", (el) => window.getComputedStyle(el).fontSize);
+  assert(shellFontReset === "12px", `font size should be 12px after reset, got ${shellFontReset}`);
+  console.log("smoke-ui: font size setting ok");
+
   console.log("smoke-ui: ok");
 } finally {
   if (browser) {

@@ -217,6 +217,9 @@ export default function App() {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [tabDragIndex, setTabDragIndex] = useState<number | null>(null);
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; tabIndex: number } | null>(null);
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [fontSize, setFontSize] = useState(12);
   const [composePos, setComposePos] = useState<{ x: number; y: number } | null>(null);
   const composeDragRef = useRef<{ startX: number; startY: number; startPosX: number; startPosY: number } | null>(null);
   const [boardPanePx, setBoardPanePx] = useState(DEFAULT_BOARD_PANE_PX);
@@ -1092,9 +1095,10 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && lightboxUrl) {
-        setLightboxUrl(null);
-        return;
+      if (e.key === "Escape") {
+        if (lightboxUrl) { setLightboxUrl(null); return; }
+        if (shortcutsOpen) { setShortcutsOpen(false); return; }
+        if (openMenu) { setOpenMenu(null); return; }
       }
       if (isTypingTarget(e.target)) return;
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "r") {
@@ -1187,10 +1191,12 @@ export default function App() {
         boardPanePx?: number;
         threadPanePx?: number;
         responseTopRatio?: number;
+        fontSize?: number;
       };
       if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
       if (typeof parsed.threadPanePx === "number") setThreadPanePx(parsed.threadPanePx);
       if (typeof parsed.responseTopRatio === "number") setResponseTopRatio(parsed.responseTopRatio);
+      if (typeof parsed.fontSize === "number") setFontSize(parsed.fontSize);
     } catch {
       // ignore invalid localStorage payload
     }
@@ -1289,9 +1295,10 @@ export default function App() {
       boardPanePx,
       threadPanePx,
       responseTopRatio,
+      fontSize,
     });
     localStorage.setItem(LAYOUT_PREFS_KEY, payload);
-  }, [boardPanePx, threadPanePx, responseTopRatio]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, fontSize]);
 
   useEffect(() => {
     if (selectedThread == null || !threadTbodyRef.current) return;
@@ -1316,15 +1323,86 @@ export default function App() {
   return (
     <div
       className="shell"
+      style={{ fontSize: `${fontSize}px` }}
       onClick={() => {
         setThreadMenu(null);
         setResponseMenu(null);
         setTabMenu(null);
+        setOpenMenu(null);
       }}
     >
       <header className="menu-bar">
-        {["ファイル", "編集", "表示", "板", "スレッド", "ツール", "ヘルプ"].map((label) => (
-          <span key={label} className="menu-item">{label}</span>
+        {[
+          { label: "ファイル", items: [
+            { text: "スレ取得", action: () => fetchThreadListFromCurrent() },
+            { text: "レス取得", action: () => fetchResponsesFromCurrent() },
+            { text: "sep" },
+            { text: "書き込み", action: () => { setComposeOpen(true); setComposePos(null); } },
+            { text: "sep" },
+            { text: "終了", action: () => window.close() },
+          ]},
+          { label: "編集", items: [
+            { text: "スレURLをコピー", action: () => { void navigator.clipboard.writeText(threadUrl); setStatus("copied thread url"); } },
+            { text: "sep" },
+            { text: "NGフィルタ", action: () => setNgPanelOpen((v) => !v) },
+          ]},
+          { label: "表示", items: [
+            { text: `文字サイズ: ${fontSize}px`, action: () => {} },
+            { text: "文字サイズ拡大", action: () => setFontSize((v) => Math.min(v + 1, 20)) },
+            { text: "文字サイズ縮小", action: () => setFontSize((v) => Math.max(v - 1, 8)) },
+            { text: "文字サイズリセット", action: () => setFontSize(12) },
+            { text: "sep" },
+            { text: "レイアウトリセット", action: () => resetLayout() },
+          ]},
+          { label: "板", items: [
+            { text: "板一覧を取得", action: () => fetchBoardCategories() },
+            { text: "sep" },
+            { text: "板一覧タブ", action: () => setBoardPaneTab("boards") },
+            { text: "お気に入りタブ", action: () => setBoardPaneTab("fav-threads") },
+          ]},
+          { label: "スレッド", items: [
+            { text: "閉じたスレを戻す", action: reopenLastClosedThread },
+            { text: "すべてのスレを開く", action: reopenAllThreads },
+            { text: "sep" },
+            { text: "すべてのタブを閉じる", action: closeAllTabs },
+          ]},
+          { label: "ツール", items: [
+            { text: "認証状態", action: checkAuthEnv },
+            { text: "認証テスト", action: probeAuth },
+            { text: "sep" },
+            { text: "更新確認", action: checkForUpdates },
+          ]},
+          { label: "ヘルプ", items: [
+            { text: "ショートカット一覧", action: () => setShortcutsOpen(true) },
+            { text: "sep" },
+            { text: "バージョン情報", action: () => setStatus(`5ch Browser v${currentVersion} (Runtime: ${runtimeState})`) },
+          ]},
+        ].map(({ label, items }) => (
+          <div key={label} className="menu-item-wrap" onClick={(e) => e.stopPropagation()}>
+            <span
+              className={`menu-item ${openMenu === label ? "menu-item-active" : ""}`}
+              onClick={() => setOpenMenu(openMenu === label ? null : label)}
+              onMouseEnter={() => { if (openMenu) setOpenMenu(label); }}
+            >
+              {label}
+            </span>
+            {openMenu === label && (
+              <div className="menu-dropdown">
+                {items.map((item, i) =>
+                  item.text === "sep" ? (
+                    <div key={i} className="menu-sep" />
+                  ) : (
+                    <button
+                      key={item.text}
+                      onClick={() => { item.action?.(); setOpenMenu(null); }}
+                    >
+                      {item.text}
+                    </button>
+                  )
+                )}
+              </div>
+            )}
+          </div>
         ))}
       </header>
       <div className="tool-bar">
@@ -1986,6 +2064,39 @@ export default function App() {
           </div>
         );
       })()}
+      {shortcutsOpen && (
+        <div className="lightbox-overlay" onClick={() => setShortcutsOpen(false)}>
+          <div className="shortcuts-panel" onClick={(e) => e.stopPropagation()}>
+            <header className="shortcuts-header">
+              <strong>ショートカット一覧</strong>
+              <button onClick={() => setShortcutsOpen(false)}>閉じる</button>
+            </header>
+            <div className="shortcuts-body">
+              {[
+                ["Ctrl+W", "選択スレを閉じる"],
+                ["Ctrl+Shift+W", "最後に閉じたスレを戻す"],
+                ["Ctrl+Shift+R", "スレ一覧を再取得"],
+                ["Ctrl+Alt+/", "次のスレへ切替"],
+                ["Ctrl+Tab", "次のタブ"],
+                ["Ctrl+Shift+Tab", "前のタブ"],
+                ["Ctrl+↑/↓", "スレ選択の上下移動"],
+                ["Ctrl+Shift+↑/↓", "レス選択の上下移動"],
+                ["Ctrl+Alt+←/→", "スレペイン幅の調整"],
+                ["Ctrl+Alt+↑/↓", "レス分割比の調整"],
+                ["R", "選択レスを引用して書き込み"],
+                ["Escape", "ライトボックス/ダイアログを閉じる"],
+                ["ダブルクリック (レス行)", "引用して書き込み"],
+                ["中クリック (タブ)", "タブを閉じる"],
+              ].map(([key, desc]) => (
+                <div key={key} className="shortcut-row">
+                  <kbd>{key}</kbd>
+                  <span>{desc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       {lightboxUrl && (
         <div className="lightbox-overlay" onClick={() => setLightboxUrl(null)}>
           <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>

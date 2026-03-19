@@ -40,8 +40,45 @@ body {
   user-select: none;
 }
 
-.menu-item:hover {
+.menu-item:hover,
+.menu-item-active {
   background: #c9c0b0;
+}
+
+.menu-item-wrap {
+  position: relative;
+}
+
+.menu-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 80;
+  min-width: 180px;
+  border: 1px solid #8f826b;
+  background: #f3ede1;
+  box-shadow: 0 4px 12px rgba(20, 20, 20, 0.2);
+  display: grid;
+  gap: 1px;
+  padding: 3px;
+}
+
+.menu-dropdown button {
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.menu-dropdown button:hover {
+  background: #e0d8c8;
+}
+
+.menu-sep {
+  height: 1px;
+  background: #c4b8a2;
+  margin: 2px 4px;
 }
 
 .tool-bar {
@@ -954,6 +991,51 @@ pre {
 .lightbox-actions button:hover,
 .lightbox-open:hover {
   background: #ede7db;
+}
+
+.shortcuts-panel {
+  background: #efe7d8;
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 24px rgba(20, 20, 20, 0.3);
+  width: min(420px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.shortcuts-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #e0d5c2;
+}
+
+.shortcuts-header button {
+  margin-left: auto;
+}
+
+.shortcuts-body {
+  padding: 8px 12px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.shortcut-row kbd {
+  display: inline-block;
+  min-width: 140px;
+  padding: 2px 6px;
+  border: 1px solid #ad9f87;
+  border-radius: 3px;
+  background: #faf8f3;
+  font-family: monospace;
+  font-size: 11px;
 }
 
 .thread-tab[draggable="true"] {
