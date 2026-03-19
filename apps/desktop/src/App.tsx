@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEventHandler, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEventHandler,
+  type MouseEvent as ReactMouseEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -401,12 +408,28 @@ export default function App() {
   ).slice(0, 80);
   const visibleThreadItems = threadItems.filter((t) => !closedThreadIds.includes(t.id));
   const selectedThreadItem = visibleThreadItems.find((t) => t.id === selectedThread) ?? null;
+  const unreadThreadCount = visibleThreadItems.filter((t) => !threadReadMap[t.id]).length;
+  const selectedThreadLabel = selectedThreadItem ? `#${selectedThreadItem.id}` : "-";
   const responseItems = [
     { id: 1, name: "Anonymous", time: "2026/03/07 10:00", text: "post flow trace ready" },
     { id: 2, name: "Anonymous", time: "2026/03/07 10:02", text: "be/uplift/donguri login checked" },
     { id: 3, name: "Anonymous", time: "2026/03/07 10:04", text: "next: subject/dat fetch integration" },
   ];
   const activeResponse = responseItems.find((r) => r.id === selectedResponse) ?? responseItems[0];
+  const selectedResponseLabel = activeResponse ? `#${activeResponse.id}` : "-";
+
+  const goFromLocationInput = () => {
+    const next = locationInput.trim();
+    if (!next) return;
+    applyLocationToThread();
+    void fetchThreadListFromCurrent(next);
+  };
+
+  const onLocationInputKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    goFromLocationInput();
+  };
 
   const onThreadContextMenu = (e: ReactMouseEvent, threadId: number) => {
     e.preventDefault();
@@ -789,14 +812,8 @@ export default function App() {
       </div>
       <div className="address-bar">
         <span>URL</span>
-        <input value={locationInput} onChange={(e) => setLocationInput(e.target.value)} />
-        <button
-          onClick={() => {
-            const next = locationInput.trim();
-            applyLocationToThread();
-            void fetchThreadListFromCurrent(next);
-          }}
-        >
+        <input value={locationInput} onChange={(e) => setLocationInput(e.target.value)} onKeyDown={onLocationInputKeyDown} />
+        <button onClick={goFromLocationInput}>
           Go
         </button>
       </div>
@@ -982,7 +999,9 @@ export default function App() {
         </section>
       </main>
       <footer className="status-bar">
-        TS:-1 | US:-1 | API:ON | Ronin:ON | BE:{beState} | UPLIFT:{upliftState} | DONGURI:EXPERIMENTAL | {updateState}
+        TS:{visibleThreadItems.length} | US:{unreadThreadCount} | Board:{selectedBoard} | Thread:{selectedThreadLabel} |
+        Res:{selectedResponseLabel} | API:ON | Ronin:ON | BE:{beState} | UPLIFT:{upliftState} | DONGURI:EXPERIMENTAL |{" "}
+        {updateState}
       </footer>
       {composeOpen && (
         <section className="compose-window" role="dialog" aria-label="Write">
