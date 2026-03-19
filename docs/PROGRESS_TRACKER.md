@@ -23,10 +23,13 @@
 - [x] `subject.txt` 取得コマンド追加（Tauri経由でスレ一覧を実データ表示）
 - [x] レス番号セル左クリックでレスメニュー表示（`live5ch_4` 反映）
 - [x] キーボードショートカットを追加（`Ctrl/Cmd+W` タブ閉じ、`Ctrl+Alt+/`/`Cmd+Option+/` タブ切替）
+- [x] 3ペインUIにドラッグ式ペインリサイズを追加（横2本 + レス縦1本）
+- [x] ペインレイアウトの永続化（localStorage）とレイアウトリセットを追加
+- [x] レイアウト調整ショートカットを追加（`Ctrl/Cmd+Alt+Arrow`）
 
 ## 直近タスク（優先順）
 1. `core-fetch`: 実投稿フロー（confirm -> submit）本実装の実環境検証
-2. `apps/desktop`: Live5ch `geronimo` 互換UIの詳細調整（ペインリサイズ）
+2. `apps/desktop`: Live5ch `geronimo` 互換UIの詳細調整（行情報・メニュー動作の詰め）
 3. `landing`: 文言/導線の本番向け調整
 4. `release`: タグ作成〜latest.json更新のワンショット運用定着
 

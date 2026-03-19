@@ -1,6 +1,6 @@
 ﻿# NEXT SESSION HANDOVER
 
-## 現在地（2026-03-07 JST）
+## 現在地（2026-03-19 JST）
 - 仕様書: `docs/5ch_browser_spec.md` は `v1.0`。
 - BE/UPLIFT/どんぐり の通信仕様は観測ベースで実装可能な粒度まで整理済み。
 - 配布方針は確定: `Cloudflare Pages (Vite + React) + GitHub Releases`。
@@ -12,8 +12,14 @@
   - `apps/landing`: Vite + React ランディング雛形追加済み
   - `apps/desktop`: 上部URLバー + レスビューア/開発パネル分離UIを実装済み
   - `apps/desktop`: スレ一覧取得時のステータス表示を追加（loading / rows / error）
+  - `apps/desktop`: 3ペインのドラッグリサイズ（横2本 + レス縦1本）を追加
+  - `apps/desktop`: ペインレイアウトの永続化（localStorage）と `Reset Layout` を追加
+  - `apps/desktop`: レイアウト調整ショートカット追加（`Ctrl/Cmd+Alt+Arrow`）
 - Git は初期化済みで、`safe.directory` 設定済み（この環境から `git` 操作可能）。
-- 直近反映コミット: `8c1321c` (`desktop: improve thread load status and subject URL parsing`)
+- 直近反映コミット:
+  - `d7d1666` (`desktop: add draggable pane splitters for three-pane layout`)
+  - `f62ef0e` (`desktop: persist pane sizes and add layout reset`)
+  - `3eb6fd8` (`desktop: add keyboard resizing shortcuts for pane layout`)
 
 ## 仕様確定ポイント（重要）
 - 5ch基盤:
@@ -43,7 +49,7 @@
    - ダウンロード導線文言/注意文言の調整
    - Cloudflare Pages プロジェクト設定（build dir: `apps/landing/dist`）
 4. geronimo互換UI本実装
-   - 行情報表示、ペインリサイズの追加
+   - 行情報表示、メニュー動作（右クリック系）の詰め
 
 ## 参照ドキュメント
 - 仕様: `docs/5ch_browser_spec.md`
