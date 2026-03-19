@@ -541,6 +541,25 @@ pre {
   padding: 8px;
 }
 
+.compose-result {
+  margin: 0 8px 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  border: 1px solid;
+}
+
+.compose-result-ok {
+  background: #e8f5e4;
+  border-color: #6a9e5a;
+  color: #2d5a1e;
+}
+
+.compose-result-err {
+  background: #f5e4e4;
+  border-color: #9e5a5a;
+  color: #5a1e1e;
+}
+
 .thread-menu {
   position: fixed;
   z-index: 50;

@@ -171,6 +171,7 @@ export default function App() {
   const [composeBody, setComposeBody] = useState("");
   const [composePreview, setComposePreview] = useState(false);
   const [composeEnterSubmit, setComposeEnterSubmit] = useState(false);
+  const [composeResult, setComposeResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [postFlowTraceProbe, setPostFlowTraceProbe] = useState("not run");
   const [threadListProbe, setThreadListProbe] = useState("not run");
   const [responseListProbe, setResponseListProbe] = useState("not run");
@@ -222,6 +223,35 @@ export default function App() {
       setStatus(`boards loaded: ${cats.length} categories, ${cats.reduce((s, c) => s + c.boards.length, 0)} boards`);
     } catch (error) {
       setStatus(`board load error: ${String(error)}`);
+    }
+  };
+
+  const persistReadStatus = async (boardUrl: string, threadKey: string, lastReadNo: number) => {
+    if (!isTauriRuntime()) return;
+    try {
+      const current = await invoke<Record<string, Record<string, number>>>("load_read_status");
+      if (!current[boardUrl]) current[boardUrl] = {};
+      current[boardUrl][threadKey] = lastReadNo;
+      await invoke("save_read_status", { status: current });
+    } catch {
+      // ignore persistence errors
+    }
+  };
+
+  const loadReadStatusForBoard = async (boardUrl: string, threads: ThreadListItem[]) => {
+    if (!isTauriRuntime()) return;
+    try {
+      const all = await invoke<Record<string, Record<string, number>>>("load_read_status");
+      const boardStatus = all[boardUrl] ?? {};
+      const readMap: Record<number, boolean> = {};
+      threads.forEach((t, i) => {
+        const id = i + 1;
+        const lastRead = boardStatus[t.threadKey] ?? 0;
+        readMap[id] = lastRead > 0;
+      });
+      setThreadReadMap(readMap);
+    } catch {
+      // ignore
     }
   };
 
@@ -415,6 +445,7 @@ export default function App() {
       setClosedThreadIds([]);
       setThreadListProbe(`ok rows=${rows.length}`);
       setStatus(`threads loaded: ${rows.length}`);
+      void loadReadStatusForBoard(url, rows);
       if (rows.length > 0) {
         setSelectedThread(1);
         void fetchResponsesFromCurrent(rows[0].threadUrl);
@@ -526,6 +557,7 @@ export default function App() {
 
   const probePostFinalizeSubmitFromCompose = async () => {
     setPostFinalizeSubmitProbe("running...");
+    setComposeResult(null);
     try {
       const r = await invoke<PostSubmitResult>("probe_post_finalize_submit_from_input", {
         threadUrl,
@@ -537,13 +569,20 @@ export default function App() {
       setPostFinalizeSubmitProbe(
         `status=${r.status} type=${r.contentType ?? "-"} error=${r.containsError} preview=${r.bodyPreview}`
       );
+      if (r.containsError) {
+        setComposeResult({ ok: false, message: `Post failed: ${r.bodyPreview}` });
+      } else {
+        setComposeResult({ ok: true, message: `Post submitted (status ${r.status})` });
+      }
     } catch (error) {
       setPostFinalizeSubmitProbe(`error: ${String(error)}`);
+      setComposeResult({ ok: false, message: `Error: ${String(error)}` });
     }
   };
 
   const probePostFlowTraceFromCompose = async () => {
     setPostFlowTraceProbe("running...");
+    setComposeResult(null);
     try {
       const r = await invoke<PostFlowTrace>("probe_post_flow_trace", {
         threadUrl,
@@ -561,8 +600,16 @@ export default function App() {
           `submit=${r.submitSummary ?? "-"}`,
         ].join("\n")
       );
+      if (r.blocked) {
+        setComposeResult({ ok: false, message: "Flow blocked (real submit disabled)" });
+      } else if (r.submitSummary?.includes("error=true")) {
+        setComposeResult({ ok: false, message: `Post failed: ${r.submitSummary}` });
+      } else if (r.submitSummary) {
+        setComposeResult({ ok: true, message: `Post submitted: ${r.submitSummary}` });
+      }
     } catch (error) {
       setPostFlowTraceProbe(`error: ${String(error)}`);
+      setComposeResult({ ok: false, message: `Error: ${String(error)}` });
     }
   };
 
@@ -1206,6 +1253,9 @@ export default function App() {
                         setThreadUrl(t.threadUrl);
                         setLocationInput(t.threadUrl);
                         void fetchResponsesFromCurrent(t.threadUrl);
+                        // persist read status
+                        const ft = fetchedThreads[t.id - 1];
+                        if (ft) void persistReadStatus(threadUrl, ft.threadKey, ft.responseCount);
                       }
                     }}
                     onContextMenu={(e) => onThreadContextMenu(e, t.id)}
@@ -1424,6 +1474,11 @@ export default function App() {
             </button>
             <button onClick={probePostFlowTraceFromCompose}>Flow Trace</button>
           </div>
+          {composeResult && (
+            <div className={`compose-result ${composeResult.ok ? "compose-result-ok" : "compose-result-err"}`}>
+              {composeResult.ok ? "OK" : "NG"}: {composeResult.message}
+            </div>
+          )}
         </section>
       )}
       {ngPanelOpen && (
