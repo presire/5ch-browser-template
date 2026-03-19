@@ -90,6 +90,11 @@ const clampMenuPosition = (x: number, y: number, width: number, height: number) 
   x: clamp(x, MENU_EDGE_PADDING, Math.max(MENU_EDGE_PADDING, window.innerWidth - width - MENU_EDGE_PADDING)),
   y: clamp(y, MENU_EDGE_PADDING, Math.max(MENU_EDGE_PADDING, window.innerHeight - height - MENU_EDGE_PADDING)),
 });
+const isTypingTarget = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  return target.isContentEditable || tag === "input" || tag === "textarea" || tag === "select";
+};
 
 export default function App() {
   const [status, setStatus] = useState("not fetched");
@@ -565,6 +570,7 @@ export default function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return;
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "r") {
         e.preventDefault();
         void fetchThreadListFromCurrent();
@@ -609,11 +615,31 @@ export default function App() {
       if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && e.key === "ArrowDown") {
         e.preventDefault();
         setResponseTopRatio((prev) => clamp(prev + 3, 24, 76));
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault();
+        const ids = visibleThreadItems.map((t) => t.id);
+        if (ids.length === 0) return;
+        const cur = selectedThread ?? ids[0];
+        const idx = Math.max(ids.indexOf(cur), 0);
+        const nextIdx = e.key === "ArrowUp" ? Math.max(0, idx - 1) : Math.min(ids.length - 1, idx + 1);
+        setSelectedThread(ids[nextIdx]);
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault();
+        const ids = responseItems.map((r) => r.id);
+        if (ids.length === 0) return;
+        const cur = selectedResponse || ids[0];
+        const idx = Math.max(ids.indexOf(cur), 0);
+        const nextIdx = e.key === "ArrowUp" ? Math.max(0, idx - 1) : Math.min(ids.length - 1, idx + 1);
+        setSelectedResponse(ids[nextIdx]);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedThread, visibleThreadItems]);
+  }, [selectedThread, selectedResponse, visibleThreadItems, responseItems]);
 
   useEffect(() => {
     try {
@@ -730,7 +756,7 @@ export default function App() {
         <button onClick={() => setComposeOpen(true)}>Write</button>
         <button onClick={resetLayout}>Reset Layout</button>
         <span className="shortcut-hint">
-          Shortcuts: Ctrl+Shift+R | Ctrl/Cmd+W | Ctrl+Alt+/ | Ctrl/Cmd+Alt+Arrows
+          Shortcuts: Ctrl+Shift+R | Ctrl/Cmd+W | Ctrl+Alt+/ | Ctrl/Cmd+Alt+Arrows | Ctrl/Cmd+Arrows
         </span>
       </div>
       <div className="address-bar">
