@@ -67,14 +67,18 @@
 - [x] desktop: 既読管理の永続化（core-store read_status.json: board_url → thread_key → last_read_no）
 - [x] desktop: 投稿結果フィードバック（compose窓に成功/失敗バー表示）
 - [x] desktop: smoke-ui テスト 31項目（お気に入り/NG/レスメタ追加）
+- [x] desktop: スレ検索機能（タイトル部分一致フィルタ）
+- [x] desktop: 自動更新トグル（デフォルト60秒間隔でレス定期リロード）
+- [x] desktop: 板ペインに Boards/Fav タブ切り替え + お気に入りスレ一覧表示
+- [x] desktop: smoke-ui テスト 35項目（検索/自動更新/タブ切り替え追加）
 
 ## 直近タスク（優先順）
 1. `core-fetch`: 非空メッセージでの confirm form 検出を確認（safe probe 完了: 2026-03-19）
    - real submit時は `-AllowRealSubmit -RealSubmitToken I_UNDERSTAND_REAL_POST -Message "<non-empty>"` を必須化
 2. `apps/desktop`: geronimo互換UI継続改善
-   - スレ自動更新（定期リロード + 差分取得）
-   - お気に入りスレ一覧ペインの表示切り替え
-   - スレ検索機能（タイトル部分一致）
+   - タブ式スレ表示（複数スレを並行閲覧）
+   - レス書き込み時の自動リロード
+   - 画像URL自動サムネイル
    - push前に `apps/desktop` で `npm run test:smoke-ui` を実行
 3. `landing`: 文言/導線の本番向け調整
 4. `release`: タグ作成〜latest.json更新のワンショット運用定着

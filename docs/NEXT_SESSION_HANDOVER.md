@@ -53,6 +53,10 @@
   - `apps/desktop`: 既読管理の永続化（core-store read_status.json）
   - `apps/desktop`: 投稿結果フィードバック（compose窓にOK/NGバー）
   - `apps/desktop`: smoke-ui 31項目（お気に入り/NGパネル/レスメタ追加）
+  - `apps/desktop`: スレ検索機能（タイトル部分一致フィルタ）
+  - `apps/desktop`: 自動更新トグル（60秒間隔レスリロード）
+  - `apps/desktop`: 板ペインに Boards/Fav タブ切り替え + お気に入りスレ一覧表示
+  - `apps/desktop`: smoke-ui 35項目（検索/自動更新/タブ切り替え追加）
 - Git は初期化済みで、`safe.directory` 設定済み（この環境から `git` 操作可能）。
 - safe probe 実環境検証 (2026-03-19):
   - 全4モード（anonymous/uplift/be_front/be_uplift）で GET=200, confirm=200
@@ -80,6 +84,8 @@
   - `a46b991` (`scripts: add post-flow probe runner with strict exit behavior`)
   - `e1ce816` (`desktop: add favorites, NG filtering, and persistence via core-store`)
   - `33f74ec` (`desktop: add read status persistence and post result feedback`)
+  - `3b40eb8` (`desktop: add thread search filter and auto-refresh toggle`)
+  - `470230c` (`desktop: add board pane tabs with favorite threads view`)
 
 ## 仕様確定ポイント（重要）
 - 5ch基盤:
@@ -104,9 +110,9 @@
    - 必要時のみ `-AllowRealSubmit -RealSubmitToken I_UNDERSTAND_REAL_POST -Message "<non-empty>"` で実送信検証
    - board URL 入力（例: `https://mao.5ch.io/ngt/`）でのスレ一覧取得を実環境確認
 2. geronimo互換UI継続改善
-   - スレ自動更新（定期リロード + 差分取得）
-   - お気に入りスレ一覧ペインの表示切り替え
-   - スレ検索機能（タイトル部分一致）
+   - タブ式スレ表示（複数スレを並行閲覧）
+   - レス書き込み時の自動リロード
+   - 画像URL自動サムネイル
 3. リリース運用実地
    - `scripts/prepare_release_metadata.py` で実ZIPから `latest.json` 生成 + strict検証
    - `apps/landing/public/latest.json` へ反映
