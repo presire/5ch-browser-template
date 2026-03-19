@@ -76,6 +76,13 @@ type ThreadListItem = {
   responseCount: number;
   threadUrl: string;
 };
+type ThreadResponseItem = {
+  responseNo: number;
+  name: string;
+  mail: string;
+  dateAndId: string;
+  body: string;
+};
 
 const MIN_BOARD_PANE_PX = 160;
 const MIN_THREAD_PANE_PX = 280;
@@ -130,7 +137,9 @@ export default function App() {
   const [composeEnterSubmit, setComposeEnterSubmit] = useState(false);
   const [postFlowTraceProbe, setPostFlowTraceProbe] = useState("not run");
   const [threadListProbe, setThreadListProbe] = useState("not run");
+  const [responseListProbe, setResponseListProbe] = useState("not run");
   const [fetchedThreads, setFetchedThreads] = useState<ThreadListItem[]>([]);
+  const [fetchedResponses, setFetchedResponses] = useState<ThreadResponseItem[]>([]);
   const [selectedBoard, setSelectedBoard] = useState("Favorite");
   const [selectedThread, setSelectedThread] = useState<number | null>(1);
   const [closedThreadIds, setClosedThreadIds] = useState<number[]>([]);
@@ -234,13 +243,41 @@ export default function App() {
       setStatus(`threads loaded: ${rows.length}`);
       if (rows.length > 0) {
         setSelectedThread(1);
+        void fetchResponsesFromCurrent(rows[0].threadUrl);
       } else {
         setStatus("threads loaded: 0 (board may be empty or parse failed)");
+        setFetchedResponses([]);
+        setSelectedResponse(1);
       }
     } catch (error) {
       const msg = String(error);
       setThreadListProbe(`error: ${msg}`);
       setStatus(`thread load error: ${msg}`);
+    }
+  };
+
+  const fetchResponsesFromCurrent = async (targetThreadUrl?: string) => {
+    const url = (targetThreadUrl ?? threadUrl).trim();
+    if (!url) return;
+    if (!isTauriRuntime()) {
+      setResponseListProbe("web preview mode: response fetch requires tauri runtime");
+      return;
+    }
+    setResponseListProbe("running...");
+    try {
+      const rows = await invoke<ThreadResponseItem[]>("fetch_thread_responses_command", {
+        threadUrl: url,
+        limit: 800,
+      });
+      setFetchedResponses(rows);
+      setSelectedResponse(rows.length > 0 ? rows[0].responseNo : 1);
+      setResponseListProbe(`ok rows=${rows.length}`);
+      setStatus(`responses loaded: ${rows.length}`);
+    } catch (error) {
+      const msg = String(error);
+      setFetchedResponses([]);
+      setResponseListProbe(`error: ${msg}`);
+      setStatus(`response load error: ${msg}`);
     }
   };
 
@@ -419,9 +456,18 @@ export default function App() {
   const unreadThreadCount = visibleThreadItems.filter((t) => !threadReadMap[t.id]).length;
   const selectedThreadLabel = selectedThreadItem ? `#${selectedThreadItem.id}` : "-";
   const responseItems = [
-    { id: 1, name: "Anonymous", time: "2026/03/07 10:00", text: "post flow trace ready" },
-    { id: 2, name: "Anonymous", time: "2026/03/07 10:02", text: "be/uplift/donguri login checked" },
-    { id: 3, name: "Anonymous", time: "2026/03/07 10:04", text: "next: subject/dat fetch integration" },
+    ...(fetchedResponses.length > 0
+      ? fetchedResponses.map((r) => ({
+          id: r.responseNo,
+          name: r.name || "Anonymous",
+          time: r.dateAndId || "-",
+          text: r.body || "",
+        }))
+      : [
+          { id: 1, name: "Anonymous", time: "2026/03/07 10:00", text: "post flow trace ready" },
+          { id: 2, name: "Anonymous", time: "2026/03/07 10:02", text: "be/uplift/donguri login checked" },
+          { id: 3, name: "Anonymous", time: "2026/03/07 10:04", text: "next: subject/dat fetch integration" },
+        ]),
   ];
   const activeResponse = responseItems.find((r) => r.id === selectedResponse) ?? responseItems[0];
   const selectedResponseLabel = activeResponse ? `#${activeResponse.id}` : "-";
@@ -807,6 +853,7 @@ export default function App() {
       <div className="tool-bar">
         <button onClick={fetchMenu}>Refresh Menu</button>
         <button onClick={() => fetchThreadListFromCurrent()}>Load Threads</button>
+        <button onClick={() => fetchResponsesFromCurrent()}>Load Responses</button>
         <button onClick={checkAuthEnv}>Auth Status</button>
         <button onClick={probeAuth}>Auth Probe</button>
         <button onClick={() => setComposeOpen(true)}>Write</button>
@@ -881,6 +928,7 @@ export default function App() {
                     if ("threadUrl" in t && typeof t.threadUrl === "string") {
                       setThreadUrl(t.threadUrl);
                       setLocationInput(t.threadUrl);
+                      void fetchResponsesFromCurrent(t.threadUrl);
                     }
                   }}
                   onContextMenu={(e) => onThreadContextMenu(e, t.id)}
@@ -998,6 +1046,7 @@ export default function App() {
             <pre>{postCookieProbe}</pre>
             <pre>{postFormProbe}</pre>
             <pre>{threadListProbe}</pre>
+            <pre>{responseListProbe}</pre>
             <pre>{postConfirmProbe}</pre>
             <pre>{postFinalizePreviewProbe}</pre>
             <pre>{postFinalizeSubmitProbe}</pre>

@@ -1,7 +1,7 @@
 use core_auth::{login_be_front, login_donguri, login_uplift, LoginOutcome};
 use core_fetch::{
-    build_cookie_client, fetch_bbsmenu_json, fetch_post_form_tokens, fetch_subject_threads, normalize_5ch_url,
-    parse_confirm_submit_form, probe_post_cookie_scope, seed_cookie, submit_post_confirm,
+    build_cookie_client, fetch_bbsmenu_json, fetch_post_form_tokens, fetch_subject_threads,
+    fetch_thread_responses, normalize_5ch_url, parse_confirm_submit_form, probe_post_cookie_scope, seed_cookie, submit_post_confirm,
     submit_post_confirm_with_html, submit_post_finalize_from_confirm, PostConfirmResult, PostCookieReport,
     PostFinalizePreview, PostFormTokens, PostSubmitResult,
 };
@@ -80,6 +80,16 @@ struct ThreadListItem {
     title: String,
     response_count: u32,
     thread_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadResponseItem {
+    response_no: u32,
+    name: String,
+    mail: String,
+    date_and_id: String,
+    body: String,
 }
 
 #[tauri::command]
@@ -189,6 +199,31 @@ async fn fetch_thread_list(thread_url: String, limit: Option<usize>) -> Result<V
             title: r.title,
             response_count: r.response_count,
             thread_url: r.thread_url,
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn fetch_thread_responses_command(
+    thread_url: String,
+    limit: Option<usize>,
+) -> Result<Vec<ThreadResponseItem>, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("5ch-browser-template/0.1")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let limit = limit.unwrap_or(500).clamp(1, 2000);
+    let rows = fetch_thread_responses(&client, &thread_url, limit)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ThreadResponseItem {
+            response_no: r.response_no,
+            name: r.name,
+            mail: r.mail,
+            date_and_id: r.date_and_id,
+            body: r.body,
         })
         .collect())
 }
@@ -539,6 +574,7 @@ pub fn run() {
             probe_post_cookie_scope_simulation,
             probe_thread_post_form,
             fetch_thread_list,
+            fetch_thread_responses_command,
             probe_post_confirm_empty,
             probe_post_confirm,
             probe_post_finalize_preview,

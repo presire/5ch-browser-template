@@ -5,7 +5,8 @@ use serde_json::Value;
 use std::sync::Arc;
 use thiserror::Error;
 use url::Url;
-use core_parse::parse_subject_line;
+use core_parse::{parse_dat_line, parse_subject_line};
+use encoding_rs::SHIFT_JIS;
 
 pub const BBSMENU_URL: &str = "https://menu.5ch.io/bbsmenu.json";
 
@@ -76,6 +77,16 @@ pub struct SubjectThread {
     pub title: String,
     pub response_count: u32,
     pub thread_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadResponse {
+    pub response_no: u32,
+    pub name: String,
+    pub mail: String,
+    pub date_and_id: String,
+    pub body: String,
 }
 
 #[derive(Debug, Clone)]
@@ -274,6 +285,64 @@ fn resolve_post_url(thread_url: &str, action: &str) -> Result<String, FetchError
     Ok(base.join(action)?.to_string())
 }
 
+pub fn resolve_dat_url_from_thread_url(thread_url: &str) -> Result<String, FetchError> {
+    let normalized = normalize_5ch_url(thread_url);
+    let parsed = Url::parse(&normalized)?;
+    let mut segs = parsed
+        .path_segments()
+        .ok_or_else(|| FetchError::Parse("path segments".into()))?;
+    let parts = segs.by_ref().collect::<Vec<_>>();
+
+    if !(parts.len() >= 4 && parts[0] == "test" && parts[1] == "read.cgi") {
+        return Err(FetchError::Parse(
+            "thread url format; expected /test/read.cgi/{board}/{key}/".into(),
+        ));
+    }
+    let board = parts[2];
+    let key = parts[3];
+    if board.is_empty() || key.is_empty() {
+        return Err(FetchError::Parse("thread url format".into()));
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| FetchError::Parse("thread host".into()))?;
+    Ok(format!("{}://{}/{}/dat/{}.dat", parsed.scheme(), host, board, key))
+}
+
+pub async fn fetch_thread_responses(
+    client: &Client,
+    thread_url: &str,
+    limit: usize,
+) -> Result<Vec<ThreadResponse>, FetchError> {
+    let dat_url = resolve_dat_url_from_thread_url(thread_url)?;
+    let response = client.get(&dat_url).send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(FetchError::HttpStatus(status));
+    }
+    let bytes = response.bytes().await?;
+    let (decoded, _, _) = SHIFT_JIS.decode(&bytes);
+    let body = decoded.into_owned();
+
+    let mut out = Vec::new();
+    for (idx, line) in body.lines().enumerate() {
+        if let Some(row) = parse_dat_line(line) {
+            out.push(ThreadResponse {
+                response_no: (idx + 1) as u32,
+                name: row.name,
+                mail: row.mail,
+                date_and_id: row.date_and_id,
+                body: row.body,
+            });
+            if out.len() >= limit {
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub fn parse_post_form_tokens(thread_url: &str, html: &str) -> Result<PostFormTokens, FetchError> {
     let action = detect_post_form_action(html).ok_or_else(|| FetchError::Parse("form action".into()))?;
     let post_url = resolve_post_url(thread_url, &action)?;
@@ -467,7 +536,7 @@ pub async fn submit_post_finalize_from_confirm(
 mod tests {
     use super::{
         cookie_names_for_url, normalize_5ch_url, parse_confirm_submit_form, parse_post_form_tokens,
-        probe_post_cookie_scope, resolve_subject_url_from_thread_url, seed_cookie,
+        probe_post_cookie_scope, resolve_dat_url_from_thread_url, resolve_subject_url_from_thread_url, seed_cookie,
     };
     use reqwest::cookie::Jar;
 
@@ -586,5 +655,12 @@ mod tests {
     fn resolve_subject_url_rejects_unsupported_path() {
         let err = resolve_subject_url_from_thread_url("https://mao.5ch.io/test/").expect_err("unsupported path");
         assert!(err.to_string().contains("unsupported url"));
+    }
+
+    #[test]
+    fn resolve_dat_url_from_thread_url_works() {
+        let u = resolve_dat_url_from_thread_url("https://mao.5ch.net/test/read.cgi/ngt/9240230711/")
+            .expect("dat url");
+        assert_eq!(u, "https://5ch.io/ngt/dat/9240230711.dat");
     }
 }

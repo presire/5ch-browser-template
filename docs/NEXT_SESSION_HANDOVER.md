@@ -22,6 +22,9 @@
   - `apps/desktop`: ツールバーから `Undo Close` 操作可能（ショートカット閉鎖履歴と統一）
   - `apps/desktop`: ステータスバーを実データ連動化し、`Runtime`（TAURI/WEB）を表示
   - `apps/desktop`: Webプレビューでは thread fetch を抑止し、Tauri必須メッセージを表示
+  - `core-parse`: dat行パーサを追加（name/mail/date/body）
+  - `core-fetch`: dat取得APIを追加（Shift_JIS decode + dat解析）
+  - `apps/desktop`: スレ選択時にレス一覧を実取得してResponsesペインへ表示
   - `CI`: Windowsジョブで desktop smoke-ui を実行するよう更新
   - `scripts/probe_post_flow.py`: confirm/finalize解析を追加し、real submit を二重ガード化
   - `scripts/probe_post_flow.py`: real submit時は非空 `--message` 必須（空本文を事前拒否）
@@ -43,6 +46,9 @@
   - `678af95` (`desktop: add undo-close toolbar action and fix close history`)
   - `dd6b8aa` (`desktop: make status bar dynamic and support Enter in URL bar`)
   - `286156a` (`desktop: show runtime mode and guard thread fetch outside tauri`)
+  - `3eb47fb` (`scripts: block real submit probe when message is empty`)
+  - `17a3f54` (`core-fetch: add subject-url resolution regression tests`)
+  - `a46b991` (`scripts: add post-flow probe runner with strict exit behavior`)
 
 ## 仕様確定ポイント（重要）
 - 5ch基盤:

@@ -37,6 +37,9 @@
 - [x] ツールバーに `Undo Close` を追加し、`Ctrl/Cmd+W` 経由の履歴復元も統一
 - [x] ステータスバーを実データ連動化（TS/US/Board/Thread/Res/Runtime）
 - [x] Webプレビュー時の `fetch_thread_list` 呼び出しをガード（Tauri必須を明示）
+- [x] `core-parse` に dat行パーサを追加
+- [x] `core-fetch` に dat取得 (`fetch_thread_responses`) を追加
+- [x] desktop にスレ本文レスの実データ表示を接続（Tauri実行時）
 
 ## 直近タスク（優先順）
 1. `core-fetch`: 実投稿フロー（confirm -> submit）本実装の実環境検証
