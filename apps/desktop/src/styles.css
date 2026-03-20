@@ -727,23 +727,21 @@ body {
 }
 .hover-preview {
   position: fixed;
-  top: 56px;
-  right: 10px;
-  bottom: 10px;
-  left: auto;
-  width: min(48vw, 760px);
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   z-index: 120;
   background: rgba(0, 0, 0, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 6px;
-  padding: 6px;
+  padding: 0;
   overflow: auto;
   pointer-events: none;
 }
 .hover-preview img {
   display: block;
-  width: 100%;
+  width: auto;
   height: auto;
+  max-width: none;
 }
 
 .anchor-popup-header {

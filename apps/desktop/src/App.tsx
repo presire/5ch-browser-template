@@ -2132,28 +2132,42 @@ export default function App() {
                   setStatus(`jumped to >>${no}`);
                 }
               }}
-              onMouseOver={(e) => {
+              onMouseMove={(e) => {
                 const target = e.target as HTMLElement;
                 const thumb = target.closest<HTMLImageElement>("img.response-thumb");
-                if (e.ctrlKey && thumb) {
-                  const src = thumb.getAttribute("src");
-                  if (src && hoverPreviewSrcRef.current !== src) {
-                    if (hoverPreviewHideTimerRef.current) {
-                      clearTimeout(hoverPreviewHideTimerRef.current);
-                      hoverPreviewHideTimerRef.current = null;
-                    }
-                    hoverPreviewSrcRef.current = src;
-                    hoverPreviewZoomRef.current = 100;
-                    if (hoverPreviewImgRef.current) {
-                      hoverPreviewImgRef.current.src = src;
-                      hoverPreviewImgRef.current.style.width = "100%";
-                    }
-                    if (hoverPreviewRef.current) {
-                      hoverPreviewRef.current.style.display = "block";
-                    }
-                  }
-                  return;
+                if (!e.ctrlKey || !thumb) return;
+                const src = thumb.getAttribute("src");
+                if (!src) return;
+                if (hoverPreviewHideTimerRef.current) {
+                  clearTimeout(hoverPreviewHideTimerRef.current);
+                  hoverPreviewHideTimerRef.current = null;
                 }
+                if (src !== hoverPreviewSrcRef.current) {
+                  hoverPreviewSrcRef.current = src;
+                  hoverPreviewZoomRef.current = 100;
+                  if (hoverPreviewImgRef.current) {
+                    hoverPreviewImgRef.current.src = src;
+                    hoverPreviewImgRef.current.style.width = "auto";
+                    hoverPreviewImgRef.current.style.transform = "scale(1)";
+                  }
+                }
+                if (hoverPreviewRef.current) {
+                  hoverPreviewRef.current.style.display = "block";
+                }
+              }}
+              onMouseLeave={() => {
+                if (hoverPreviewHideTimerRef.current) {
+                  clearTimeout(hoverPreviewHideTimerRef.current);
+                  hoverPreviewHideTimerRef.current = null;
+                }
+                hoverPreviewHideTimerRef.current = setTimeout(() => {
+                  hoverPreviewSrcRef.current = null;
+                  if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
+                  hoverPreviewHideTimerRef.current = null;
+                }, 60);
+              }}
+              onMouseOver={(e) => {
+                const target = e.target as HTMLElement;
                 const anchor = target.closest<HTMLElement>(".anchor-ref");
                 if (!anchor) { return; }
                 const no = Number(anchor.dataset.anchor);
@@ -2164,17 +2178,6 @@ export default function App() {
               }}
               onMouseOut={(e) => {
                 const target = e.target as HTMLElement;
-                if (target.closest("img.response-thumb")) {
-                  if (hoverPreviewHideTimerRef.current) {
-                    clearTimeout(hoverPreviewHideTimerRef.current);
-                  }
-                  hoverPreviewHideTimerRef.current = setTimeout(() => {
-                    hoverPreviewSrcRef.current = null;
-                    if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
-                    hoverPreviewHideTimerRef.current = null;
-                  }, 90);
-                  return;
-                }
                 if (target.closest(".anchor-ref")) {
                   setAnchorPopup(null);
                   setNestedPopups([]);
@@ -2816,11 +2819,11 @@ export default function App() {
             e.preventDefault();
             const next = Math.max(10, Math.min(500, hoverPreviewZoomRef.current + (e.deltaY < 0 ? 20 : -20)));
             hoverPreviewZoomRef.current = next;
-            if (hoverPreviewImgRef.current) hoverPreviewImgRef.current.style.width = `${next}%`;
+            if (hoverPreviewImgRef.current) hoverPreviewImgRef.current.style.transform = `scale(${next / 100})`;
           }
         }}
       >
-        <img ref={hoverPreviewImgRef} alt="" style={{ width: "100%" }} />
+        <img ref={hoverPreviewImgRef} alt="" style={{ width: "auto", transformOrigin: "left top", transform: "scale(1)" }} />
       </div>
       {lightboxUrl && (
         <div className="lightbox-overlay" onClick={() => setLightboxUrl(null)}>

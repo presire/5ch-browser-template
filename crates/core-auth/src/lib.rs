@@ -117,6 +117,10 @@ fn contains_login_failed_marker(html: &str) -> bool {
         || html.contains("/err")
 }
 
+fn contains_login_success_marker(html: &str) -> bool {
+    html.contains("ログアウト") || html.contains("/logout") || html.contains("BE 2.1")
+}
+
 fn extract_be_login_error(html: &str) -> Option<String> {
     if html.contains("ログインできません") {
         return Some("ログインできません。メールアドレスとパスワードを確認してください。".to_string());
@@ -170,7 +174,10 @@ pub async fn login_be_front(email: &str, password: &str) -> Result<LoginOutcome,
     let url_login_error = final_url.contains("/err");
     let has_login_form = has_input_name(&body_preview, "mail") && has_input_name(&body_preview, "pass");
     let contains_login_error = contains_login_failed_marker(&body_preview);
-    let success = has_be_cookie || (!url_login_error && !has_login_form && !contains_login_error);
+    let status_page = final_url.contains("/status");
+    let contains_success_marker = contains_login_success_marker(&body_preview);
+    let success =
+        (has_be_cookie || status_page || contains_success_marker) && !url_login_error && !contains_login_error;
 
     let body_note = extract_be_login_error(&body_preview).unwrap_or_else(|| {
         body_snippet.replace('\n', " ").replace('\r', "")
@@ -183,12 +190,13 @@ pub async fn login_be_front(email: &str, password: &str) -> Result<LoginOutcome,
         location: Some(final_url.clone()),
         cookie_names,
         note: format!(
-            "be login(action={}, final={}, err={}, form={}, be_cookie={}): {}",
+            "be login(action={}, final={}, err={}, form={}, be_cookie={}, status_page={}): {}",
             action,
             final_url,
             url_login_error,
             has_login_form,
             has_be_cookie,
+            status_page,
             body_note
         ),
     })
