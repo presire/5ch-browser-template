@@ -5,6 +5,7 @@ import {
   type KeyboardEventHandler,
   type MouseEvent as ReactMouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type UIEventHandler,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -115,6 +116,7 @@ const COMPOSE_PREFS_KEY = "desktop.composePrefs.v1";
 const BOOKMARK_KEY = "desktop.bookmarks.v1";
 const BOARD_CACHE_KEY = "desktop.boardCategories.v1";
 const EXPANDED_CATS_KEY = "desktop.expandedCategories.v1";
+const BOARD_TREE_SCROLL_KEY = "desktop.boardTreeScrollTop.v1";
 const MENU_EDGE_PADDING = 8;
 
 type ResizeDragState =
@@ -348,6 +350,8 @@ export default function App() {
   const [threadPanePx, setThreadPanePx] = useState(DEFAULT_THREAD_PANE_PX);
   const [responseTopRatio, setResponseTopRatio] = useState(DEFAULT_RESPONSE_TOP_RATIO);
   const resizeDragRef = useRef<ResizeDragState | null>(null);
+  const boardTreeRef = useRef<HTMLDivElement | null>(null);
+  const boardTreeScrollRestoreRef = useRef<number | null>(null);
   const responseLayoutRef = useRef<HTMLDivElement | null>(null);
   const threadTbodyRef = useRef<HTMLTableSectionElement | null>(null);
   const responseScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1378,6 +1382,10 @@ export default function App() {
     document.body.style.userSelect = "none";
     document.body.style.cursor = "col-resize";
   };
+  const onBoardTreeScroll: UIEventHandler<HTMLDivElement> = (event) => {
+    const top = event.currentTarget.scrollTop;
+    try { localStorage.setItem(BOARD_TREE_SCROLL_KEY, String(top)); } catch { /* ignore */ }
+  };
 
   const beginResponseRowResize = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1555,6 +1563,13 @@ export default function App() {
         if (Array.isArray(arr)) setExpandedCategories(new Set(arr));
       }
     } catch { /* ignore */ }
+    try {
+      const saved = localStorage.getItem(BOARD_TREE_SCROLL_KEY);
+      if (saved != null) {
+        const n = Number(saved);
+        if (Number.isFinite(n) && n >= 0) boardTreeScrollRestoreRef.current = n;
+      }
+    } catch { /* ignore */ }
     // Silently refresh board list from server
     void fetchBoardCategories();
     void loadFavorites();
@@ -1582,6 +1597,14 @@ export default function App() {
       }).catch(() => {});
     }
   }, []);
+
+  useEffect(() => {
+    if (boardPaneTab !== "boards") return;
+    if (!boardTreeRef.current) return;
+    const saved = boardTreeScrollRestoreRef.current;
+    if (saved == null) return;
+    boardTreeRef.current.scrollTop = saved;
+  }, [boardPaneTab, boardCategories]);
 
   useEffect(() => {
     return () => {
@@ -1639,7 +1662,6 @@ export default function App() {
         setResponseTopRatio((nextThread / Math.max(drag.responseLayoutHeight, 1)) * 100);
         return;
       }
-
       const deltaX = event.clientX - drag.startX;
       if (drag.mode === "board-thread") {
         const maxBoard = Math.max(
@@ -1884,7 +1906,7 @@ export default function App() {
           )}
           {boardPaneTab === "boards" ? (
             boardCategories.length > 0 ? (
-              <div className="board-tree">
+              <div className="board-tree" ref={boardTreeRef} onScroll={onBoardTreeScroll}>
                 {favorites.boards.length > 0 && !boardSearchQuery.trim() && (
                   <div className="board-category">
                     <button
@@ -2014,6 +2036,7 @@ export default function App() {
               style={{ flex: 1 }}
             />
           </div>
+          <div className="threads-table-wrap">
           <table>
             <thead>
               <tr>
@@ -2029,8 +2052,12 @@ export default function App() {
                 <th className="sortable-th" onClick={() => toggleThreadSort("res")}>
                   レス{threadSortKey === "res" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
                 </th>
-                <th>既読</th>
-                <th>新着</th>
+                <th>
+                  既読
+                </th>
+                <th>
+                  新着
+                </th>
                 <th className="sortable-th" onClick={() => toggleThreadSort("speed")}>
                   勢い{threadSortKey === "speed" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
                 </th>
@@ -2089,6 +2116,7 @@ export default function App() {
               })}
             </tbody>
           </table>
+          </div>
         </section>
         <div
           className="row-splitter"
@@ -2368,15 +2396,6 @@ export default function App() {
                     New
                   </button>
                 )}
-                <button onClick={() => {
-                  const bm = loadBookmark(threadUrl);
-                  if (bm && visibleResponseItems.some((r) => r.id === bm)) {
-                    setSelectedResponse(bm);
-                    setStatus(`栞: >>${bm}`);
-                  } else {
-                    setStatus("栞なし");
-                  }
-                }}>栞</button>
                 <button onClick={() => { if (visibleResponseItems.length > 0) setSelectedResponse(visibleResponseItems[visibleResponseItems.length - 1].id); }}>End</button>
                 <input
                   className="nav-jump-input"

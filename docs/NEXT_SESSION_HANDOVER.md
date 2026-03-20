@@ -1,5 +1,12 @@
 ﻿# NEXT SESSION HANDOVER
 
+## Update (2026-03-21 JST)
+- apps/desktop: Removed the response-nav Shiori button (bookmark save/restore internals remain).
+- apps/desktop: Fixed thread-list header sticky drift by separating toolbar and table scroll container.
+- apps/desktop: Added board-tree scroll position persistence via localStorage key desktop.boardTreeScrollTop.v1.
+- apps/desktop: Column drag-resize and extra spacer column were attempted and then reverted.
+- Current policy: thread-list columns are fixed-width (no drag-resize).
+
 ## 現在地（2026-03-20 JST 更新 #2）
 - 仕様書: `docs/5ch_browser_spec.md` は `v1.0`。
 - BE/UPLIFT/どんぐり の通信仕様は観測ベースで実装可能な粒度まで整理済み。
@@ -10,104 +17,104 @@
   - `core-fetch`: `subject.txt` 解決を強化（thread URL / board URL / subject URL 入力に対応）
   - 更新チェック: `latest.json` 取得/比較 + 配布ページ起動実装済み
   - `apps/landing`: Vite + React ランディング雛形追加済み
-  - `apps/desktop`: 上部URLバー + レスビューア/開発パネル分離UIを実装済み
-  - `apps/desktop`: スレ一覧取得時のステータス表示を追加（loading / rows / error）
-  - `apps/desktop`: 3ペインのドラッグリサイズ（横2本 + レス縦1本）を追加
-  - `apps/desktop`: ペインレイアウトの永続化（localStorage）と `Reset Layout` を追加
-  - `apps/desktop`: レイアウト調整ショートカット追加（`Ctrl/Cmd+Alt+Arrow`）
-  - `apps/desktop`: Threads/Responses ペインに行情報バーを追加
-  - `apps/desktop`: 右クリックメニュー動作を拡張（スレ閉じる系、レス引用/URLコピー/IDコピー）
-  - `apps/desktop`: Playwright UIスモークテストを追加（`npm run test:smoke-ui`）
-  - `apps/desktop`: スレ復元操作を追加（`Reopen Last` / `Ctrl/Cmd+Shift+W`）
-  - `apps/desktop`: ツールバーから `Undo Close` 操作可能（ショートカット閉鎖履歴と統一）
-  - `apps/desktop`: ステータスバーを実データ連動化し、`Runtime`（TAURI/WEB）を表示
-  - `apps/desktop`: Webプレビューでは thread fetch を抑止し、Tauri必須メッセージを表示
+  - apps/desktop: 上部URLバー + レスビューア/開発パネル分離UIを実装済み
+  - apps/desktop: スレ一覧取得時のステータス表示を追加（loading / rows / error）
+  - apps/desktop: 3ペインのドラッグリサイズ（横2本 + レス縦1本）を追加
+  - apps/desktop: ペインレイアウトの永続化（localStorage）と `Reset Layout` を追加
+  - apps/desktop: レイアウト調整ショートカット追加（`Ctrl/Cmd+Alt+Arrow`）
+  - apps/desktop: Threads/Responses ペインに行情報バーを追加
+  - apps/desktop: 右クリックメニュー動作を拡張（スレ閉じる系、レス引用/URLコピー/IDコピー）
+  - apps/desktop: Playwright UIスモークテストを追加（`npm run test:smoke-ui`）
+  - apps/desktop: スレ復元操作を追加（`Reopen Last` / `Ctrl/Cmd+Shift+W`）
+  - apps/desktop: ツールバーから `Undo Close` 操作可能（ショートカット閉鎖履歴と統一）
+  - apps/desktop: ステータスバーを実データ連動化し、`Runtime`（TAURI/WEB）を表示
+  - apps/desktop: Webプレビューでは thread fetch を抑止し、Tauri必須メッセージを表示
   - `core-parse`: dat行パーサを追加（name/mail/date/body）
   - `core-fetch`: dat取得APIを追加（Shift_JIS decode + dat解析）
-  - `apps/desktop`: スレ選択時にレス一覧を実取得してResponsesペインへ表示
+  - apps/desktop: スレ選択時にレス一覧を実取得してResponsesペインへ表示
   - `CI`: Windowsジョブで desktop smoke-ui を実行するよう更新
   - `scripts/probe_post_flow.py`: confirm/finalize解析を追加し、real submit を二重ガード化
   - `scripts/probe_post_flow.py`: real submit時は非空 `--message` 必須（空本文を事前拒否）
   - `scripts/run_post_flow_probe.ps1`: post flow probe 実行ラッパーを追加（終了コード伝播あり）
   - `scripts/probe_post_flow.py`: マーカー検出拡張（empty_body/oekaki/wait）
-  - `apps/desktop`: レスポンス本文HTMLレンダリング（`<br>`, entities, `>>N`アンカー）
-  - `apps/desktop`: 未読スレ太字表示 + クリック時自動既読化
-  - `apps/desktop`: スレタイトル省略表示 + テーブル固定レイアウト
-  - `apps/desktop`: メニューバー個別項目化 + hover状態
-  - `apps/desktop`: テーブルヘッダー gradient + sticky化
-  - `apps/desktop`: ツールバーセパレーター + ボタン hover/active
-  - `apps/desktop`: レスポンスビューア/テーブルのスクロール制御改善
-  - `apps/desktop`: 選択行の自動スクロール
-  - `apps/desktop`: smoke-ui テスト拡張（メニュー/未読/省略/sticky/自動既読/セパレーター）
-  - `apps/desktop`: `>>N` アンカークリック → レスジャンプ + ホバーポップアップ
-  - `apps/desktop`: 書き込みウィンドウにスレタイトル + 文字数/行数表示
+  - apps/desktop: レスポンス本文HTMLレンダリング（`<br>`, entities, `>>N`アンカー）
+  - apps/desktop: 未読スレ太字表示 + クリック時自動既読化
+  - apps/desktop: スレタイトル省略表示 + テーブル固定レイアウト
+  - apps/desktop: メニューバー個別項目化 + hover状態
+  - apps/desktop: テーブルヘッダー gradient + sticky化
+  - apps/desktop: ツールバーセパレーター + ボタン hover/active
+  - apps/desktop: レスポンスビューア/テーブルのスクロール制御改善
+  - apps/desktop: 選択行の自動スクロール
+  - apps/desktop: smoke-ui テスト拡張（メニュー/未読/省略/sticky/自動既読/セパレーター）
+  - apps/desktop: `>>N` アンカークリック → レスジャンプ + ホバーポップアップ
+  - apps/desktop: 書き込みウィンドウにスレタイトル + 文字数/行数表示
   - `fetch_board_categories` Tauriコマンド（bbsmenu.json → カテゴリ/板ツリー）
-  - `apps/desktop`: 板ペインに折りたたみ式カテゴリツリー + 板クリック → スレ取得
-  - `apps/desktop`: レス行ダブルクリック / `R` キー → 引用書き込みフロート
-  - `apps/desktop`: smoke-ui 25件（板/書き込み/ダブルクリック/Rキー/アンカー他）
+  - apps/desktop: 板ペインに折りたたみ式カテゴリツリー + 板クリック → スレ取得
+  - apps/desktop: レス行ダブルクリック / `R` キー → 引用書き込みフロート
+  - apps/desktop: smoke-ui 25件（板/書き込み/ダブルクリック/Rキー/アンカー他）
   - `fetch_board_categories`: bbsmenu.json パーサー修正（`menu_list` → `category_content`、49カテゴリ/1115板取得成功）
-  - `apps/desktop`: E2E テスト追加（`npm run test:e2e` = Tauri + Playwright via WebView2 CDP）
+  - apps/desktop: E2E テスト追加（`npm run test:e2e` = Tauri + Playwright via WebView2 CDP）
   - E2E 28項目 PASS: runtime検出/bbsmenu取得/板カテゴリ/スレ一覧/レス取得/auth状態/投稿フォーム/DOM操作/書き込みUI/お気に入りCRUD/NGフィルタCRUD/既読永続化/検索フィルタ/タブ切替/NGパネル操作/自動更新/compose meta
-  - `apps/desktop`: お気に入り板/スレ管理（core-store永続化 + Favoritesカテゴリ + 星トグル）
-  - `apps/desktop`: NGワード/ID/名前フィルタリング（NGパネルUI + レスポンス非表示 + 永続化）
-  - `apps/desktop`: 既読管理の永続化（core-store read_status.json）
-  - `apps/desktop`: 投稿結果フィードバック（compose窓にOK/NGバー）
-  - `apps/desktop`: smoke-ui 31項目（お気に入り/NGパネル/レスメタ追加）
-  - `apps/desktop`: スレ検索機能（タイトル部分一致フィルタ）
-  - `apps/desktop`: 自動更新トグル（60秒間隔レスリロード）
-  - `apps/desktop`: 板ペインに Boards/Fav タブ切り替え + お気に入りスレ一覧表示
-  - `apps/desktop`: smoke-ui 35項目（検索/自動更新/タブ切り替え追加）
-  - `apps/desktop`: タブ式スレ表示（複数スレ並行閲覧、タブ切替/閉じ/Ctrl+Tab/中クリック閉じ）
-  - `apps/desktop`: レス書き込み後の自動リロード（投稿成功時にレス再取得）
-  - `apps/desktop`: 画像URL自動サムネイル（jpg/png/gif/webp → インラインサムネイル）
-  - `apps/desktop`: smoke-ui 40項目（タブ作成/切替/閉じ/サムネイル構造追加）
-  - `apps/desktop`: スレ一覧ソート（番号/タイトル/レス/勢い カラムクリック昇順降順）
-  - `apps/desktop`: レス本文コピー + NG名前追加（右クリックメニュー7アクション）
-  - `apps/desktop`: smoke-ui 42項目（ソートヘッダー/レスメニュー追加）
-  - `apps/desktop`: 画像ライトボックス（サムネイルクリック → 拡大モーダル）
-  - `apps/desktop`: 新着レス数表示（新着カラム）+ タブドラッグ並べ替え
-  - `apps/desktop`: タブ右クリックメニュー + レスジャンプ入力 + レスナビバー
-  - `apps/desktop`: 書き込みウィンドウのドラッグ移動
-  - `apps/desktop`: スレ右クリックに「ブラウザで開く」追加
-  - `apps/desktop`: smoke-ui 50項目
-  - `apps/desktop`: メニューバードロップダウン（ファイル/表示/ヘルプ + hover切替）
-  - `apps/desktop`: ショートカット一覧ダイアログ
-  - `apps/desktop`: 文字サイズ設定（拡大/縮小/リセット + 永続化）
-  - `apps/desktop`: URL自動リンク化（非画像URLをクリッカブルリンクに変換）
-  - `apps/desktop`: スレタイNGフィルタ（NGワードでスレ一覧をフィルタ + 右クリックで追加）
-  - `apps/desktop`: 自動更新時にスレ一覧もサイレントリフレッシュ
-  - `apps/desktop`: 被参照表示（レスビューアに >>N 参照元レス番号一覧）
-  - `apps/desktop`: 書き込み名前/メール/sage の永続化（localStorage）
-  - `apps/desktop`: レス一覧にID列追加（ID抽出 + 出現回数）
-  - `apps/desktop`: IDクリックポップアップ（同ID全レス一覧 + NG追加 + ジャンプ）
-  - `apps/desktop`: 勢いカラムにバー表示（勢い視覚化）
-  - `apps/desktop`: レス一覧/スレ一覧の偶数行色分け
-  - `apps/desktop`: 書き込みプレビューHTML化（>>N / URL描画）
-  - `apps/desktop`: テキスト選択引用（R キーで選択テキスト引用）
-  - `apps/desktop`: smoke-ui 64項目
-  - `apps/desktop`: ダークテーマ（全コンポーネント対応 + 永続化）
-  - `apps/desktop`: NG正規表現対応（`/pattern/` 構文）
-  - `apps/desktop`: 栞機能（レス位置保存/復元 + ナビバーボタン + スレダブルクリック）
-  - `apps/desktop`: 設定パネル（表示/書き込み/認証/情報）
-  - `apps/desktop`: smoke-ui 68項目
-  - `apps/desktop`: 書き込み履歴パネル（直近50件の投稿ログ表示）
-  - `apps/desktop`: 勢いバー色グラデーション化
-  - `apps/desktop`: smoke-ui 70項目
-  - `apps/desktop`: 2ペインレイアウト（板 | 右ペイン[スレ/レス上下分割]）
-  - `apps/desktop`: レスビューアをテーブルからブロック表示に変更
-  - `apps/desktop`: sssp:// BEアイコン表示
-  - `apps/desktop`: 勢い計算をthreadKeyタイムスタンプから算出
-  - `apps/desktop`: スレタブにレス数バッジ + 新着ジャンプボタン
-  - `apps/desktop`: ダークテーマのブロックビュー対応
-  - `apps/desktop`: smoke-ui 76項目
-  - `apps/desktop`: メタバー/開発者ツール撤去 + 名前HTMLタグ除去
-  - `apps/desktop`: 板検索フィルタ（カテゴリ/板名部分一致）
-  - `apps/desktop`: レス読み込み中表示 + 自動更新時新着自動スクロール
-  - `apps/desktop`: IDカラーコーディング（20色パレットで一貫色付け）
-  - `apps/desktop`: レスジャンプ入力 + 書き込み文字サイズ設定 + ステータスバー整理
-  - `apps/desktop`: smoke-ui 81項目
+  - apps/desktop: お気に入り板/スレ管理（core-store永続化 + Favoritesカテゴリ + 星トグル）
+  - apps/desktop: NGワード/ID/名前フィルタリング（NGパネルUI + レスポンス非表示 + 永続化）
+  - apps/desktop: 既読管理の永続化（core-store read_status.json）
+  - apps/desktop: 投稿結果フィードバック（compose窓にOK/NGバー）
+  - apps/desktop: smoke-ui 31項目（お気に入り/NGパネル/レスメタ追加）
+  - apps/desktop: スレ検索機能（タイトル部分一致フィルタ）
+  - apps/desktop: 自動更新トグル（60秒間隔レスリロード）
+  - apps/desktop: 板ペインに Boards/Fav タブ切り替え + お気に入りスレ一覧表示
+  - apps/desktop: smoke-ui 35項目（検索/自動更新/タブ切り替え追加）
+  - apps/desktop: タブ式スレ表示（複数スレ並行閲覧、タブ切替/閉じ/Ctrl+Tab/中クリック閉じ）
+  - apps/desktop: レス書き込み後の自動リロード（投稿成功時にレス再取得）
+  - apps/desktop: 画像URL自動サムネイル（jpg/png/gif/webp → インラインサムネイル）
+  - apps/desktop: smoke-ui 40項目（タブ作成/切替/閉じ/サムネイル構造追加）
+  - apps/desktop: スレ一覧ソート（番号/タイトル/レス/勢い カラムクリック昇順降順）
+  - apps/desktop: レス本文コピー + NG名前追加（右クリックメニュー7アクション）
+  - apps/desktop: smoke-ui 42項目（ソートヘッダー/レスメニュー追加）
+  - apps/desktop: 画像ライトボックス（サムネイルクリック → 拡大モーダル）
+  - apps/desktop: 新着レス数表示（新着カラム）+ タブドラッグ並べ替え
+  - apps/desktop: タブ右クリックメニュー + レスジャンプ入力 + レスナビバー
+  - apps/desktop: 書き込みウィンドウのドラッグ移動
+  - apps/desktop: スレ右クリックに「ブラウザで開く」追加
+  - apps/desktop: smoke-ui 50項目
+  - apps/desktop: メニューバードロップダウン（ファイル/表示/ヘルプ + hover切替）
+  - apps/desktop: ショートカット一覧ダイアログ
+  - apps/desktop: 文字サイズ設定（拡大/縮小/リセット + 永続化）
+  - apps/desktop: URL自動リンク化（非画像URLをクリッカブルリンクに変換）
+  - apps/desktop: スレタイNGフィルタ（NGワードでスレ一覧をフィルタ + 右クリックで追加）
+  - apps/desktop: 自動更新時にスレ一覧もサイレントリフレッシュ
+  - apps/desktop: 被参照表示（レスビューアに >>N 参照元レス番号一覧）
+  - apps/desktop: 書き込み名前/メール/sage の永続化（localStorage）
+  - apps/desktop: レス一覧にID列追加（ID抽出 + 出現回数）
+  - apps/desktop: IDクリックポップアップ（同ID全レス一覧 + NG追加 + ジャンプ）
+  - apps/desktop: 勢いカラムにバー表示（勢い視覚化）
+  - apps/desktop: レス一覧/スレ一覧の偶数行色分け
+  - apps/desktop: 書き込みプレビューHTML化（>>N / URL描画）
+  - apps/desktop: テキスト選択引用（R キーで選択テキスト引用）
+  - apps/desktop: smoke-ui 64項目
+  - apps/desktop: ダークテーマ（全コンポーネント対応 + 永続化）
+  - apps/desktop: NG正規表現対応（`/pattern/` 構文）
+  - apps/desktop: 栞機能（レス位置保存/復元 + ナビバーボタン + スレダブルクリック）
+  - apps/desktop: 設定パネル（表示/書き込み/認証/情報）
+  - apps/desktop: smoke-ui 68項目
+  - apps/desktop: 書き込み履歴パネル（直近50件の投稿ログ表示）
+  - apps/desktop: 勢いバー色グラデーション化
+  - apps/desktop: smoke-ui 70項目
+  - apps/desktop: 2ペインレイアウト（板 | 右ペイン[スレ/レス上下分割]）
+  - apps/desktop: レスビューアをテーブルからブロック表示に変更
+  - apps/desktop: sssp:// BEアイコン表示
+  - apps/desktop: 勢い計算をthreadKeyタイムスタンプから算出
+  - apps/desktop: スレタブにレス数バッジ + 新着ジャンプボタン
+  - apps/desktop: ダークテーマのブロックビュー対応
+  - apps/desktop: smoke-ui 76項目
+  - apps/desktop: メタバー/開発者ツール撤去 + 名前HTMLタグ除去
+  - apps/desktop: 板検索フィルタ（カテゴリ/板名部分一致）
+  - apps/desktop: レス読み込み中表示 + 自動更新時新着自動スクロール
+  - apps/desktop: IDカラーコーディング（20色パレットで一貫色付け）
+  - apps/desktop: レスジャンプ入力 + 書き込み文字サイズ設定 + ステータスバー整理
+  - apps/desktop: smoke-ui 81項目
   - `core-store`: ファイルログ出力（`data/logs/app.log`、chrono タイムスタンプ）
-  - `apps/desktop`: レス取得件数制限撤廃
+  - apps/desktop: レス取得件数制限撤廃
 - Git は初期化済みで、`safe.directory` 設定済み（この環境から `git` 操作可能）。
 - safe probe 実環境検証 (2026-03-19):
   - 全4モード（anonymous/uplift/be_front/be_uplift）で GET=200, confirm=200
