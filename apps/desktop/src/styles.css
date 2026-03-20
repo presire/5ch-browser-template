@@ -1354,15 +1354,6 @@ pre {
   border-color: var(--accent);
 }
 
-.response-thumb[loading] {
-  animation: thumb-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes thumb-pulse {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
-}
-
 .body-link {
   color: #0066cc;
   text-decoration: none;
