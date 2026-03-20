@@ -29,3 +29,4 @@ apps/desktop/src-tauri/data/
 
 zzz_memo.txt
 _temp
+_temp_*

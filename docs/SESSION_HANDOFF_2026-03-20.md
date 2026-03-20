@@ -72,3 +72,37 @@ Rendering at line ~2156: `{r.beNumber && (<span className="response-be-link" ...
 - **Bottom nav buttons**: Were removed in this session (再読み込み/新着取得/書き込み/お気に入り)
 - **Top-right icon buttons**: 新着取得(📥) was added; buttons made bigger (15px font, 28x26px min)
 - **ID popup**: Uses delayed close timer (300ms) via `idPopupCloseTimer` ref to allow crossing gap between ID cell and popup
+
+---
+
+## 2026-03-21 Fix Status Update
+
+All 4 bugs above were fixed in this session:
+
+1. **Image hover preview flicker**
+- Removed `response-scroll` `onMouseMove`-driven preview updates and switched to hover enter/leave handling for `.response-thumb`.
+- Changed `.hover-preview` from full-screen overlay to a fixed right-side panel (`styles.css`) so it no longer covers the thread area and causes event churn.
+
+2. **BE login failure (`unique_regs`)**
+- Confirmed live BE form by fetching `https://be.5ch.io/` (current form posts to `/log` with fields `mail`, `pass`, `login`).
+- Rewrote `login_be_front()` in `crates/core-auth/src/lib.rs`:
+  - fetches `https://be.5ch.io/`
+  - detects login form action
+  - posts `mail/pass/login` instead of obsolete `unique_regs/umail/pword`
+
+3. **ID popup position**
+- Changed popup anchor to `right`-based positioning in `App.tsx`, so the popup right-top aligns below the ID cell while preventing right-edge overflow.
+- Added responsive width cap (`width: min(520px, calc(100vw - 16px))`) in `.id-popup`.
+
+4. **BE number clickability**
+- Verified real dat format on BE-active board (`greta.5ch.io/poverty`) where lines include `BE:123456789-2BP(...)`.
+- Strengthened BE extraction logic via `extractBeNumber()` to support:
+  - `BE:123...` / `BE：123...`
+  - `javascript:be(123...)`
+  - `be(123...)`
+  - BE user URL patterns (`?i=123...`, `/user/123...`)
+
+Validation run:
+- `cargo check --workspace`: passed
+- `npm run build` (`apps/desktop`): passed
+- `npx tauri dev`: startup verified (dev server listens on `:1420`), then related processes were terminated after check.

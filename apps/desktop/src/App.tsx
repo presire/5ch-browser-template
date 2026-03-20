@@ -204,6 +204,24 @@ const renderResponseBody = (html: string): { __html: string } => {
   return { __html: safe };
 };
 
+const extractBeNumber = (...sources: string[]): string | null => {
+  const patterns = [
+    /BE[:：]\s*(\d+)/i,
+    /javascript\s*:\s*be\((\d+)\)/i,
+    /\bbe\((\d+)\)/i,
+    /[?&]i=(\d+)/i,
+    /\/user\/(\d+)\b/i,
+  ];
+  for (const source of sources) {
+    if (!source) continue;
+    for (const pattern of patterns) {
+      const m = source.match(pattern);
+      if (m?.[1]) return m[1];
+    }
+  }
+  return null;
+};
+
 export default function App() {
   const [status, setStatus] = useState("not fetched");
   const [authStatus, setAuthStatus] = useState("not checked");
@@ -277,7 +295,7 @@ export default function App() {
   const [fontSize, setFontSize] = useState(12);
   const [darkMode, setDarkMode] = useState(false);
   const [composeFontSize, setComposeFontSize] = useState(13);
-  const [idPopup, setIdPopup] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [idPopup, setIdPopup] = useState<{ right: number; y: number; id: string } | null>(null);
   const idPopupCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [backRefPopup, setBackRefPopup] = useState<{ x: number; y: number; responseIds: number[] } | null>(null);
   const [composePos, setComposePos] = useState<{ x: number; y: number } | null>(null);
@@ -1037,12 +1055,8 @@ export default function App() {
     ...(fetchedResponses.length > 0
       ? fetchedResponses.map((r) => {
           const rawName = r.name || "Anonymous";
-          // Extract BE number from raw HTML name or from dateAndId
-          // Patterns: javascript:be(123456789), BE:123456789-PLT(...), BE:123456789
-          const beFromName = rawName.match(/be\((\d+)\)/i);
-          const beFromDate = (r.dateAndId || "").match(/BE:(\d+)/);
-          const beFromBody = (r.body || "").match(/BE:(\d+)/);
-          const beNum = beFromDate?.[1] || beFromName?.[1] || beFromBody?.[1] || null;
+          // Real dat examples include BE:123456789-2BP(...) and javascript:be(123456789)
+          const beNum = extractBeNumber(r.dateAndId || "", rawName, r.body || "");
           return {
             id: r.responseNo,
             name: rawName.replace(/<[^>]+>/g, ""),
@@ -2092,11 +2106,11 @@ export default function App() {
                   setStatus(`jumped to >>${no}`);
                 }
               }}
-              onMouseMove={(e) => {
+              onMouseOver={(e) => {
                 const target = e.target as HTMLElement;
-                // Ctrl+hover on image → full-size preview (direct DOM, no React state)
-                if (e.ctrlKey && target.classList.contains("response-thumb")) {
-                  const src = target.getAttribute("src");
+                const thumb = target.closest<HTMLImageElement>("img.response-thumb");
+                if (e.ctrlKey && thumb) {
+                  const src = thumb.getAttribute("src");
                   if (src && hoverPreviewSrcRef.current !== src) {
                     hoverPreviewSrcRef.current = src;
                     hoverPreviewZoomRef.current = 100;
@@ -2105,20 +2119,11 @@ export default function App() {
                       hoverPreviewImgRef.current.style.width = "100%";
                     }
                     if (hoverPreviewRef.current) {
-                      hoverPreviewRef.current.style.display = "flex";
-                      hoverPreviewRef.current.classList.remove("interactive");
+                      hoverPreviewRef.current.style.display = "block";
                     }
                   }
+                  return;
                 }
-              }}
-              onMouseLeave={() => {
-                if (hoverPreviewSrcRef.current) {
-                  hoverPreviewSrcRef.current = null;
-                  if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
-                }
-              }}
-              onMouseOver={(e) => {
-                const target = e.target as HTMLElement;
                 const anchor = target.closest<HTMLElement>(".anchor-ref");
                 if (!anchor) { return; }
                 const no = Number(anchor.dataset.anchor);
@@ -2129,6 +2134,11 @@ export default function App() {
               }}
               onMouseOut={(e) => {
                 const target = e.target as HTMLElement;
+                if (target.closest("img.response-thumb")) {
+                  hoverPreviewSrcRef.current = null;
+                  if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
+                  return;
+                }
                 if (target.closest(".anchor-ref")) {
                   setAnchorPopup(null);
                   setNestedPopups([]);
@@ -2188,9 +2198,8 @@ export default function App() {
                             onMouseEnter={(e) => {
                               if (idPopupCloseTimer.current) { clearTimeout(idPopupCloseTimer.current); idPopupCloseTimer.current = null; }
                               const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                              const popupWidth = 520;
-                              const x = Math.max(8, rect.right - popupWidth);
-                              setIdPopup({ x, y: rect.bottom + 2, id });
+                              const right = Math.max(8, window.innerWidth - rect.right);
+                              setIdPopup({ right, y: rect.bottom + 2, id });
                             }}
                             onMouseLeave={() => {
                               idPopupCloseTimer.current = setTimeout(() => setIdPopup(null), 300);
@@ -2559,7 +2568,7 @@ export default function App() {
         return (
           <div
             className="id-popup"
-            style={{ left: idPopup.x, top: idPopup.y }}
+            style={{ right: idPopup.right, top: idPopup.y }}
             onMouseEnter={() => { if (idPopupCloseTimer.current) { clearTimeout(idPopupCloseTimer.current); idPopupCloseTimer.current = null; } }}
             onMouseLeave={() => {
               idPopupCloseTimer.current = setTimeout(() => setIdPopup(null), 300);
@@ -2763,9 +2772,6 @@ export default function App() {
             const next = Math.max(10, Math.min(500, hoverPreviewZoomRef.current + (e.deltaY < 0 ? 20 : -20)));
             hoverPreviewZoomRef.current = next;
             if (hoverPreviewImgRef.current) hoverPreviewImgRef.current.style.width = `${next}%`;
-            if (hoverPreviewRef.current) {
-              hoverPreviewRef.current.classList.toggle("interactive", next !== 100);
-            }
           }
         }}
       >

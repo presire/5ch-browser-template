@@ -73,19 +73,42 @@ fn cookie_names_for(jar: &Jar, url: &str) -> Result<Vec<String>, AuthError> {
     Ok(names)
 }
 
-fn find_between<'a>(text: &'a str, prefix: &str, suffix: &str) -> Option<&'a str> {
-    let start = text.find(prefix)? + prefix.len();
-    let tail = &text[start..];
-    let end = tail.find(suffix)?;
-    Some(&tail[..end])
+fn find_attr_value(fragment: &str, attr: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let needle = format!("{attr}={quote}");
+        if let Some(start) = fragment.find(&needle) {
+            let value_start = start + needle.len();
+            let tail = &fragment[value_start..];
+            if let Some(end) = tail.find(quote) {
+                return Some(tail[..end].to_string());
+            }
+        }
+    }
+    None
 }
 
-fn parse_unique_regs(html: &str) -> Option<String> {
-    let key = "name=\"unique_regs\"";
-    let idx = html.find(key)?;
-    let snippet = &html[idx..html.len().min(idx + 300)];
+fn has_input_name(html: &str, name: &str) -> bool {
+    html.contains(&format!("name=\"{name}\"")) || html.contains(&format!("name='{name}'"))
+}
 
-    find_between(snippet, "value=\"", "\"").map(|s| s.to_string())
+fn parse_login_form_action(html: &str) -> Option<String> {
+    let mut offset = 0usize;
+    while let Some(form_idx) = html[offset..].find("<form") {
+        let start = offset + form_idx;
+        let rest = &html[start..];
+        let close = rest.find("</form>")?;
+        let form_block = &rest[..close];
+        if has_input_name(form_block, "mail") && has_input_name(form_block, "pass") {
+            if let Some(tag_end) = form_block.find('>') {
+                let form_tag = &form_block[..tag_end];
+                if let Some(action) = find_attr_value(form_tag, "action") {
+                    return Some(action);
+                }
+            }
+        }
+        offset = start + 5;
+    }
+    None
 }
 
 pub async fn login_be_front(email: &str, password: &str) -> Result<LoginOutcome, AuthError> {
@@ -97,25 +120,29 @@ pub async fn login_be_front(email: &str, password: &str) -> Result<LoginOutcome,
         .redirect(Policy::limited(10))
         .build()?;
 
-    let login_page = client.get("https://be.5ch.io/login").send().await?;
+    let login_page = client.get("https://be.5ch.io/").send().await?;
     let html = login_page.text().await?;
-    let unique_regs = parse_unique_regs(&html).ok_or_else(|| AuthError::Parse("unique_regs".into()))?;
+    if !has_input_name(&html, "mail") || !has_input_name(&html, "pass") {
+        return Err(AuthError::Parse("be login form(mail/pass)".into()));
+    }
+
+    let action = parse_login_form_action(&html).unwrap_or_else(|| "/log".to_string());
+    let post_url = Url::parse("https://be.5ch.io/")?.join(&action)?.to_string();
 
     let response = client
-        .post("https://be.5ch.io/login")
-        .form(&[
-            ("unique_regs", unique_regs.as_str()),
-            ("umail", email),
-            ("pword", password),
-            ("login_be_normal_user", "ログイン"),
-        ])
+        .post(&post_url)
+        .form(&[("mail", email), ("pass", password), ("login", "")])
         .send()
         .await?;
 
     let status = response.status().as_u16();
     let final_url = response.url().to_string();
     let body_preview = response.text().await.unwrap_or_default();
-    let body_snippet = if body_preview.len() > 200 { &body_preview[..200] } else { &body_preview };
+    let body_snippet = if body_preview.len() > 200 {
+        &body_preview[..200]
+    } else {
+        &body_preview
+    };
 
     // Check cookies on both domains
     let mut cookie_names = cookie_names_for(&jar, "https://be.5ch.io/")?;
@@ -133,7 +160,11 @@ pub async fn login_be_front(email: &str, password: &str) -> Result<LoginOutcome,
         status,
         location: Some(final_url),
         cookie_names,
-        note: format!("be login: {}", body_snippet.replace('\n', " ").replace('\r', "")),
+        note: format!(
+            "be login(action={}): {}",
+            action,
+            body_snippet.replace('\n', " ").replace('\r', "")
+        ),
     })
 }
 

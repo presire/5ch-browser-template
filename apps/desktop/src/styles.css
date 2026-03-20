@@ -723,15 +723,18 @@ body {
 }
 .hover-preview {
   position: fixed;
-  inset: 0;
+  top: 56px;
+  right: 10px;
+  bottom: 10px;
+  left: auto;
+  width: min(48vw, 760px);
   z-index: 120;
-  background: rgba(0,0,0,0.85);
-  cursor: pointer;
+  background: rgba(0, 0, 0, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  padding: 6px;
   overflow: auto;
   pointer-events: none;
-}
-.hover-preview.interactive {
-  pointer-events: auto;
 }
 .hover-preview img {
   display: block;
@@ -757,12 +760,14 @@ body {
 .id-popup {
   position: fixed;
   z-index: 65;
+  width: min(520px, calc(100vw - 16px));
   max-width: 520px;
   max-height: 360px;
   overflow-y: auto;
   background: #ffffff;
   border: 1px solid #a0a0a0;
   box-shadow: 2px 2px 6px rgba(0,0,0,0.15);
+  box-sizing: border-box;
   padding: 6px;
   font-size: 12px;
 }
