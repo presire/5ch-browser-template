@@ -199,6 +199,7 @@ async fn probe_thread_post_form(thread_url: String) -> Result<PostFormTokens, St
 
 #[tauri::command]
 async fn fetch_thread_list(thread_url: String, limit: Option<usize>) -> Result<Vec<ThreadListItem>, String> {
+    let _ = core_store::append_log(&format!("fetch_thread_list: {}", thread_url));
     let client = reqwest::Client::builder()
         .user_agent("5ch-browser-template/0.1")
         .build()
@@ -206,7 +207,11 @@ async fn fetch_thread_list(thread_url: String, limit: Option<usize>) -> Result<V
     let limit = limit.unwrap_or(usize::MAX);
     let rows = fetch_subject_threads(&client, &thread_url, limit)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            let _ = core_store::append_log(&format!("fetch_thread_list error: {}", e));
+            e.to_string()
+        })?;
+    let _ = core_store::append_log(&format!("fetch_thread_list ok: {} threads", rows.len()));
     Ok(rows
         .into_iter()
         .map(|r| ThreadListItem {
@@ -223,6 +228,7 @@ async fn fetch_thread_responses_command(
     thread_url: String,
     limit: Option<usize>,
 ) -> Result<Vec<ThreadResponseItem>, String> {
+    let _ = core_store::append_log(&format!("fetch_responses: {}", thread_url));
     let client = reqwest::Client::builder()
         .user_agent("5ch-browser-template/0.1")
         .build()
@@ -230,7 +236,11 @@ async fn fetch_thread_responses_command(
     let limit = limit.unwrap_or(500).clamp(1, 2000);
     let rows = fetch_thread_responses(&client, &thread_url, limit)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            let _ = core_store::append_log(&format!("fetch_responses error: {}", e));
+            e.to_string()
+        })?;
+    let _ = core_store::append_log(&format!("fetch_responses ok: {} rows", rows.len()));
     Ok(rows
         .into_iter()
         .map(|r| ThreadResponseItem {
@@ -714,6 +724,8 @@ fn save_read_status(status: ReadStatusMap) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = core_store::init_portable_layout();
+    let _ = core_store::append_log("app started");
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             fetch_bbsmenu_summary,

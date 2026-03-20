@@ -1,5 +1,6 @@
 ﻿use serde::{de::DeserializeOwned, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -41,4 +42,19 @@ pub fn load_json<T: DeserializeOwned>(relative_path: &str) -> Result<T, StoreErr
     let path = portable_data_dir()?.join(relative_path);
     let content = fs::read(path)?;
     Ok(serde_json::from_slice(&content)?)
+}
+
+/// Append a timestamped log line to `data/logs/app.log`.
+pub fn append_log(message: &str) -> Result<(), StoreError> {
+    let log_path = portable_data_dir()?.join("logs").join("app.log");
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)?;
+    writeln!(file, "[{now}] {message}")?;
+    Ok(())
 }
