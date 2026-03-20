@@ -105,6 +105,7 @@ type ThreadTab = {
 const MIN_BOARD_PANE_PX = 160;
 const MIN_THREAD_PANE_PX = 280;
 const MIN_RESPONSE_PANE_PX = 360;
+const MIN_RESPONSE_BODY_PX = 180;
 const SPLITTER_PX = 6;
 const DEFAULT_BOARD_PANE_PX = 220;
 const DEFAULT_THREAD_PANE_PX = 420;
@@ -119,7 +120,7 @@ const MENU_EDGE_PADDING = 8;
 type ResizeDragState =
   | { mode: "board-thread"; startX: number; startBoardPx: number; startThreadPx: number }
   | { mode: "thread-response"; startX: number; startBoardPx: number; startThreadPx: number }
-  | { mode: "response-rows"; startY: number; startResponseTopRatio: number; responseLayoutHeight: number };
+  | { mode: "response-rows"; startY: number; startThreadPx: number; responseLayoutHeight: number };
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const clampMenuPosition = (x: number, y: number, width: number, height: number) => ({
@@ -1352,7 +1353,7 @@ export default function App() {
     resizeDragRef.current = {
       mode: "response-rows",
       startY: event.clientY,
-      startResponseTopRatio: responseTopRatio,
+      startThreadPx: threadPanePx,
       responseLayoutHeight: layoutHeight,
     };
     document.body.style.userSelect = "none";
@@ -1476,8 +1477,14 @@ export default function App() {
           darkMode?: boolean;
         };
         if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
-        if (typeof parsed.threadPanePx === "number") setThreadPanePx(parsed.threadPanePx);
-        if (typeof parsed.responseTopRatio === "number") setResponseTopRatio(parsed.responseTopRatio);
+        if (typeof parsed.threadPanePx === "number") {
+          setThreadPanePx(parsed.threadPanePx);
+        } else if (typeof parsed.responseTopRatio === "number") {
+          const layoutHeight = responseLayoutRef.current?.clientHeight ?? Math.max(520, window.innerHeight - 180);
+          const nextThread = (layoutHeight * parsed.responseTopRatio) / 100;
+          setThreadPanePx(nextThread);
+          setResponseTopRatio(parsed.responseTopRatio);
+        }
         if (typeof parsed.fontSize === "number") setFontSize(parsed.fontSize);
         if (typeof parsed.darkMode === "boolean") setDarkMode(parsed.darkMode);
       } catch { /* ignore */ }
@@ -1552,6 +1559,14 @@ export default function App() {
       );
       const nextBoard = clamp(boardPanePx, MIN_BOARD_PANE_PX, maxBoard);
       if (nextBoard !== boardPanePx) setBoardPanePx(nextBoard);
+
+      const layoutHeight = responseLayoutRef.current?.clientHeight ?? Math.max(520, window.innerHeight - 180);
+      const maxThread = Math.max(MIN_THREAD_PANE_PX, layoutHeight - MIN_RESPONSE_BODY_PX - SPLITTER_PX);
+      const nextThread = clamp(threadPanePx, MIN_THREAD_PANE_PX, maxThread);
+      if (nextThread !== threadPanePx) {
+        setThreadPanePx(nextThread);
+        setResponseTopRatio((nextThread / Math.max(layoutHeight, 1)) * 100);
+      }
     };
 
     ensurePaneBounds();
@@ -1573,9 +1588,14 @@ export default function App() {
       if (!drag) return;
 
       if (drag.mode === "response-rows") {
-        const deltaRatio = (event.clientY - drag.startY) / Math.max(drag.responseLayoutHeight, 1) * 100;
-        const nextRatio = clamp(drag.startResponseTopRatio + deltaRatio, 24, 76);
-        setResponseTopRatio(nextRatio);
+        const deltaY = event.clientY - drag.startY;
+        const maxThread = Math.max(
+          MIN_THREAD_PANE_PX,
+          drag.responseLayoutHeight - MIN_RESPONSE_BODY_PX - SPLITTER_PX
+        );
+        const nextThread = clamp(drag.startThreadPx + deltaY, MIN_THREAD_PANE_PX, maxThread);
+        setThreadPanePx(nextThread);
+        setResponseTopRatio((nextThread / Math.max(drag.responseLayoutHeight, 1)) * 100);
         return;
       }
 
@@ -1940,7 +1960,7 @@ export default function App() {
         <div
           ref={responseLayoutRef}
           className="right-pane"
-          style={{ gridTemplateRows: `${responseTopRatio}% ${SPLITTER_PX}px 1fr` }}
+          style={{ gridTemplateRows: `${threadPanePx}px ${SPLITTER_PX}px 1fr` }}
         >
         <section className="pane threads">
           <div className="threads-toolbar">

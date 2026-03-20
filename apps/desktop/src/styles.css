@@ -818,7 +818,8 @@ body {
   background: linear-gradient(180deg, #f0f0f0 0%, #e0e0e0 100%);
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 4;
+  background-clip: padding-box;
 }
 
 .threads td {
@@ -866,6 +867,7 @@ body {
   bottom: 0;
   background: rgba(0, 102, 204, 0.12);
   pointer-events: none;
+  z-index: 0;
 }
 .speed-val {
   position: relative;
