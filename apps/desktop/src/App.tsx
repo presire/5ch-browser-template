@@ -948,7 +948,7 @@ export default function App() {
     ...(fetchedResponses.length > 0
       ? fetchedResponses.map((r) => ({
           id: r.responseNo,
-          name: r.name || "Anonymous",
+          name: (r.name || "Anonymous").replace(/<[^>]+>/g, ""),
           time: r.dateAndId || "-",
           text: r.body || "",
         }))
@@ -1744,11 +1744,6 @@ export default function App() {
               placeholder="検索..."
             />
           </div>
-          <div className="pane-meta">
-            <strong>表示</strong> {visibleThreadItems.length}/{threadItems.length} | <strong>閉</strong>{" "}
-            {closedThreadIds.length} | <strong>選択</strong>{" "}
-            {selectedThreadItem ? `#${selectedThreadItem.id} ${selectedThreadItem.res}レス` : "(なし)"}
-          </div>
           <table>
             <thead>
               <tr>
@@ -1877,29 +1872,6 @@ export default function App() {
               ))}
             </div>
           )}
-          <h2>レス</h2>
-          <div className="pane-meta">
-            <strong>表示</strong> {visibleResponseItems.length}/{responseItems.length}
-            {ngFilteredCount > 0 && <> | <strong>NG</strong> {ngFilteredCount}</>}
-            {" "}| <strong>選択</strong> #{activeResponse?.id ?? "-"}/
-            {visibleResponseItems.length}
-            {" "}| <input
-              className="response-jump"
-              type="number"
-              min={1}
-              max={responseItems.length}
-              placeholder=">>N"
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                const no = Number((e.target as HTMLInputElement).value);
-                if (no > 0 && responseItems.some((r) => r.id === no)) {
-                  setSelectedResponse(no);
-                  setStatus(`jumped to >>${no}`);
-                  (e.target as HTMLInputElement).value = "";
-                }
-              }}
-            />
-          </div>
           <div
             className="response-layout"
           >
@@ -2029,54 +2001,6 @@ export default function App() {
               </span>
             </div>
           </div>
-          <details className="dev-panel">
-            <summary>開発者ツール</summary>
-            <div className="dev-grid">
-              <label>
-                スレッドURL
-                <input value={threadUrl} onChange={(e) => setThreadUrl(e.target.value)} />
-              </label>
-              <label>
-                latest.json URL
-                <input value={metadataUrl} onChange={(e) => setMetadataUrl(e.target.value)} />
-              </label>
-              <label>
-                現在のバージョン
-                <input value={currentVersion} onChange={(e) => setCurrentVersion(e.target.value)} />
-              </label>
-            </div>
-            <div className="dev-actions">
-              <button onClick={probePostCookieScope}>Cookie範囲</button>
-              <button onClick={probeThreadPostForm}>投稿トークン</button>
-              <button onClick={probePostConfirmEmpty}>確認</button>
-              <button onClick={probePostFinalizePreview}>最終フォーム</button>
-              <button onClick={probePostFinalizeSubmitEmpty}>最終送信</button>
-              <button onClick={checkForUpdates}>更新確認</button>
-              <button onClick={openDownloadPage} disabled={!updateResult?.hasUpdate || !updateResult.downloadPageUrl}>
-                ダウンロードページを開く
-              </button>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={allowRealSubmit}
-                  onChange={(e) => setAllowRealSubmit(e.target.checked)}
-                />
-                実送信を許可
-              </label>
-            </div>
-            <pre>{status}</pre>
-            <pre>{authStatus}</pre>
-            <pre>{loginProbe}</pre>
-            <pre>{postCookieProbe}</pre>
-            <pre>{postFormProbe}</pre>
-            <pre>{threadListProbe}</pre>
-            <pre>{responseListProbe}</pre>
-            <pre>{postConfirmProbe}</pre>
-            <pre>{postFinalizePreviewProbe}</pre>
-            <pre>{postFinalizeSubmitProbe}</pre>
-            <pre>{postFlowTraceProbe}</pre>
-            <pre>{updateProbe}</pre>
-          </details>
         </section>
         </div>
       </main>

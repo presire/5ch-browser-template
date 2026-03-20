@@ -298,10 +298,10 @@ try {
   await page.click("body");
   console.log("smoke-ui: favorite thread menu ok");
 
-  // response pane meta shows NG count when applicable
-  const responseMeta = await page.$eval(".responses .pane-meta", (el) => el.textContent || "");
-  assert(responseMeta.includes("表示"), "response pane meta should show 表示");
-  console.log("smoke-ui: response pane meta ok");
+  // response pane has response blocks (meta bar removed)
+  const responseBlocks2 = await page.$$(".response-block");
+  assert(responseBlocks2.length >= 1, "response pane should have response blocks");
+  console.log("smoke-ui: response pane content ok");
 
   // thread search input exists and filters
   const threadSearch = await page.$(".thread-search");
@@ -431,10 +431,10 @@ try {
   assert(tabDraggable || (await page.$$(".thread-tab")).length === 0, "thread tabs should be draggable");
   console.log("smoke-ui: tab drag attribute ok");
 
-  // --- response jump input ---
-  const jumpInput = await page.$(".response-jump");
-  assert(jumpInput, "response pane should have jump input");
-  console.log("smoke-ui: response jump input ok");
+  // --- response nav bar exists ---
+  const navBar2 = await page.$(".response-nav-bar");
+  assert(navBar2, "response nav bar should exist");
+  console.log("smoke-ui: response nav bar exists ok");
 
   // --- tab context menu ---
   // open two tabs first
