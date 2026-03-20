@@ -478,6 +478,7 @@ body {
   overflow-y: auto;
   background: #ffffff;
   padding: 0;
+  overflow-anchor: none;
 }
 
 .response-loading {
@@ -495,8 +496,6 @@ body {
 
 .response-block {
   padding: 2px 6px 2px 6px;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 60px;
 }
 
 .response-block.selected {
@@ -1365,7 +1364,7 @@ pre {
 }
 
 .be-icon {
-  height: 16px;
+  height: 18px;
   width: auto;
   vertical-align: middle;
   margin: 0 2px;

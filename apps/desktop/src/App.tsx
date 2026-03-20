@@ -145,7 +145,16 @@ const ENTITY_MAP: Record<string, string> = {
   "&nbsp;": "\u00A0",
 };
 const decodeHtmlEntities = (s: string) =>
-  s.replace(/&(?:amp|lt|gt|quot|nbsp|#39|#44);/g, (m) => ENTITY_MAP[m] ?? m);
+  s
+    .replace(/&(?:amp|lt|gt|quot|nbsp|#39|#44);/g, (m) => ENTITY_MAP[m] ?? m)
+    .replace(/&#(\d+);/g, (_m, dec: string) => {
+      const cp = Number.parseInt(dec, 10);
+      return Number.isFinite(cp) && cp > 0 ? String.fromCodePoint(cp) : _m;
+    })
+    .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex: string) => {
+      const cp = Number.parseInt(hex, 16);
+      return Number.isFinite(cp) && cp > 0 ? String.fromCodePoint(cp) : _m;
+    });
 const normalizeExternalUrl = (raw: string): string | null => {
   const v = raw.replace(/&amp;/g, "&");
   if (/^https?:\/\//i.test(v)) return v;
@@ -1031,7 +1040,7 @@ export default function App() {
           const readCount = threadLastReadCount[i + 1] ?? 0;
           return {
             id: i + 1,
-            title: t.title,
+            title: decodeHtmlEntities(t.title),
             res: t.responseCount,
             got: readCount > 0 ? readCount : 0,
             speed,
