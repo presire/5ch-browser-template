@@ -450,7 +450,7 @@ try {
   const settingsPanel = await page.$(".settings-panel");
   assert(settingsPanel, "settings panel should be visible");
   const legends = await page.$$eval(".settings-body legend", (els) => els.map((el) => el.textContent?.trim()));
-  assert(legends.includes("表示") && legends.includes("書き込み") && legends.includes("認証状態") && legends.includes("情報"),
+  assert(legends.includes("表示") && legends.includes("書き込み") && legends.some((l) => l.includes("Ronin")) && legends.includes("情報"),
     `settings should have all sections, got: ${legends}`);
   // Close settings
   await page.evaluate(() => {

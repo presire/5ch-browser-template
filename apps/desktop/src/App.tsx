@@ -89,6 +89,13 @@ type FavoriteBoard = { boardName: string; url: string };
 type FavoriteThread = { threadUrl: string; title: string; boardUrl: string };
 type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
 type NgFilters = { words: string[]; ids: string[]; names: string[] };
+type AuthConfig = {
+  upliftEmail: string;
+  upliftPassword: string;
+  beEmail: string;
+  bePassword: string;
+  autoLoginOnStartup: boolean;
+};
 type ThreadTab = {
   threadUrl: string;
   title: string;
@@ -275,6 +282,14 @@ export default function App() {
   const responseScrollRef = useRef<HTMLDivElement | null>(null);
   const [lastFetchTime, setLastFetchTime] = useState<string | null>(null);
   const [newResponseStart, setNewResponseStart] = useState<number | null>(null);
+  const [responseSearchQuery, setResponseSearchQuery] = useState("");
+  const threadSearchRef = useRef<HTMLInputElement | null>(null);
+  const responseSearchRef = useRef<HTMLInputElement | null>(null);
+  const [authConfig, setAuthConfig] = useState<AuthConfig>({
+    upliftEmail: "", upliftPassword: "", beEmail: "", bePassword: "", autoLoginOnStartup: false,
+  });
+  const [roninLoggedIn, setRoninLoggedIn] = useState(false);
+  const [beLoggedIn, setBeLoggedIn] = useState(false);
 
   const fetchMenu = async () => {
     setStatus("loading...");
@@ -469,6 +484,7 @@ export default function App() {
   };
 
   const openThreadInTab = (url: string, title: string) => {
+    setResponseSearchQuery("");
     const existingIndex = threadTabs.findIndex((t) => t.threadUrl === url);
     if (existingIndex >= 0) {
       if (existingIndex === activeTabIndex) return;
@@ -651,6 +667,31 @@ export default function App() {
     }
   };
 
+  const doLogin = async () => {
+    if (!isTauriRuntime()) return;
+    setStatus("ログイン中...");
+    try {
+      const results = await invoke<LoginOutcome[]>("login_with_config");
+      for (const r of results) {
+        if (r.provider === "Be" && r.success) setBeLoggedIn(true);
+        if ((r.provider === "Uplift" || r.provider === "Donguri") && r.success) setRoninLoggedIn(true);
+      }
+      setStatus(results.map((r) => `${r.provider}:${r.success ? "OK" : "NG"}`).join(", "));
+    } catch (error) {
+      setStatus(`login error: ${String(error)}`);
+    }
+  };
+
+  const doLogout = (provider: "ronin" | "be") => {
+    if (provider === "ronin") {
+      setRoninLoggedIn(false);
+      setStatus("Ronin: ログアウト");
+    } else {
+      setBeLoggedIn(false);
+      setStatus("BE: ログアウト");
+    }
+  };
+
   const applyLocationToThread = () => {
     const next = locationInput.trim();
     if (!next) return;
@@ -680,11 +721,6 @@ export default function App() {
       void loadReadStatusForBoard(url, rows);
       if (rows.length > 0) {
         setSelectedThread(1);
-        void fetchResponsesFromCurrent(rows[0].threadUrl);
-      } else {
-        setStatus("threads loaded: 0 (board may be empty or parse failed)");
-        setFetchedResponses([]);
-        setSelectedResponse(1);
       }
     } catch (error) {
       const msg = String(error);
@@ -911,8 +947,8 @@ export default function App() {
     await invoke("open_external_url", { url: updateResult.downloadPageUrl });
   };
 
-  const beState = authStatus.includes("BE(email:true, pass:true)") ? "ON" : "OFF";
-  const upliftState = authStatus.includes("UPLIFT(email:true, pass:true)") ? "ON" : "OFF";
+  const beState = beLoggedIn ? "ON" : "OFF";
+  const roninState = roninLoggedIn ? "ON" : "OFF";
   const runtimeState = isTauriRuntime() ? "TAURI" : "WEB";
   const updateState = updateResult
     ? updateResult.hasUpdate
@@ -1006,7 +1042,16 @@ export default function App() {
   })();
 
   const ngFilteredCount = responseItems.filter((r) => isNgFiltered(r)).length;
-  const visibleResponseItems = responseItems.filter((r) => !isNgFiltered(r));
+  const visibleResponseItems = responseItems.filter((r) => {
+    if (isNgFiltered(r)) return false;
+    if (responseSearchQuery) {
+      const q = responseSearchQuery.toLowerCase();
+      const plainText = r.text.replace(/<[^>]+>/g, "").toLowerCase();
+      const nameText = r.name.toLowerCase();
+      return plainText.includes(q) || nameText.includes(q) || r.time.toLowerCase().includes(q);
+    }
+    return true;
+  });
   const activeResponse = visibleResponseItems.find((r) => r.id === selectedResponse) ?? visibleResponseItems[0];
   const selectedResponseLabel = activeResponse ? `#${activeResponse.id}` : "-";
 
@@ -1267,8 +1312,9 @@ export default function App() {
       }
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "w") {
         e.preventDefault();
-        if (selectedThread == null) return;
-        closeThread(selectedThread);
+        if (activeTabIndex >= 0 && threadTabs.length > 0) {
+          closeTab(activeTabIndex);
+        }
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "w") {
@@ -1333,6 +1379,15 @@ export default function App() {
         onTabClick(next);
         return;
       }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        if (activeTabIndex >= 0 && threadTabs.length > 0) {
+          responseSearchRef.current?.focus();
+        } else {
+          threadSearchRef.current?.focus();
+        }
+        return;
+      }
       if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
         e.preventDefault();
         const sel = window.getSelection()?.toString().trim();
@@ -1345,7 +1400,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedThread, selectedResponse, visibleThreadItems, responseItems]);
+  }, [selectedThread, selectedResponse, visibleThreadItems, responseItems, activeTabIndex, threadTabs]);
 
   useEffect(() => {
     try {
@@ -1397,6 +1452,21 @@ export default function App() {
     void fetchBoardCategories();
     void loadFavorites();
     void loadNgFilters();
+    // Load auth config and auto-login
+    if (isTauriRuntime()) {
+      invoke<AuthConfig>("load_auth_config").then((cfg) => {
+        setAuthConfig(cfg);
+        if (cfg.autoLoginOnStartup) {
+          invoke<LoginOutcome[]>("login_with_config").then((results) => {
+            for (const r of results) {
+              if (r.provider === "Be" && r.success) setBeLoggedIn(true);
+              if ((r.provider === "Uplift" || r.provider === "Donguri") && r.success) setRoninLoggedIn(true);
+            }
+            setStatus(`auto-login: ${results.map((r) => `${r.provider}:${r.success ? "OK" : "NG"}`).join(", ")}`);
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
   }, []);
 
   useEffect(() => {
@@ -1775,6 +1845,7 @@ export default function App() {
               <span className="sortable-th" onClick={() => toggleThreadSort("title")}>タイトル</span>
             </span>
             <input
+              ref={threadSearchRef}
               className="thread-search"
               value={threadSearchQuery}
               onChange={(e) => setThreadSearchQuery(e.target.value)}
@@ -1894,52 +1965,55 @@ export default function App() {
               </span>
             </div>
           )}
-          {threadTabs.length > 0 && (
-            <div className="thread-tab-bar">
-              {threadTabs.map((tab, i) => (
-                <div
-                  key={tab.threadUrl}
-                  className={`thread-tab ${i === activeTabIndex ? "active" : ""} ${tabDragIndex !== null && tabDragIndex !== i ? "drag-target" : ""}`}
-                  draggable
-                  onClick={() => onTabClick(i)}
-                  onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(i); } }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const p = clampMenuPosition(e.clientX, e.clientY, 160, 120);
-                    setTabMenu({ x: p.x, y: p.y, tabIndex: i });
-                  }}
-                  onDragStart={() => setTabDragIndex(i)}
-                  onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add("drag-over"); }}
-                  onDragLeave={(e) => { e.currentTarget.classList.remove("drag-over"); }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.currentTarget.classList.remove("drag-over");
-                    if (tabDragIndex === null || tabDragIndex === i) return;
-                    const next = [...threadTabs];
-                    const [moved] = next.splice(tabDragIndex, 1);
-                    next.splice(i, 0, moved);
-                    setThreadTabs(next);
-                    setActiveTabIndex(tabDragIndex === activeTabIndex ? i : tabDragIndex < activeTabIndex && i >= activeTabIndex ? activeTabIndex - 1 : tabDragIndex > activeTabIndex && i <= activeTabIndex ? activeTabIndex + 1 : activeTabIndex);
-                    setTabDragIndex(null);
-                  }}
-                  onDragEnd={() => setTabDragIndex(null)}
-                  title={tab.threadUrl}
+          <div className="thread-tab-bar">
+            {threadTabs.length === 0 && (
+              <div className="thread-tab placeholder active">
+                <span className="thread-tab-title">未取得</span>
+              </div>
+            )}
+            {threadTabs.map((tab, i) => (
+              <div
+                key={tab.threadUrl}
+                className={`thread-tab ${i === activeTabIndex ? "active" : ""} ${tabDragIndex !== null && tabDragIndex !== i ? "drag-target" : ""}`}
+                draggable
+                onClick={() => onTabClick(i)}
+                onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(i); } }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const p = clampMenuPosition(e.clientX, e.clientY, 160, 120);
+                  setTabMenu({ x: p.x, y: p.y, tabIndex: i });
+                }}
+                onDragStart={() => setTabDragIndex(i)}
+                onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add("drag-over"); }}
+                onDragLeave={(e) => { e.currentTarget.classList.remove("drag-over"); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.currentTarget.classList.remove("drag-over");
+                  if (tabDragIndex === null || tabDragIndex === i) return;
+                  const next = [...threadTabs];
+                  const [moved] = next.splice(tabDragIndex, 1);
+                  next.splice(i, 0, moved);
+                  setThreadTabs(next);
+                  setActiveTabIndex(tabDragIndex === activeTabIndex ? i : tabDragIndex < activeTabIndex && i >= activeTabIndex ? activeTabIndex - 1 : tabDragIndex > activeTabIndex && i <= activeTabIndex ? activeTabIndex + 1 : activeTabIndex);
+                  setTabDragIndex(null);
+                }}
+                onDragEnd={() => setTabDragIndex(null)}
+                title={tab.threadUrl}
+              >
+                <span className="thread-tab-title">{tab.title}</span>
+                {tabCacheRef.current.has(tab.threadUrl) && (
+                  <span className="tab-res-count">({tabCacheRef.current.get(tab.threadUrl)!.responses.length})</span>
+                )}
+                <button
+                  className="thread-tab-close"
+                  onClick={(e) => { e.stopPropagation(); closeTab(i); }}
                 >
-                  <span className="thread-tab-title">{tab.title}</span>
-                  {tabCacheRef.current.has(tab.threadUrl) && (
-                    <span className="tab-res-count">({tabCacheRef.current.get(tab.threadUrl)!.responses.length})</span>
-                  )}
-                  <button
-                    className="thread-tab-close"
-                    onClick={(e) => { e.stopPropagation(); closeTab(i); }}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
           <div
             className="response-layout"
           >
@@ -2046,6 +2120,13 @@ export default function App() {
                 {" "}サイズ:{Math.round(visibleResponseItems.reduce((s, r) => s + r.text.length, 0) / 1024)}KB
                 {" "}受信日時:{lastFetchTime ?? "-"}
               </span>
+              <input
+                ref={responseSearchRef}
+                className="response-search-input"
+                value={responseSearchQuery}
+                onChange={(e) => setResponseSearchQuery(e.target.value)}
+                placeholder="レス検索..."
+              />
               <span className="nav-buttons">
                 <button onClick={() => fetchResponsesFromCurrent()}>Reload</button>
                 <button onClick={() => { if (visibleResponseItems.length > 0) setSelectedResponse(visibleResponseItems[0].id); }}>Top</button>
@@ -2099,9 +2180,17 @@ export default function App() {
         <span className="status-sep">|</span>
         <span>API:ON</span>
         <span className="status-sep">|</span>
-        <span>Ronin:ON</span>
+        <span
+          className="status-clickable"
+          onClick={(e) => { e.stopPropagation(); roninLoggedIn ? doLogout("ronin") : void doLogin(); }}
+          title="クリックでログイン/ログアウト切替"
+        >Ronin:{roninState}</span>
         <span className="status-sep">|</span>
-        <span>BE:{beState}</span>
+        <span
+          className="status-clickable"
+          onClick={(e) => { e.stopPropagation(); beLoggedIn ? doLogout("be") : void doLogin(); }}
+          title="クリックでログイン/ログアウト切替"
+        >BE:{beState}</span>
         <span className="status-sep">|</span>
         <span>OK</span>
         <span className="status-sep">|</span>
@@ -2416,9 +2505,55 @@ export default function App() {
                 </label>
               </fieldset>
               <fieldset>
-                <legend>認証状態</legend>
-                <div className="settings-row"><span>Runtime</span><span>{isTauriRuntime() ? "Tauri" : "Web"}</span></div>
-                <div className="settings-row"><span>Auth</span><span>{authStatus}</span></div>
+                <legend>5chプレミアム Ronin/BE</legend>
+                <div className="settings-row"><span>Ronin ユーザーID</span></div>
+                <input
+                  value={authConfig.upliftEmail}
+                  onChange={(e) => setAuthConfig({ ...authConfig, upliftEmail: e.target.value })}
+                  placeholder="メールアドレス"
+                  style={{ marginTop: 0 }}
+                />
+                <div className="settings-row"><span>Ronin パスワード/秘密鍵</span></div>
+                <input
+                  type="password"
+                  value={authConfig.upliftPassword}
+                  onChange={(e) => setAuthConfig({ ...authConfig, upliftPassword: e.target.value })}
+                  placeholder="パスワード"
+                  style={{ marginTop: 0 }}
+                />
+                <div className="settings-row" style={{ marginTop: 8 }}><span>BE メールアドレス</span></div>
+                <input
+                  value={authConfig.beEmail}
+                  onChange={(e) => setAuthConfig({ ...authConfig, beEmail: e.target.value })}
+                  placeholder="メールアドレス"
+                  style={{ marginTop: 0 }}
+                />
+                <div className="settings-row"><span>BE パスワード</span></div>
+                <input
+                  type="password"
+                  value={authConfig.bePassword}
+                  onChange={(e) => setAuthConfig({ ...authConfig, bePassword: e.target.value })}
+                  placeholder="パスワード"
+                  style={{ marginTop: 0 }}
+                />
+                <label className="settings-row" style={{ marginTop: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={authConfig.autoLoginOnStartup}
+                    onChange={(e) => setAuthConfig({ ...authConfig, autoLoginOnStartup: e.target.checked })}
+                  />
+                  <span>起動時に自動でログインする</span>
+                </label>
+                <div className="settings-row" style={{ marginTop: 8, gap: 4 }}>
+                  <button onClick={() => {
+                    if (!isTauriRuntime()) return;
+                    void invoke("save_auth_config", { config: authConfig }).then(() => {
+                      setStatus("認証設定を保存しました");
+                    }).catch((e: unknown) => setStatus(`save error: ${String(e)}`));
+                  }}>保存</button>
+                  <button onClick={() => void doLogin()}>今すぐログイン</button>
+                </div>
+                <div className="settings-row"><span>Ronin: {roninState}</span><span>BE: {beState}</span></div>
               </fieldset>
               <fieldset>
                 <legend>情報</legend>

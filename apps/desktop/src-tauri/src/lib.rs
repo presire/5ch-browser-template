@@ -722,6 +722,61 @@ fn save_read_status(status: ReadStatusMap) -> Result<(), String> {
     core_store::save_json("read_status.json", &status).map_err(|e| e.to_string())
 }
 
+// --- Auth config persistence ---
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthConfig {
+    uplift_email: String,
+    uplift_password: String,
+    be_email: String,
+    be_password: String,
+    auto_login_on_startup: bool,
+}
+
+#[tauri::command]
+fn load_auth_config() -> Result<AuthConfig, String> {
+    match core_store::load_json::<AuthConfig>("auth_config.json") {
+        Ok(data) => Ok(data),
+        Err(_) => Ok(AuthConfig::default()),
+    }
+}
+
+#[tauri::command]
+fn save_auth_config(config: AuthConfig) -> Result<(), String> {
+    core_store::save_json("auth_config.json", &config).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn login_with_config() -> Result<Vec<LoginOutcome>, String> {
+    let config = core_store::load_json::<AuthConfig>("auth_config.json")
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    if !config.be_email.is_empty() && !config.be_password.is_empty() {
+        match login_be_front(&config.be_email, &config.be_password).await {
+            Ok(r) => out.push(r),
+            Err(e) => {
+                let _ = core_store::append_log(&format!("BE login error: {}", e));
+            }
+        }
+    }
+    if !config.uplift_email.is_empty() && !config.uplift_password.is_empty() {
+        match login_uplift(&config.uplift_email, &config.uplift_password).await {
+            Ok(r) => out.push(r),
+            Err(e) => {
+                let _ = core_store::append_log(&format!("Uplift login error: {}", e));
+            }
+        }
+        match login_donguri(&config.uplift_email, &config.uplift_password).await {
+            Ok(r) => out.push(r),
+            Err(e) => {
+                let _ = core_store::append_log(&format!("Donguri login error: {}", e));
+            }
+        }
+    }
+    Ok(out)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = core_store::init_portable_layout();
@@ -750,7 +805,10 @@ pub fn run() {
             load_ng_filters,
             save_ng_filters,
             load_read_status,
-            save_read_status
+            save_read_status,
+            load_auth_config,
+            save_auth_config,
+            login_with_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
