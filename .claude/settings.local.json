@@ -14,7 +14,26 @@
       "Bash(python3:*)",
       "Bash(python:*)",
       "Bash(node -c scripts/e2e_playwright.mjs)",
-      "Bash(powershell -ExecutionPolicy Bypass -File scripts/run_e2e.ps1)"
+      "Bash(powershell -ExecutionPolicy Bypass -File scripts/run_e2e.ps1)",
+      "Bash(taskkill //F //IM desktop.exe)",
+      "Bash(taskkill //F //IM \"desktop.exe\")",
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)",
+      "Bash(cargo build:*)",
+      "Bash(npx:*)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(node_modules/.bin/vite build:*)",
+      "Bash(tasklist)",
+      "Bash(node scripts/e2e_playwright.mjs)",
+      "Bash(node scripts/smoke_ui_playwright.mjs)",
+      "Bash(node:*)",
+      "Bash(SMOKE_UI_URL=\"http://127.0.0.1:1420\" node scripts/smoke_ui_playwright.mjs)",
+      "Bash(cargo tauri:*)",
+      "Bash(ls:*)",
+      "Bash(find C:Usersalldeveloppython5ch-browser-template -name log.txt -o -name *.log)",
+      "Bash(taskkill //F //FI \"WINDOWTITLE eq *vite*\")",
+      "Bash(SMOKE_UI_URL=\"http://localhost:4174\" node scripts/smoke_ui_playwright.mjs)"
     ]
   }
 }

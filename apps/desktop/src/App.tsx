@@ -94,7 +94,8 @@ type AuthConfig = {
   upliftPassword: string;
   beEmail: string;
   bePassword: string;
-  autoLoginOnStartup: boolean;
+  autoLoginBe: boolean;
+  autoLoginUplift: boolean;
 };
 type ThreadTab = {
   threadUrl: string;
@@ -175,15 +176,15 @@ const renderResponseBody = (html: string): { __html: string } => {
     .replace(/"/g, "&quot;");
   safe = safe.replace(/\n/g, "<br>");
   safe = safe.replace(
-    /(https?:\/\/[^\s<>&]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s<>&]*(?:&amp;[^\s<>&]*)*)?)/gi,
+    /(https?:\/\/[^\s<>&"]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s<>&"]*(?:&amp;[^\s<>&"]*)*)?)/gi,
     (match) => {
       const href = match.replace(/&amp;/g, "&");
-      return `<span class="thumb-link" data-lightbox-src="${href}">${match}<br><img class="response-thumb" src="${href}" loading="lazy" alt="" /></span>`;
+      return `<span class="thumb-link" data-lightbox-src="${href}"><a class="body-link" href="${href}" target="_blank" rel="noopener">${match}</a><br><img class="response-thumb" src="${href}" loading="lazy" alt="" /></span>`;
     }
   );
   // Linkify non-image URLs (must run after image thumb replacement)
   safe = safe.replace(
-    /(https?:\/\/[^\s<>&]+(?:&amp;[^\s<>&]*)*)/gi,
+    /(https?:\/\/[^\s<>&"]+(?:&amp;[^\s<>&"]*)*)/gi,
     (match) => {
       // Skip if already inside a thumb-link or img tag
       if (match.match(/\.(jpg|jpeg|png|gif|webp)(\?|$)/i)) return match;
@@ -262,7 +263,12 @@ export default function App() {
   const [threadMenu, setThreadMenu] = useState<{ x: number; y: number; threadId: number } | null>(null);
   const [responseMenu, setResponseMenu] = useState<{ x: number; y: number; responseId: number } | null>(null);
   const [anchorPopup, setAnchorPopup] = useState<{ x: number; y: number; responseId: number } | null>(null);
+  const [nestedPopups, setNestedPopups] = useState<{ x: number; y: number; responseId: number }[]>([]);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const hoverPreviewRef = useRef<HTMLDivElement | null>(null);
+  const hoverPreviewImgRef = useRef<HTMLImageElement | null>(null);
+  const hoverPreviewSrcRef = useRef<string | null>(null);
+  const hoverPreviewZoomRef = useRef(100);
   const [tabDragIndex, setTabDragIndex] = useState<number | null>(null);
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; tabIndex: number } | null>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -272,6 +278,8 @@ export default function App() {
   const [darkMode, setDarkMode] = useState(false);
   const [composeFontSize, setComposeFontSize] = useState(13);
   const [idPopup, setIdPopup] = useState<{ x: number; y: number; id: string } | null>(null);
+  const idPopupCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [backRefPopup, setBackRefPopup] = useState<{ x: number; y: number; responseIds: number[] } | null>(null);
   const [composePos, setComposePos] = useState<{ x: number; y: number } | null>(null);
   const composeDragRef = useRef<{ startX: number; startY: number; startPosX: number; startPosY: number } | null>(null);
   const [boardPanePx, setBoardPanePx] = useState(DEFAULT_BOARD_PANE_PX);
@@ -287,7 +295,7 @@ export default function App() {
   const threadSearchRef = useRef<HTMLInputElement | null>(null);
   const responseSearchRef = useRef<HTMLInputElement | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig>({
-    upliftEmail: "", upliftPassword: "", beEmail: "", bePassword: "", autoLoginOnStartup: false,
+    upliftEmail: "", upliftPassword: "", beEmail: "", bePassword: "", autoLoginBe: false, autoLoginUplift: false,
   });
   const [roninLoggedIn, setRoninLoggedIn] = useState(false);
   const [beLoggedIn, setBeLoggedIn] = useState(false);
@@ -668,22 +676,30 @@ export default function App() {
     }
   };
 
-  const doLogin = async () => {
+  const doLogin = async (target?: "be" | "uplift") => {
     if (!isTauriRuntime()) return;
-    setStatus("ログイン中...");
+    const t = target ?? "all";
+    setStatus(`ログイン中... (target=${t}, be=${authConfig.beEmail.length > 0}, uplift=${authConfig.upliftEmail.length > 0})`);
     try {
       // Save current config before login attempt
       await invoke("save_auth_config", { config: authConfig });
-      const results = await invoke<LoginOutcome[]>("login_with_config");
+      const results = await invoke<LoginOutcome[]>("login_with_config", {
+        target: t,
+        beEmail: authConfig.beEmail,
+        bePassword: authConfig.bePassword,
+        upliftEmail: authConfig.upliftEmail,
+        upliftPassword: authConfig.upliftPassword,
+      });
       for (const r of results) {
         if (r.provider === "Be" && r.success) setBeLoggedIn(true);
+        if (r.provider === "Be" && !r.success) setBeLoggedIn(false);
         if ((r.provider === "Uplift" || r.provider === "Donguri") && r.success) setRoninLoggedIn(true);
       }
-      if (results.length === 0) {
-        setStatus("ログイン対象なし (ID/PWが未入力)");
-      } else {
-        setStatus(results.map((r) => `${r.provider}:${r.success ? "OK" : "NG"}`).join(", "));
-      }
+      const details = results.map((r) => {
+        if (r.success) return `${r.provider}:OK`;
+        return `${r.provider}:NG(${r.note})`;
+      });
+      setStatus(details.length > 0 ? details.join(" | ") : "ログイン対象なし");
     } catch (error) {
       setStatus(`login error: ${String(error)}`);
     }
@@ -964,10 +980,9 @@ export default function App() {
     : "UPDATE N/A";
 
   const onComposeBodyKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (e) => {
-    if (!composeEnterSubmit) return;
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && e.shiftKey) {
       e.preventDefault();
-      void probePostConfirmFromCompose();
+      void probePostFlowTraceFromCompose();
     }
   };
 
@@ -1020,17 +1035,27 @@ export default function App() {
   const selectedThreadLabel = selectedThreadItem ? `#${selectedThreadItem.id}` : "-";
   const responseItems = [
     ...(fetchedResponses.length > 0
-      ? fetchedResponses.map((r) => ({
-          id: r.responseNo,
-          name: (r.name || "Anonymous").replace(/<[^>]+>/g, ""),
-          time: r.dateAndId || "-",
-          text: r.body || "",
-        }))
+      ? fetchedResponses.map((r) => {
+          const rawName = r.name || "Anonymous";
+          // Extract BE number from raw HTML name or from dateAndId
+          // Patterns: javascript:be(123456789), BE:123456789-PLT(...), BE:123456789
+          const beFromName = rawName.match(/be\((\d+)\)/i);
+          const beFromDate = (r.dateAndId || "").match(/BE:(\d+)/);
+          const beFromBody = (r.body || "").match(/BE:(\d+)/);
+          const beNum = beFromDate?.[1] || beFromName?.[1] || beFromBody?.[1] || null;
+          return {
+            id: r.responseNo,
+            name: rawName.replace(/<[^>]+>/g, ""),
+            time: r.dateAndId || "-",
+            text: r.body || "",
+            beNumber: beNum,
+          };
+        })
       : [
-          { id: 1, name: "名無しさん", time: "2026/03/07 10:00", text: "投稿フロートレース準備完了" },
-          { id: 2, name: "名無しさん", time: "2026/03/07 10:02", text: "BE/UPLIFT/どんぐりログイン確認済み" },
-          { id: 3, name: "名無しさん", time: "2026/03/07 10:04", text: "次: subject/dat取得連携" },
-          { id: 4, name: "名無しさん", time: "2026/03/07 10:06", text: "参考 https://example.com/page を参照" },
+          { id: 1, name: "名無しさん", time: "2026/03/07 10:00", text: "投稿フロートレース準備完了", beNumber: null },
+          { id: 2, name: "名無しさん", time: "2026/03/07 10:02", text: "BE/UPLIFT/どんぐりログイン確認済み", beNumber: null },
+          { id: 3, name: "名無しさん", time: "2026/03/07 10:04", text: "次: subject/dat取得連携", beNumber: null },
+          { id: 4, name: "名無しさん", time: "2026/03/07 10:06", text: "参考 https://example.com/page を参照", beNumber: null },
         ]),
   ];
   const extractId = (time: string) => {
@@ -1410,23 +1435,29 @@ export default function App() {
   }, [selectedThread, selectedResponse, visibleThreadItems, responseItems, activeTabIndex, threadTabs]);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(LAYOUT_PREFS_KEY);
+    const applyPrefs = (raw: string | null) => {
       if (!raw) return;
-      const parsed = JSON.parse(raw) as {
-        boardPanePx?: number;
-        threadPanePx?: number;
-        responseTopRatio?: number;
-        fontSize?: number;
-        darkMode?: boolean;
-      };
-      if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
-      if (typeof parsed.threadPanePx === "number") setThreadPanePx(parsed.threadPanePx);
-      if (typeof parsed.responseTopRatio === "number") setResponseTopRatio(parsed.responseTopRatio);
-      if (typeof parsed.fontSize === "number") setFontSize(parsed.fontSize);
-      if (typeof parsed.darkMode === "boolean") setDarkMode(parsed.darkMode);
-    } catch {
-      // ignore invalid localStorage payload
+      try {
+        const parsed = JSON.parse(raw) as {
+          boardPanePx?: number;
+          threadPanePx?: number;
+          responseTopRatio?: number;
+          fontSize?: number;
+          darkMode?: boolean;
+        };
+        if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
+        if (typeof parsed.threadPanePx === "number") setThreadPanePx(parsed.threadPanePx);
+        if (typeof parsed.responseTopRatio === "number") setResponseTopRatio(parsed.responseTopRatio);
+        if (typeof parsed.fontSize === "number") setFontSize(parsed.fontSize);
+        if (typeof parsed.darkMode === "boolean") setDarkMode(parsed.darkMode);
+      } catch { /* ignore */ }
+    };
+    // Try localStorage first, then file-based persistence
+    applyPrefs(localStorage.getItem(LAYOUT_PREFS_KEY));
+    if (isTauriRuntime()) {
+      invoke<string>("load_layout_prefs").then((raw) => {
+        if (raw) applyPrefs(raw);
+      }).catch(() => {});
     }
     try {
       const composeRaw = localStorage.getItem(COMPOSE_PREFS_KEY);
@@ -1463,8 +1494,15 @@ export default function App() {
     if (isTauriRuntime()) {
       invoke<AuthConfig>("load_auth_config").then((cfg) => {
         setAuthConfig(cfg);
-        if (cfg.autoLoginOnStartup) {
-          invoke<LoginOutcome[]>("login_with_config").then((results) => {
+        if (cfg.autoLoginBe || cfg.autoLoginUplift) {
+          const target = cfg.autoLoginBe && cfg.autoLoginUplift ? "all" : cfg.autoLoginBe ? "be" : "uplift";
+          invoke<LoginOutcome[]>("login_with_config", {
+            target,
+            beEmail: cfg.beEmail,
+            bePassword: cfg.bePassword,
+            upliftEmail: cfg.upliftEmail,
+            upliftPassword: cfg.upliftPassword,
+          }).then((results) => {
             for (const r of results) {
               if (r.provider === "Be" && r.success) setBeLoggedIn(true);
               if ((r.provider === "Uplift" || r.provider === "Donguri") && r.success) setRoninLoggedIn(true);
@@ -1535,11 +1573,20 @@ export default function App() {
       document.body.style.cursor = "";
     };
 
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Control" && hoverPreviewSrcRef.current) {
+        hoverPreviewSrcRef.current = null;
+        if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
+      }
+    };
+
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("keyup", onKeyUp);
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("keyup", onKeyUp);
     };
   }, []);
 
@@ -1552,6 +1599,9 @@ export default function App() {
       darkMode,
     });
     localStorage.setItem(LAYOUT_PREFS_KEY, payload);
+    if (isTauriRuntime()) {
+      void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
+    }
   }, [boardPanePx, threadPanePx, responseTopRatio, fontSize, darkMode]);
 
   useEffect(() => {
@@ -1589,6 +1639,8 @@ export default function App() {
         setTabMenu(null);
         setOpenMenu(null);
         setIdPopup(null);
+        setBackRefPopup(null);
+        setNestedPopups([]);
       }}
     >
       <header className="menu-bar">
@@ -1677,7 +1729,6 @@ export default function App() {
         <input className="address-input" value={locationInput} onChange={(e) => setLocationInput(e.target.value)} onKeyDown={onLocationInputKeyDown} />
         <button onClick={goFromLocationInput}>移動</button>
         <span className="tool-sep" />
-        <button onClick={() => { setComposeOpen(true); setComposePos(null); }}>書き込み</button>
         <button onClick={reopenLastClosedThread} disabled={!hasReopenableClosedThread} title="閉じたスレを戻す">↩</button>
         <label className="auto-refresh-toggle">
           <input
@@ -1846,29 +1897,14 @@ export default function App() {
         >
         <section className="pane threads">
           <div className="threads-toolbar">
-            <span className="threads-toolbar-left">
-              <span className="sortable-th" onClick={() => toggleThreadSort("id")}>番号</span>
-              <span className="th-sep">|</span>
-              <span className="sortable-th" onClick={() => toggleThreadSort("title")}>タイトル</span>
-            </span>
             <input
               ref={threadSearchRef}
               className="thread-search"
               value={threadSearchQuery}
               onChange={(e) => setThreadSearchQuery(e.target.value)}
               placeholder="検索..."
+              style={{ flex: 1 }}
             />
-            <span className="threads-toolbar-right">
-              <span className="sortable-th" onClick={() => toggleThreadSort("res")}>レス</span>
-              <span className="th-sep">|</span>
-              <span className="sortable-th" onClick={() => toggleThreadSort("speed")}>既読レス</span>
-              <span className="th-sep">|</span>
-              <span className="sortable-th" onClick={() => toggleThreadSort("fetched")}>取込</span>
-              <span className="th-sep">|</span>
-              <span>最終読み込み</span>
-              <span className="th-sep">|</span>
-              <span>最終書き込み</span>
-            </span>
           </div>
           <table>
             <thead>
@@ -1959,9 +1995,10 @@ export default function App() {
                 {" "}[{selectedThreadItem.res}]
               </span>
               <span className="thread-title-actions">
-                <button onClick={() => fetchResponsesFromCurrent()} title="再読み込み">🔄</button>
-                <button onClick={() => { setComposeOpen(true); setComposePos(null); }} title="書き込み">✏️</button>
-                <button onClick={() => {
+                <button className="title-action-btn" onClick={() => fetchResponsesFromCurrent()} title="再読み込み">🔄</button>
+                <button className="title-action-btn" onClick={() => fetchResponsesFromCurrent(undefined, { keepSelection: true })} title="新着取得">📥</button>
+                <button className="title-action-btn" onClick={() => { setComposeOpen(true); setComposePos(null); }} title="書き込み">✏️</button>
+                <button className="title-action-btn" onClick={() => {
                   const t = threadItems.find((item) => item.id === selectedThread);
                   if (t && "threadUrl" in t && typeof t.threadUrl === "string") {
                     toggleFavoriteThread({ threadUrl: t.threadUrl, title: t.title });
@@ -2029,10 +2066,21 @@ export default function App() {
               ref={responseScrollRef}
               onClick={(e) => {
                 const target = e.target as HTMLElement;
-                const thumbLink = target.closest<HTMLElement>("[data-lightbox-src]");
-                if (thumbLink) {
+                // body-link: open in external browser
+                const bodyLink = target.closest<HTMLAnchorElement>("a.body-link");
+                if (bodyLink) {
                   e.preventDefault();
-                  setLightboxUrl(thumbLink.dataset.lightboxSrc ?? null);
+                  const url = bodyLink.getAttribute("href");
+                  if (url && isTauriRuntime()) void invoke("open_external_url", { url });
+                  else if (url) window.open(url, "_blank");
+                  return;
+                }
+                // thumb image click: open in external browser
+                if (target.classList.contains("response-thumb")) {
+                  e.preventDefault();
+                  const thumbLink = target.closest<HTMLElement>("[data-lightbox-src]");
+                  const url = thumbLink?.dataset.lightboxSrc ?? "";
+                  if (url && isTauriRuntime()) void invoke("open_external_url", { url });
                   return;
                 }
                 const anchor = target.closest<HTMLElement>(".anchor-ref");
@@ -2042,6 +2090,31 @@ export default function App() {
                   setSelectedResponse(no);
                   setAnchorPopup(null);
                   setStatus(`jumped to >>${no}`);
+                }
+              }}
+              onMouseMove={(e) => {
+                const target = e.target as HTMLElement;
+                // Ctrl+hover on image → full-size preview (direct DOM, no React state)
+                if (e.ctrlKey && target.classList.contains("response-thumb")) {
+                  const src = target.getAttribute("src");
+                  if (src && hoverPreviewSrcRef.current !== src) {
+                    hoverPreviewSrcRef.current = src;
+                    hoverPreviewZoomRef.current = 100;
+                    if (hoverPreviewImgRef.current) {
+                      hoverPreviewImgRef.current.src = src;
+                      hoverPreviewImgRef.current.style.width = "100%";
+                    }
+                    if (hoverPreviewRef.current) {
+                      hoverPreviewRef.current.style.display = "flex";
+                      hoverPreviewRef.current.classList.remove("interactive");
+                    }
+                  }
+                }
+              }}
+              onMouseLeave={() => {
+                if (hoverPreviewSrcRef.current) {
+                  hoverPreviewSrcRef.current = null;
+                  if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
                 }
               }}
               onMouseOver={(e) => {
@@ -2058,6 +2131,7 @@ export default function App() {
                 const target = e.target as HTMLElement;
                 if (target.closest(".anchor-ref")) {
                   setAnchorPopup(null);
+                  setNestedPopups([]);
                 }
               }}
             >
@@ -2081,6 +2155,29 @@ export default function App() {
                         {r.id}
                       </span>
                       <span className="response-name">{r.name}</span>
+                      {r.beNumber && (
+                        <span
+                          className="response-be-link"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const url = `https://be.5ch.io/user/${r.beNumber}`;
+                            if (isTauriRuntime()) void invoke("open_external_url", { url });
+                          }}
+                        >
+                          BE:{r.beNumber}
+                        </span>
+                      )}
+                      {backRefMap.has(r.id) && (
+                        <span
+                          className="back-ref-trigger"
+                          onMouseEnter={(e) => {
+                            const rect = (e.target as HTMLElement).getBoundingClientRect();
+                            setBackRefPopup({ x: rect.left, y: rect.top - 4, responseIds: backRefMap.get(r.id)! });
+                          }}
+                        >
+                          ▼
+                        </span>
+                      )}
                       <span className="response-header-right">
                         {isNew && <span className="response-new-marker">New!</span>}
                         <span className="response-date">{r.time}</span>
@@ -2088,10 +2185,15 @@ export default function App() {
                           <span
                             className="response-id-cell"
                             style={{ color: getIdColor(id) }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const rect = (e.target as HTMLElement).getBoundingClientRect();
-                              setIdPopup({ x: rect.left, y: rect.bottom + 2, id });
+                            onMouseEnter={(e) => {
+                              if (idPopupCloseTimer.current) { clearTimeout(idPopupCloseTimer.current); idPopupCloseTimer.current = null; }
+                              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                              const popupWidth = 520;
+                              const x = Math.max(8, rect.right - popupWidth);
+                              setIdPopup({ x, y: rect.bottom + 2, id });
+                            }}
+                            onMouseLeave={() => {
+                              idPopupCloseTimer.current = setTimeout(() => setIdPopup(null), 300);
                             }}
                           >
                             ID:{id}({count})
@@ -2100,23 +2202,6 @@ export default function App() {
                       </span>
                     </div>
                     <div className="response-body" dangerouslySetInnerHTML={renderResponseBody(r.text)} />
-                    {backRefMap.has(r.id) && (
-                      <div className="back-refs">
-                        被参照:{" "}
-                        {backRefMap.get(r.id)!.map((refNo) => (
-                          <span
-                            key={refNo}
-                            className="anchor-ref"
-                            data-anchor={refNo}
-                            role="link"
-                            tabIndex={0}
-                            onClick={() => setSelectedResponse(refNo)}
-                          >
-                            &gt;&gt;{refNo}
-                          </span>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 );
               })}
@@ -2135,7 +2220,6 @@ export default function App() {
                 placeholder="レス検索..."
               />
               <span className="nav-buttons">
-                <button onClick={() => fetchResponsesFromCurrent()}>Reload</button>
                 <button onClick={() => { if (visibleResponseItems.length > 0) setSelectedResponse(visibleResponseItems[0].id); }}>Top</button>
                 {newResponseStart !== null && (
                   <button
@@ -2189,13 +2273,13 @@ export default function App() {
         <span className="status-sep">|</span>
         <span
           className="status-clickable"
-          onClick={(e) => { e.stopPropagation(); roninLoggedIn ? doLogout("ronin") : void doLogin(); }}
+          onClick={(e) => { e.stopPropagation(); roninLoggedIn ? doLogout("ronin") : void doLogin("uplift"); }}
           title="クリックでログイン/ログアウト切替"
         >Ronin:{roninState}</span>
         <span className="status-sep">|</span>
         <span
           className="status-clickable"
-          onClick={(e) => { e.stopPropagation(); beLoggedIn ? doLogout("be") : void doLogin(); }}
+          onClick={(e) => { e.stopPropagation(); beLoggedIn ? doLogout("be") : void doLogin("be"); }}
           title="クリックでログイン/ログアウト切替"
         >BE:{beState}</span>
         <span className="status-sep">|</span>
@@ -2246,18 +2330,6 @@ export default function App() {
               <input type="checkbox" checked={composeSage} onChange={(e) => setComposeSage(e.target.checked)} />
               sage
             </label>
-            <label className="check">
-              <input type="checkbox" checked={composePreview} onChange={(e) => setComposePreview(e.target.checked)} />
-              プレビュー
-            </label>
-            <label className="check">
-              <input
-                type="checkbox"
-                checked={composeEnterSubmit}
-                onChange={(e) => setComposeEnterSubmit(e.target.checked)}
-              />
-              Enter送信
-            </label>
           </div>
           <textarea
             className="compose-body"
@@ -2275,12 +2347,7 @@ export default function App() {
             <div className="compose-preview" dangerouslySetInnerHTML={renderResponseBody(composeBody || "(空)")} />
           )}
           <div className="compose-actions">
-            <button onClick={probePostConfirmFromCompose}>確認</button>
-            <button onClick={probePostFinalizePreviewFromCompose}>最終フォーム</button>
-            <button onClick={probePostFinalizeSubmitFromCompose} disabled={!allowRealSubmit}>
-              送信
-            </button>
-            <button onClick={probePostFlowTraceFromCompose}>フロートレース</button>
+            <button onClick={probePostFlowTraceFromCompose}>送信 (Shift+Enter)</button>
           </div>
           {composeResult && (
             <div className={`compose-result ${composeResult.ok ? "compose-result-ok" : "compose-result-err"}`}>
@@ -2382,7 +2449,7 @@ export default function App() {
       )}
       {responseMenu && (
         <div className="thread-menu response-menu" style={{ left: responseMenu.x, top: responseMenu.y }} onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => void runResponseAction("quote")}>このレスを引用</button>
+          <button onClick={() => void runResponseAction("quote")}>ここにレス</button>
           <button onClick={() => void runResponseAction("quote-with-name")}>名前付き引用</button>
           <button onClick={() => void runResponseAction("copy-body")}>本文をコピー</button>
           <button onClick={() => void runResponseAction("copy-url")}>レスURLをコピー</button>
@@ -2404,7 +2471,27 @@ export default function App() {
         const popupResp = responseItems.find((r) => r.id === anchorPopup.responseId);
         if (!popupResp) return null;
         return (
-          <div className="anchor-popup" style={{ left: anchorPopup.x, top: anchorPopup.y }}>
+          <div
+            className="anchor-popup"
+            style={{ left: anchorPopup.x, top: anchorPopup.y }}
+            onMouseOver={(ev) => {
+              const t = ev.target as HTMLElement;
+              const a = t.closest<HTMLElement>(".anchor-ref");
+              if (!a) return;
+              const no = Number(a.dataset.anchor);
+              if (no > 0 && responseItems.some((r) => r.id === no)) {
+                const rect = a.getBoundingClientRect();
+                setNestedPopups((prev) => {
+                  if (prev.some((p) => p.responseId === no)) return prev;
+                  return [...prev, { x: rect.left, y: rect.bottom + 4, responseId: no }];
+                });
+              }
+            }}
+            onMouseOut={(ev) => {
+              const t = ev.target as HTMLElement;
+              if (t.closest(".anchor-ref")) setNestedPopups([]);
+            }}
+          >
             <div className="anchor-popup-header">
               <span className="response-viewer-no">{popupResp.id}</span> {popupResp.name}
               <time>{popupResp.time}</time>
@@ -2413,14 +2500,73 @@ export default function App() {
           </div>
         );
       })()}
+      {backRefPopup && (() => {
+        const refs = backRefPopup.responseIds;
+        return (
+          <div
+            className="anchor-popup back-ref-popup"
+            style={{ left: backRefPopup.x, bottom: window.innerHeight - backRefPopup.y }}
+            onMouseLeave={() => setBackRefPopup(null)}
+            onMouseOver={(ev) => {
+              const t = ev.target as HTMLElement;
+              const a = t.closest<HTMLElement>(".anchor-ref");
+              if (!a) return;
+              const no = Number(a.dataset.anchor);
+              if (no > 0 && responseItems.some((r) => r.id === no)) {
+                const rect = a.getBoundingClientRect();
+                setNestedPopups((prev) => {
+                  if (prev.some((p) => p.responseId === no)) return prev;
+                  return [...prev, { x: rect.left, y: rect.bottom + 4, responseId: no }];
+                });
+              }
+            }}
+            onMouseOut={(ev) => {
+              const t = ev.target as HTMLElement;
+              if (t.closest(".anchor-ref")) setNestedPopups([]);
+            }}
+          >
+            {refs.map((refNo) => {
+              const refResp = responseItems.find((r) => r.id === refNo);
+              if (!refResp) return null;
+              return (
+                <div key={refNo} className="back-ref-popup-item">
+                  <div className="anchor-popup-header">
+                    <span className="response-viewer-no">{refResp.id}</span> {refResp.name}
+                    <time>{refResp.time}</time>
+                  </div>
+                  <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(refResp.text)} />
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+      {nestedPopups.map((np, i) => {
+        const nestedResp = responseItems.find((r) => r.id === np.responseId);
+        if (!nestedResp) return null;
+        return (
+          <div key={`${np.responseId}-${i}`} className="anchor-popup nested-popup" style={{ left: np.x + i * 8, top: np.y + i * 8 }}>
+            <div className="anchor-popup-header">
+              <span className="response-viewer-no">{nestedResp.id}</span> {nestedResp.name}
+              <time>{nestedResp.time}</time>
+            </div>
+            <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(nestedResp.text)} />
+          </div>
+        );
+      })}
       {idPopup && (() => {
         const idResponses = responseItems.filter((r) => extractId(r.time) === idPopup.id);
         return (
-          <div className="id-popup" style={{ left: idPopup.x, top: idPopup.y }} onClick={(e) => e.stopPropagation()}>
+          <div
+            className="id-popup"
+            style={{ left: idPopup.x, top: idPopup.y }}
+            onMouseEnter={() => { if (idPopupCloseTimer.current) { clearTimeout(idPopupCloseTimer.current); idPopupCloseTimer.current = null; } }}
+            onMouseLeave={() => {
+              idPopupCloseTimer.current = setTimeout(() => setIdPopup(null), 300);
+            }}
+          >
             <div className="id-popup-header">
               ID:{idPopup.id} ({idResponses.length}件)
-              <button onClick={() => { addNgEntry("ids", idPopup.id); setIdPopup(null); }}>NG追加</button>
-              <button onClick={() => setIdPopup(null)}>×</button>
             </div>
             <div className="id-popup-list">
               {idResponses.map((r) => (
@@ -2546,10 +2692,18 @@ export default function App() {
                 <label className="settings-row" style={{ marginTop: 8 }}>
                   <input
                     type="checkbox"
-                    checked={authConfig.autoLoginOnStartup}
-                    onChange={(e) => setAuthConfig({ ...authConfig, autoLoginOnStartup: e.target.checked })}
+                    checked={authConfig.autoLoginUplift}
+                    onChange={(e) => setAuthConfig({ ...authConfig, autoLoginUplift: e.target.checked })}
                   />
-                  <span>起動時に自動でログインする</span>
+                  <span>Ronin: 起動時に自動ログイン</span>
+                </label>
+                <label className="settings-row">
+                  <input
+                    type="checkbox"
+                    checked={authConfig.autoLoginBe}
+                    onChange={(e) => setAuthConfig({ ...authConfig, autoLoginBe: e.target.checked })}
+                  />
+                  <span>BE: 起動時に自動ログイン</span>
                 </label>
                 <div className="settings-row" style={{ marginTop: 8, gap: 4 }}>
                   <button onClick={() => {
@@ -2558,7 +2712,8 @@ export default function App() {
                       setStatus("認証設定を保存しました");
                     }).catch((e: unknown) => setStatus(`save error: ${String(e)}`));
                   }}>保存</button>
-                  <button onClick={() => void doLogin()}>今すぐログイン</button>
+                  <button onClick={() => void doLogin("uplift")}>Ronin ログイン</button>
+                  <button onClick={() => void doLogin("be")}>BE ログイン</button>
                 </div>
                 <div className="settings-row"><span>Ronin: {roninState}</span><span>BE: {beState}</span></div>
               </fieldset>
@@ -2594,6 +2749,28 @@ export default function App() {
           </div>
         </div>
       )}
+      <div
+        ref={hoverPreviewRef}
+        className="hover-preview"
+        style={{ display: "none" }}
+        onClick={() => {
+          hoverPreviewSrcRef.current = null;
+          if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
+        }}
+        onWheel={(e) => {
+          if (e.ctrlKey) {
+            e.preventDefault();
+            const next = Math.max(10, Math.min(500, hoverPreviewZoomRef.current + (e.deltaY < 0 ? 20 : -20)));
+            hoverPreviewZoomRef.current = next;
+            if (hoverPreviewImgRef.current) hoverPreviewImgRef.current.style.width = `${next}%`;
+            if (hoverPreviewRef.current) {
+              hoverPreviewRef.current.classList.toggle("interactive", next !== 100);
+            }
+          }
+        }}
+      >
+        <img ref={hoverPreviewImgRef} alt="" style={{ width: "100%" }} />
+      </div>
       {lightboxUrl && (
         <div className="lightbox-overlay" onClick={() => setLightboxUrl(null)}>
           <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>

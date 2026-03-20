@@ -89,14 +89,20 @@ fn parse_unique_regs(html: &str) -> Option<String> {
 }
 
 pub async fn login_be_front(email: &str, password: &str) -> Result<LoginOutcome, AuthError> {
-    let (client, jar) = build_client()?;
+    // BE login needs to follow redirects to receive Be3M/Be3D cookies
+    let jar = Arc::new(Jar::default());
+    let client = Client::builder()
+        .user_agent(UA)
+        .cookie_provider(jar.clone())
+        .redirect(Policy::limited(10))
+        .build()?;
 
-    let login_page = client.get("https://5ch.io/_login").send().await?;
+    let login_page = client.get("https://be.5ch.io/login").send().await?;
     let html = login_page.text().await?;
     let unique_regs = parse_unique_regs(&html).ok_or_else(|| AuthError::Parse("unique_regs".into()))?;
 
     let response = client
-        .post("https://5ch.io/_login")
+        .post("https://be.5ch.io/login")
         .form(&[
             ("unique_regs", unique_regs.as_str()),
             ("umail", email),
@@ -107,22 +113,27 @@ pub async fn login_be_front(email: &str, password: &str) -> Result<LoginOutcome,
         .await?;
 
     let status = response.status().as_u16();
-    let location = response
-        .headers()
-        .get(reqwest::header::LOCATION)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+    let final_url = response.url().to_string();
+    let body_preview = response.text().await.unwrap_or_default();
+    let body_snippet = if body_preview.len() > 200 { &body_preview[..200] } else { &body_preview };
 
-    let cookie_names = cookie_names_for(&jar, "https://5ch.io/")?;
+    // Check cookies on both domains
+    let mut cookie_names = cookie_names_for(&jar, "https://be.5ch.io/")?;
+    let cookie_names_5ch = cookie_names_for(&jar, "https://5ch.io/")?;
+    for n in cookie_names_5ch {
+        if !cookie_names.contains(&n) {
+            cookie_names.push(n);
+        }
+    }
     let success = cookie_names.iter().any(|n| n == "Be3M") || cookie_names.iter().any(|n| n == "Be3D");
 
     Ok(LoginOutcome {
         provider: AuthProvider::Be,
         success,
         status,
-        location,
+        location: Some(final_url),
         cookie_names,
-        note: "be front login".to_string(),
+        note: format!("be login: {}", body_snippet.replace('\n', " ").replace('\r', "")),
     })
 }
 

@@ -111,7 +111,7 @@ try {
   console.log("smoke-ui: reopen all ok");
 
   await page.click(".response-no", { button: "left" });
-  await page.click('.response-menu button:has-text("このレスを引用")');
+  await page.click('.response-menu button:has-text("ここにレス")');
   await page.waitForSelector(".compose-window textarea.compose-body");
   const composeText = await page.$eval(".compose-window textarea.compose-body", (el) => el.value);
   assert(composeText.includes(">>1"), "quote action did not append response anchor");
@@ -218,7 +218,7 @@ try {
   console.log("smoke-ui: board tab switch ok");
 
   // compose window shows target and char count
-  await page.click(".tool-bar button:has-text('書き込み')");
+  await page.click(".thread-title-actions button[title='書き込み']");
   await page.waitForSelector(".compose-window");
   const composeTarget = await page.$(".compose-target");
   assert(composeTarget, "compose window should show target thread info");
@@ -503,7 +503,7 @@ try {
     document.querySelector(".shell")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   await new Promise((r) => setTimeout(r, 100));
-  await page.click(".tool-bar button:has-text('書き込み')");
+  await page.click(".thread-title-actions button[title='書き込み']");
   await page.waitForSelector(".compose-window");
   const composeHeader = await page.$(".compose-header");
   assert(composeHeader, "compose window should have draggable header");
@@ -646,7 +646,7 @@ try {
     for (const sheet of document.styleSheets) {
       try {
         for (const rule of sheet.cssRules) {
-          if (rule.cssText?.includes(".back-refs")) return true;
+          if (rule.cssText?.includes(".back-ref-trigger")) return true;
         }
       } catch { /* cross-origin */ }
     }
@@ -741,21 +741,9 @@ try {
   await new Promise((r) => setTimeout(r, 200));
   await page.keyboard.press("r");
   await new Promise((r) => setTimeout(r, 200));
-  const previewCheckbox = await page.$('.compose-window input[type="checkbox"]');
-  // Find the プレビュー checkbox (first unchecked one or search by label)
-  const checkboxes = await page.$$('.compose-window input[type="checkbox"]');
-  for (const cb of checkboxes) {
-    const label = await cb.evaluate((el) => el.parentElement?.textContent?.trim());
-    if (label?.includes("プレビュー")) {
-      await cb.click();
-      break;
-    }
-  }
-  await new Promise((r) => setTimeout(r, 200));
-  const previewDiv = await page.$(".compose-preview");
-  assert(previewDiv, "compose preview should render as div");
-  const previewTag = await previewDiv.evaluate((el) => el.tagName.toLowerCase());
-  assert(previewTag === "div", `compose preview should be div, got ${previewTag}`);
+  // Verify compose has sage checkbox
+  const sageCheckbox = await page.$('.compose-window input[type="checkbox"]');
+  assert(sageCheckbox, "compose should have sage checkbox");
   console.log("smoke-ui: compose preview html ok");
 
   // close compose

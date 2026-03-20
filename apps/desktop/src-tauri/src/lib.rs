@@ -731,7 +731,8 @@ struct AuthConfig {
     uplift_password: String,
     be_email: String,
     be_password: String,
-    auto_login_on_startup: bool,
+    auto_login_be: bool,
+    auto_login_uplift: bool,
 }
 
 #[tauri::command]
@@ -748,23 +749,73 @@ fn save_auth_config(config: AuthConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn login_with_config() -> Result<Vec<LoginOutcome>, String> {
-    let config = core_store::load_json::<AuthConfig>("auth_config.json")
-        .unwrap_or_default();
+fn save_layout_prefs(prefs: String) -> Result<(), String> {
+    core_store::save_json("layout_prefs.json", &prefs).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_layout_prefs() -> Result<String, String> {
+    match core_store::load_json::<String>("layout_prefs.json") {
+        Ok(data) => Ok(data),
+        Err(_) => Ok(String::new()),
+    }
+}
+
+#[tauri::command]
+async fn login_with_config(target: String, be_email: String, be_password: String, uplift_email: String, uplift_password: String) -> Result<Vec<LoginOutcome>, String> {
+    let _ = core_store::append_log(&format!(
+        "login_with_config: target={} be_email_len={} be_pw_len={} uplift_email_len={} uplift_pw_len={}",
+        target, be_email.len(), be_password.len(),
+        uplift_email.len(), uplift_password.len()
+    ));
+    let config = AuthConfig {
+        be_email, be_password, uplift_email, uplift_password,
+        auto_login_be: false, auto_login_uplift: false,
+    };
     let mut out = Vec::new();
-    if !config.be_email.is_empty() && !config.be_password.is_empty() {
+    let do_be = target == "all" || target == "be";
+    let do_uplift = target == "all" || target == "uplift";
+    if do_be && !config.be_email.is_empty() && !config.be_password.is_empty() {
         match login_be_front(&config.be_email, &config.be_password).await {
-            Ok(r) => out.push(r),
+            Ok(r) => {
+                let _ = core_store::append_log(&format!("BE login result: success={} status={} note={}", r.success, r.status, r.note));
+                out.push(r);
+            }
             Err(e) => {
                 let _ = core_store::append_log(&format!("BE login error: {}", e));
+                out.push(LoginOutcome {
+                    provider: core_auth::AuthProvider::Be,
+                    success: false,
+                    status: 0,
+                    location: None,
+                    cookie_names: vec![],
+                    note: format!("error: {}", e),
+                });
             }
         }
+    } else if do_be {
+        out.push(LoginOutcome {
+            provider: core_auth::AuthProvider::Be,
+            success: false,
+            status: 0,
+            location: None,
+            cookie_names: vec![],
+            note: "BE email/password is empty".to_string(),
+        });
     }
-    if !config.uplift_email.is_empty() && !config.uplift_password.is_empty() {
+    if do_uplift && !config.uplift_email.is_empty() && !config.uplift_password.is_empty() {
         match login_uplift(&config.uplift_email, &config.uplift_password).await {
             Ok(r) => out.push(r),
             Err(e) => {
                 let _ = core_store::append_log(&format!("Uplift login error: {}", e));
+                out.push(LoginOutcome {
+                    provider: core_auth::AuthProvider::Uplift,
+                    success: false,
+                    status: 0,
+                    location: None,
+                    cookie_names: vec![],
+                    note: format!("error: {}", e),
+                });
             }
         }
         match login_donguri(&config.uplift_email, &config.uplift_password).await {
@@ -773,6 +824,15 @@ async fn login_with_config() -> Result<Vec<LoginOutcome>, String> {
                 let _ = core_store::append_log(&format!("Donguri login error: {}", e));
             }
         }
+    } else if do_uplift {
+        out.push(LoginOutcome {
+            provider: core_auth::AuthProvider::Uplift,
+            success: false,
+            status: 0,
+            location: None,
+            cookie_names: vec![],
+            note: "Uplift email/password is empty".to_string(),
+        });
     }
     Ok(out)
 }
@@ -808,7 +868,9 @@ pub fn run() {
             save_read_status,
             load_auth_config,
             save_auth_config,
-            login_with_config
+            login_with_config,
+            save_layout_prefs,
+            load_layout_prefs
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
