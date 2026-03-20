@@ -160,9 +160,11 @@
   - `eid` は `.uplift.5ch.io` のため投稿先へは送信されない
 
 ## 実装優先タスク（次セッション）
-1. `core-fetch` 実投稿フロー（confirm → submit）の実 MESSAGE 検証
-   - safe probe 完了（2026-03-19）、次は非空メッセージでの confirm form 検出を確認
-   - 必要時のみ `-AllowRealSubmit -RealSubmitToken I_UNDERSTAND_REAL_POST -Message "<non-empty>"` で実送信検証
+1. `core-fetch` 実投稿フロー（confirm → finalize submit）の検証
+   - non-empty message probe 完了（2026-03-20）: confirm form 正常検出（全4モード）
+   - 引用符なしHTML属性パーサー修正済み
+   - 新観測: `feature`フィールド（confirmed:<hash>）、`sid`フィールド（UPLIFT有効時）
+   - 次: `-AllowRealSubmit -RealSubmitToken I_UNDERSTAND_REAL_POST -Message "<non-empty>"` で実送信検証
    - board URL 入力（例: `https://mao.5ch.io/ngt/`）でのスレ一覧取得を実環境確認
 2. geronimo互換UI継続改善
    - スレ一覧の列幅ドラッグリサイズ

@@ -126,8 +126,14 @@
 - [x] desktop: ダークテーマのブロックビュー/行分割/右ペイン対応
 - [x] desktop: smoke-ui テスト 76項目
 
+- [x] core-fetch: 引用符なしHTML属性のサポート追加（confirm form parser）
+- [x] core-fetch: 非空メッセージでのconfirm form完全検出（全4モード: anonymous/uplift/be_front/be_uplift）
+  - confirm form 9-10フィールド検出: FROM/MESSAGE/bbs/key/time/oekaki_thread1/feature/submit (+sid for UPLIFT)
+  - 新フィールド発見: `feature` (confirmed:<hash>), `sid` (UPLIFT有効時のみ)
+  - action URL: `../test/bbs.cgi?guid=ON`
+
 ## 直近タスク（優先順）
-1. `core-fetch`: 非空メッセージでの confirm form 検出を確認（safe probe 完了: 2026-03-19）
+1. `core-fetch`: 実送信検証（real submit = confirm form → finalize POST）
    - real submit時は `-AllowRealSubmit -RealSubmitToken I_UNDERSTAND_REAL_POST -Message "<non-empty>"` を必須化
 2. `apps/desktop`: geronimo互換UI継続改善
    - push前に `apps/desktop` で `npm run test:smoke-ui` を実行
