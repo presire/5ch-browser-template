@@ -285,7 +285,7 @@ export default function App() {
   const [postFinalizeSubmitProbe, setPostFinalizeSubmitProbe] = useState("not run");
   const [allowRealSubmit, setAllowRealSubmit] = useState(false);
   const [metadataUrl, setMetadataUrl] = useState("");
-  const [currentVersion, setCurrentVersion] = useState("0.1.0");
+  const [currentVersion, setCurrentVersion] = useState("0.0.1");
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
   const [updateProbe, setUpdateProbe] = useState("not run");
   const [composeOpen, setComposeOpen] = useState(false);
