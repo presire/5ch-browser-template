@@ -200,6 +200,21 @@ h1 {
   margin-top: 8px;
 }
 
+.install-panel {
+  margin-bottom: 16px;
+}
+
+.install-steps {
+  margin: 0;
+  padding-left: 22px;
+  color: var(--ink-sub);
+}
+
+.install-steps li {
+  margin: 6px 0;
+  line-height: 1.6;
+}
+
 .asset-list {
   margin: 0;
   padding: 0;
@@ -227,6 +242,12 @@ h1 {
   color: var(--ink-sub);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.93rem;
+}
+
+.asset-list a {
+  color: #1f5670;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .asset-list em {

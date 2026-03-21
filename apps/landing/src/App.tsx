@@ -40,6 +40,16 @@ function formatBytes(size: number): string {
   return `${mb.toFixed(1)} MB`;
 }
 
+function buildAssetUrl(downloadPageUrl: string, filename: string): string {
+  const marker = "/releases/tag/";
+  const i = downloadPageUrl.indexOf(marker);
+  if (i < 0) return downloadPageUrl;
+  const base = downloadPageUrl.slice(0, i);
+  const tag = downloadPageUrl.slice(i + marker.length);
+  if (!tag) return downloadPageUrl;
+  return `${base}/releases/download/${tag}/${filename}`;
+}
+
 export default function App() {
   const [meta, setMeta] = useState<LatestJson | null>(null);
   const [metaStatus, setMetaStatus] = useState("loading...");
@@ -152,6 +162,15 @@ export default function App() {
           </article>
         </section>
 
+        <section className="card install-panel">
+          <h2>インストール方法</h2>
+          <ol className="install-steps">
+            <li>「最新版をダウンロード」からZIPを取得します。</li>
+            <li>ZIPを展開し、セットアップファイルを実行します。</li>
+            <li>初回起動後、板一覧を取得して利用開始します。</li>
+          </ol>
+        </section>
+
         <section className="card download-panel">
           <h2>最新リリース</h2>
           <p className="mono">status: {metaStatus}</p>
@@ -160,12 +179,28 @@ export default function App() {
           <ul className="asset-list">
             <li>
               <span>Windows x64</span>
-              <strong>{windowsAsset?.filename || "-"}</strong>
+              <strong>
+                {windowsAsset ? (
+                  <a href={buildAssetUrl(primaryDownloadUrl, windowsAsset.filename)} target="_blank" rel="noreferrer">
+                    {windowsAsset.filename}
+                  </a>
+                ) : (
+                  "-"
+                )}
+              </strong>
               <em>{windowsAsset ? formatBytes(windowsAsset.size) : "-"}</em>
             </li>
             <li>
               <span>macOS ARM64</span>
-              <strong>{macAsset?.filename || "-"}</strong>
+              <strong>
+                {macAsset ? (
+                  <a href={buildAssetUrl(primaryDownloadUrl, macAsset.filename)} target="_blank" rel="noreferrer">
+                    {macAsset.filename}
+                  </a>
+                ) : (
+                  "-"
+                )}
+              </strong>
               <em>{macAsset ? formatBytes(macAsset.size) : "-"}</em>
             </li>
           </ul>
