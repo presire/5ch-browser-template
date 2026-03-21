@@ -97,7 +97,7 @@ export default function App() {
             <p className="kicker">Ember</p>
             <h1>Live5chライクな専ブラを、現代技術で作り直す。</h1>
             <p className="lead">
-              PC向け専ブラの選択肢が少なく、既存ツールではLive5chからの移行がしづらい。
+              PC向け専ブラの選択肢が少なく、SikiはLive5chからの移行には向かない。
               だからこそ、WindowsとMacのどちらでも同じ感覚で5ちゃんを読める専ブラを作る。
               その課題感から始めたプロジェクトがEmberです。
             </p>
