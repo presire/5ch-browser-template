@@ -12,6 +12,11 @@
       "sha256": "2868b9a59e70d9de1c40250e35754b0b128d1ce37af6cd7d3b7fe81fa0cb7326",
       "size": 6037599,
       "filename": "ember-mac-arm64.zip"
+    },
+    "linux-x64": {
+      "sha256": "",
+      "size": 0,
+      "filename": "ember-linux-x64.zip"
     }
   }
 }
