@@ -717,9 +717,7 @@ export default function App() {
             if (cached.length > 0) {
               setFetchedResponses(cached);
               tabCacheRef.current.set(url, { responses: cached, selectedResponse: bm ?? 1 });
-              if (bm && bm < cached.length) {
-                setNewResponseStart(bm + 1);
-              }
+              // Don't set newResponseStart from cache — first open should have no "new" marker
               const savedNo = loadScrollPos(url);
               if (savedNo > 1) scrollToResponseNo(savedNo);
             }
