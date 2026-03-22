@@ -39,7 +39,11 @@
       "Bash(grep -r \"5ch Browser\\\\|5ch-browser\" C:Usersalldeveloppython5ch-browser-template --include=*.md)",
       "Bash(/c/Users/all/develop/python/5ch-browser-template/target/debug/deps/core_fetch-f6cb1a4327526625.exe --ignored --nocapture debug_curl_post_flow 2>&1)",
       "Bash(xargs grep:*)",
-      "Bash(curl -s http://localhost:1420/src/styles.css)"
+      "Bash(curl -s http://localhost:1420/src/styles.css)",
+      "Bash(npm install:*)",
+      "Bash(powershell -NoProfile -Command \"Compress-Archive -Path ember.exe -DestinationPath ''../../out/ember-win-x64.zip'' -Force\")",
+      "Bash(gh release:*)",
+      "Bash(powershell -NoProfile -Command \"Compress-Archive -Path target/release/ember.exe -DestinationPath out/ember-win-x64.zip -Force; \\(Get-FileHash ''out/ember-win-x64.zip'' -Algorithm SHA256\\).Hash; \\(Get-Item ''out/ember-win-x64.zip''\\).Length\")"
     ]
   }
 }
