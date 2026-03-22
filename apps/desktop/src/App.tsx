@@ -1932,21 +1932,6 @@ export default function App() {
       const ftRaw = localStorage.getItem(THREAD_FETCH_TIMES_KEY);
       if (ftRaw) threadFetchTimesRef.current = JSON.parse(ftRaw);
     } catch { /* ignore */ }
-    // Restore window position and size (delayed to ensure window is ready)
-    if (isTauriRuntime()) {
-      setTimeout(async () => {
-        try {
-          const ws = localStorage.getItem(WINDOW_STATE_KEY);
-          if (!ws) return;
-          const s = JSON.parse(ws) as { x: number; y: number; width: number; height: number };
-          const { getCurrentWindow } = await import("@tauri-apps/api/window");
-          const { PhysicalPosition, PhysicalSize } = await import("@tauri-apps/api/dpi");
-          const win = getCurrentWindow();
-          await win.setPosition(new PhysicalPosition(s.x, s.y));
-          await win.setSize(new PhysicalSize(s.width, s.height));
-        } catch { /* ignore */ }
-      }, 500);
-    }
     // Silently refresh board list from server
     void fetchBoardCategories();
     void loadFavorites();
@@ -1975,18 +1960,6 @@ export default function App() {
     }
   }, []);
 
-  // Save window position and size periodically
-  useEffect(() => {
-    if (!isTauriRuntime()) return;
-    const saveWindowState = () => {
-      try {
-        const state = { x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight };
-        localStorage.setItem(WINDOW_STATE_KEY, JSON.stringify(state));
-      } catch { /* ignore */ }
-    };
-    const interval = setInterval(saveWindowState, 5000);
-    return () => clearInterval(interval);
-  }, []);
 
   useEffect(() => {
     if (boardPaneTab !== "boards") return;
