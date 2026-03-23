@@ -1045,7 +1045,7 @@ export default function App() {
         ?? "";
       invoke("save_thread_cache", { threadUrl: url, title: tabTitle, responsesJson: JSON.stringify(rows) }).catch(() => {});
       const now = new Date();
-      const timeStr = `${now.getMonth() + 1}/${now.getDate()} ${now.toLocaleTimeString()}`;
+      const timeStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
       setLastFetchTime(timeStr);
       threadFetchTimesRef.current[url] = timeStr;
       try { localStorage.setItem(THREAD_FETCH_TIMES_KEY, JSON.stringify(threadFetchTimesRef.current)); } catch { /* ignore */ }
@@ -2410,9 +2410,11 @@ export default function App() {
                 } else {
                   if (isTauriRuntime()) {
                     invoke<[string, string, number][]>("load_all_cached_threads").then((list) => {
-                      // Only show threads not in the current thread list (dat落ち)
+                      // Only show threads from the current board that are not in the active thread list (dat落ち)
+                      const currentBoardUrl = getBoardUrlFromThreadUrl(threadUrl);
                       const activeUrls = new Set(fetchedThreads.map((t) => t.threadUrl));
                       const datOchiList = list
+                        .filter(([url]) => getBoardUrlFromThreadUrl(url) === currentBoardUrl)
                         .filter(([url]) => !activeUrls.has(url))
                         .filter(([, title]) => title && title.trim() !== "");
                       setCachedThreadList(datOchiList.map(([threadUrl, title, count]) => ({ threadUrl, title, resCount: count })));
