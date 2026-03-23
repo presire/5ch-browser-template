@@ -1007,7 +1007,7 @@ export default function App() {
         setThreadTabs((prev) => prev.map((t) => t.threadUrl === url ? { ...t, title: result.title! } : t));
       }
       const cachedEntry = tabCacheRef.current.get(url);
-      const prevCount = cachedEntry ? cachedEntry.responses.length : fetchedResponses.length;
+      const prevCount = cachedEntry ? cachedEntry.responses.length : 0;
       // If server returned empty but we have cached data, keep cache
       if (rows.length === 0 && prevCount > 0) {
         setResponseListProbe(`ok rows=0 (kept cached ${prevCount})`);
