@@ -1243,10 +1243,16 @@ pre {
 
 .ng-panel-add {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr auto auto;
   gap: 4px;
   padding: 6px 8px;
   border-bottom: 1px solid #d0d0d0;
+}
+.ng-mode-select {
+  border: 1px solid #c0c0c0;
+  background: #ffffff;
+  padding: 3px 4px;
+  font-size: 11px;
 }
 
 .ng-panel-add select {
@@ -1303,7 +1309,23 @@ pre {
   white-space: nowrap;
 }
 
+.ng-mode-label {
+  flex: none !important;
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: bold;
+}
+.ng-mode-hide {
+  background: #e04040;
+  color: #fff;
+}
+.ng-mode-img {
+  background: #d0a020;
+  color: #fff;
+}
 .ng-remove {
+  flex: none !important;
   padding: 0 4px;
   font-size: 13px;
   line-height: 1;
@@ -1981,7 +2003,8 @@ pre {
   color: var(--ink);
   border-color: #555;
 }
-.dark .ng-panel-add select {
+.dark .ng-panel-add select,
+.dark .ng-mode-select {
   background: #1e1e1e;
   color: var(--ink);
   border-color: #555;

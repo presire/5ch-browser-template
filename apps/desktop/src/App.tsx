@@ -90,7 +90,10 @@ type BoardCategory = { categoryName: string; boards: BoardEntry[] };
 type FavoriteBoard = { boardName: string; url: string };
 type FavoriteThread = { threadUrl: string; title: string; boardUrl: string };
 type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
-type NgFilters = { words: string[]; ids: string[]; names: string[]; thread_words: string[] };
+type NgEntry = { value: string; mode: "hide" | "hide-images" };
+type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: string[] };
+const ngVal = (e: string | NgEntry): string => typeof e === "string" ? e : e.value;
+const ngEntryMode = (e: string | NgEntry): "hide" | "hide-images" => typeof e === "string" ? "hide" : e.mode;
 type AuthConfig = {
   upliftEmail: string;
   upliftPassword: string;
@@ -209,7 +212,7 @@ const getIdColor = (id: string): string => {
   return color;
 };
 
-const renderResponseBody = (html: string): { __html: string } => {
+const renderResponseBody = (html: string, opts?: { hideImages?: boolean }): { __html: string } => {
   let safe = html
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<a\s[^>]*>(.*?)<\/a>/gi, "$1")
@@ -220,15 +223,21 @@ const renderResponseBody = (html: string): { __html: string } => {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+  if (opts?.hideImages) {
+    // Remove image URL lines entirely
+    safe = safe.split("\n").filter((line) => !/(?:https?:\/\/|ttps?:\/\/|s:\/\/)[^\s]+\.(?:jpg|jpeg|png|gif|webp)/i.test(line)).join("\n");
+  }
   safe = safe.replace(/\n/g, "<br>");
-  safe = safe.replace(
-    /((?:https?:\/\/|ttps?:\/\/|s:\/\/)[^\s<>&"]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s<>&"]*(?:&amp;[^\s<>&"]*)*)?)/gi,
-    (match) => {
-      const href = normalizeExternalUrl(match);
-      if (!href) return match;
-      return `<span class="thumb-link" data-lightbox-src="${href}"><a class="body-link" href="${href}" target="_blank" rel="noopener">${match}</a><br><img class="response-thumb" src="${href}" loading="lazy" alt="" /></span>`;
-    }
-  );
+  if (!opts?.hideImages) {
+    safe = safe.replace(
+      /((?:https?:\/\/|ttps?:\/\/|s:\/\/)[^\s<>&"]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s<>&"]*(?:&amp;[^\s<>&"]*)*)?)/gi,
+      (match) => {
+        const href = normalizeExternalUrl(match);
+        if (!href) return match;
+        return `<span class="thumb-link" data-lightbox-src="${href}"><a class="body-link" href="${href}" target="_blank" rel="noopener">${match}</a><br><img class="response-thumb" src="${href}" loading="lazy" alt="" /></span>`;
+      }
+    );
+  }
   // Linkify non-image URLs (must run after image thumb replacement)
   safe = safe.replace(
     /((?:https?:\/\/|ttps?:\/\/|s:\/\/)[^\s<>&"]+(?:&amp;[^\s<>&"]*)*)/gi,
@@ -251,8 +260,8 @@ const renderResponseBody = (html: string): { __html: string } => {
   );
   return { __html: safe };
 };
-const renderResponseBodyHighlighted = (html: string, query: string): { __html: string } => {
-  const rendered = renderResponseBody(html).__html;
+const renderResponseBodyHighlighted = (html: string, query: string, opts?: { hideImages?: boolean }): { __html: string } => {
+  const rendered = renderResponseBody(html, opts).__html;
   return { __html: highlightHtmlPreservingTags(rendered, query) };
 };
 
@@ -332,6 +341,7 @@ export default function App() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [favorites, setFavorites] = useState<FavoritesData>({ boards: [], threads: [] });
   const [ngFilters, setNgFilters] = useState<NgFilters>({ words: [], ids: [], names: [], thread_words: [] });
+  const [ngAddMode, setNgAddMode] = useState<"hide" | "hide-images">("hide");
   const [threadNgOpen, setThreadNgOpen] = useState(false);
   const [threadNgInput, setThreadNgInput] = useState("");
   const [ngPanelOpen, setNgPanelOpen] = useState(false);
@@ -528,19 +538,20 @@ export default function App() {
     }
   };
 
-  const addNgEntry = (type: "words" | "ids" | "names" | "thread_words", value: string) => {
+  const addNgEntry = (type: "words" | "ids" | "names" | "thread_words", value: string, mode?: "hide" | "hide-images") => {
     const trimmed = value.trim();
     if (!trimmed) return;
-    if (ngFilters[type].includes(trimmed)) {
+    if (ngFilters[type].some((e) => ngVal(e) === trimmed)) {
       setStatus(`already in NG ${type}: ${trimmed}`);
       return;
     }
-    void persistNgFilters({ ...ngFilters, [type]: [...ngFilters[type], trimmed] });
+    const entry: string | NgEntry = type === "thread_words" ? trimmed : { value: trimmed, mode: mode ?? ngAddMode };
+    void persistNgFilters({ ...ngFilters, [type]: [...ngFilters[type], entry] });
     setStatus(`added NG ${type}: ${trimmed}`);
   };
 
   const removeNgEntry = (type: "words" | "ids" | "names" | "thread_words", value: string) => {
-    void persistNgFilters({ ...ngFilters, [type]: ngFilters[type].filter((v) => v !== value) });
+    void persistNgFilters({ ...ngFilters, [type]: ngFilters[type].filter((v) => ngVal(v) !== value) });
     setStatus(`removed NG ${type}: ${value}`);
   };
 
@@ -555,25 +566,38 @@ export default function App() {
     return target.toLowerCase().includes(pattern.toLowerCase());
   };
 
-  const isNgFiltered = (resp: { name: string; time: string; text: string }): boolean => {
-    if (ngFilters.words.length === 0 && ngFilters.ids.length === 0 && ngFilters.names.length === 0) return false;
+  const getNgResult = (resp: { name: string; time: string; text: string }): null | "hide" | "hide-images" => {
+    if (ngFilters.words.length === 0 && ngFilters.ids.length === 0 && ngFilters.names.length === 0) return null;
+    let result: null | "hide" | "hide-images" = null;
     for (const w of ngFilters.words) {
-      if (ngMatch(w, resp.text)) return true;
+      if (ngMatch(ngVal(w), resp.text)) {
+        const m = ngEntryMode(w);
+        if (m === "hide") return "hide";
+        result = "hide-images";
+      }
     }
     for (const n of ngFilters.names) {
-      if (ngMatch(n, resp.name)) return true;
+      if (ngMatch(ngVal(n), resp.name)) {
+        const m = ngEntryMode(n);
+        if (m === "hide") return "hide";
+        result = "hide-images";
+      }
     }
-    // ID is typically in dateAndId like "2026/03/07(金) 10:00:00.00 ID:abcdef"
     if (ngFilters.ids.length > 0) {
       const idMatch = resp.time.match(/ID:([^\s]+)/);
       if (idMatch) {
-        for (const id of ngFilters.ids) {
-          if (idMatch[1] === id) return true;
+        for (const entry of ngFilters.ids) {
+          if (idMatch[1] === ngVal(entry)) {
+            const m = ngEntryMode(entry);
+            if (m === "hide") return "hide";
+            result = "hide-images";
+          }
         }
       }
     }
-    return false;
+    return result;
   };
+  const isNgFiltered = (resp: { name: string; time: string; text: string }): boolean => getNgResult(resp) !== null;
 
   const saveBookmark = (url: string, responseNo: number) => {
     try {
@@ -1050,12 +1074,15 @@ export default function App() {
       setLastFetchTime(timeStr);
       threadFetchTimesRef.current[url] = timeStr;
       try { localStorage.setItem(THREAD_FETCH_TIMES_KEY, JSON.stringify(threadFetchTimesRef.current)); } catch { /* ignore */ }
-      // Update thread list read counts
+      // Update thread list read counts and response count
       const threadListIndex = fetchedThreads.findIndex((ft) => ft.threadUrl === url);
       if (threadListIndex >= 0) {
         const tid = threadListIndex + 1;
         setThreadReadMap((prev) => ({ ...prev, [tid]: true }));
         setThreadLastReadCount((prev) => ({ ...prev, [tid]: rows.length }));
+        if (rows.length > fetchedThreads[threadListIndex].responseCount) {
+          setFetchedThreads((prev) => prev.map((ft, i) => i === threadListIndex ? { ...ft, responseCount: rows.length } : ft));
+        }
         const ft = fetchedThreads[threadListIndex];
         const boardUrl = getBoardUrlFromThreadUrl(url);
         void persistReadStatus(boardUrl, ft.threadKey, rows.length);
@@ -1379,8 +1406,8 @@ export default function App() {
   );
   const visibleThreadItems = threadItems
     .filter((t) => {
-      if (ngFilters.words.some((w) => ngMatch(w, t.title))) return false;
-      if (ngFilters.thread_words.some((w) => ngMatch(w, t.title))) return false;
+      if (ngFilters.words.some((w) => ngMatch(ngVal(w), t.title))) return false;
+      if (ngFilters.thread_words.some((w) => ngMatch(ngVal(w), t.title))) return false;
       if (threadSearchQuery.trim()) {
         return t.title.toLowerCase().includes(threadSearchQuery.trim().toLowerCase());
       }
@@ -1451,9 +1478,15 @@ export default function App() {
     return map;
   })();
 
-  const ngFilteredCount = responseItems.filter((r) => isNgFiltered(r)).length;
+  const ngResultMap = new Map<number, "hide" | "hide-images">();
+  for (const r of responseItems) {
+    const result = getNgResult(r);
+    if (result) ngResultMap.set(r.id, result);
+  }
+  const ngFilteredCount = ngResultMap.size;
   const visibleResponseItems = responseItems.filter((r) => {
-    if (isNgFiltered(r)) return false;
+    const ngResult = ngResultMap.get(r.id);
+    if (ngResult === "hide") return false;
     if (responseSearchQuery) {
       const q = responseSearchQuery.toLowerCase();
       const plainText = r.text.replace(/<[^>]+>/g, "").toLowerCase();
@@ -2869,7 +2902,7 @@ export default function App() {
                         )}
                       </span>
                     </div>
-                    <div className="response-body" dangerouslySetInnerHTML={renderResponseBodyHighlighted(r.text, responseSearchQuery)} />
+                    <div className="response-body" dangerouslySetInnerHTML={renderResponseBodyHighlighted(r.text, responseSearchQuery, { hideImages: ngResultMap.get(r.id) === "hide-images" })} />
                   </div>
                   </Fragment>
                 );
@@ -3055,6 +3088,10 @@ export default function App() {
               }}
               placeholder={ngInputType === "words" ? "NGワードを入力" : ngInputType === "ids" ? "NG IDを入力" : "NG名前を入力"}
             />
+            <select value={ngAddMode} onChange={(e) => setNgAddMode(e.target.value as "hide" | "hide-images")} className="ng-mode-select">
+              <option value="hide">非表示</option>
+              <option value="hide-images">画像NG</option>
+            </select>
             <button onClick={() => { addNgEntry(ngInputType, ngInput); setNgInput(""); }}>追加</button>
           </div>
           <div className="ng-panel-lists">
@@ -3065,12 +3102,19 @@ export default function App() {
                   <span className="ng-empty">(なし)</span>
                 ) : (
                   <ul className="ng-list">
-                    {ngFilters[type].map((v) => (
-                      <li key={v}>
-                        <span>{v}</span>
-                        <button className="ng-remove" onClick={() => removeNgEntry(type, v)}>×</button>
-                      </li>
-                    ))}
+                    {ngFilters[type].map((entry) => {
+                      const v = ngVal(entry);
+                      const mode = ngEntryMode(entry);
+                      return (
+                        <li key={v}>
+                          <span className={`ng-mode-label ${mode === "hide-images" ? "ng-mode-img" : "ng-mode-hide"}`}>
+                            {mode === "hide-images" ? "画像" : "非表示"}
+                          </span>
+                          <span>{v}</span>
+                          <button className="ng-remove" onClick={() => removeNgEntry(type, v)}>×</button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
