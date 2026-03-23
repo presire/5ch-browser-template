@@ -23,7 +23,12 @@
       "Bash(git log:*)",
       "Bash(git tag:*)",
       "Bash(ls:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(npm outdated:*)",
+      "Bash(npm audit:*)",
+      "Bash(cargo update --dry-run:*)",
+      "Bash(cargo audit:*)",
+      "Bash(cargo outdated:*)"
     ],
     "deny": [
       "Bash(rm -rf /)"
