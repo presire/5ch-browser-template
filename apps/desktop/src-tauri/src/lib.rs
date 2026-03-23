@@ -123,6 +123,13 @@ struct ThreadResponseItem {
     body: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FetchResponsesResult {
+    responses: Vec<ThreadResponseItem>,
+    title: Option<String>,
+}
+
 #[tauri::command]
 async fn fetch_bbsmenu_summary() -> Result<MenuSummary, String> {
     core_store::init_portable_layout().map_err(|e| e.to_string())?;
@@ -243,30 +250,33 @@ async fn fetch_thread_list(thread_url: String, limit: Option<usize>) -> Result<V
 async fn fetch_thread_responses_command(
     thread_url: String,
     limit: Option<usize>,
-) -> Result<Vec<ThreadResponseItem>, String> {
+) -> Result<FetchResponsesResult, String> {
     let _ = core_store::append_log(&format!("fetch_responses: {}", thread_url));
     let client = reqwest::Client::builder()
         .user_agent("Monazilla/1.00 Ember/0.1")
         .build()
         .map_err(|e| e.to_string())?;
     let limit = limit.unwrap_or(usize::MAX);
-    let rows = fetch_thread_responses(&client, &thread_url, limit)
+    let (rows, title) = fetch_thread_responses(&client, &thread_url, limit)
         .await
         .map_err(|e| {
             let _ = core_store::append_log(&format!("fetch_responses error: {}", e));
             e.to_string()
         })?;
     let _ = core_store::append_log(&format!("fetch_responses ok: {} rows", rows.len()));
-    Ok(rows
-        .into_iter()
-        .map(|r| ThreadResponseItem {
-            response_no: r.response_no,
-            name: r.name,
-            mail: r.mail,
-            date_and_id: r.date_and_id,
-            body: r.body,
-        })
-        .collect())
+    Ok(FetchResponsesResult {
+        responses: rows
+            .into_iter()
+            .map(|r| ThreadResponseItem {
+                response_no: r.response_no,
+                name: r.name,
+                mail: r.mail,
+                date_and_id: r.date_and_id,
+                body: r.body,
+            })
+            .collect(),
+        title,
+    })
 }
 
 #[tauri::command]

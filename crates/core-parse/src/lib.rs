@@ -5,6 +5,12 @@ pub struct SubjectEntry {
     pub response_count: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct ReadCgiResult {
+    pub title: Option<String>,
+    pub entries: Vec<DatEntry>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatEntry {
     pub name: String,
@@ -30,6 +36,109 @@ fn sanitize_dat_body(raw: &str) -> String {
         .replace("<br/>", "\n")
         .replace("<br />", "\n")
         .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+}
+
+/// Parse read.cgi HTML into DatEntry list.
+/// Supports 5ch modern layout: `<div class="clear post">` with
+/// `postusername`, `date`, `uid`, `post-content` spans/divs.
+/// Also supports legacy `<dl><dt>/<dd>` layout.
+pub fn parse_read_cgi_html(html: &str) -> ReadCgiResult {
+    let title = extract_between(html, "<title>", "</title>")
+        .map(|t| strip_html_tags(&t).trim().to_string())
+        .filter(|t| !t.is_empty());
+    let mut out = Vec::new();
+
+    // Modern 5ch layout: class="clear post"
+    // Structure: <div ... class="clear post">
+    //   <span class="postusername"><b>NAME</b>...</span>
+    //   <span class="date">DATE</span>
+    //   <span class="uid">ID:xxx</span>
+    //   <div class="post-content">BODY</div>
+    // </div>
+    if html.contains("class=\"clear post\"") || html.contains("class=\"post\"") {
+        let split_tag = if html.contains("class=\"clear post\"") {
+            "class=\"clear post\""
+        } else {
+            "class=\"post\""
+        };
+        for chunk in html.split(split_tag).skip(1) {
+            let name = extract_between(chunk, "class=\"postusername\">", "</span>")
+                .or_else(|| extract_between(chunk, "class=\"name\">", "</span>"))
+                .unwrap_or_default();
+            let date = extract_between(chunk, "class=\"date\">", "</span>")
+                .unwrap_or_default();
+            let uid = extract_between(chunk, "class=\"uid\">", "</span>")
+                .unwrap_or_default();
+            let date_id = if uid.is_empty() {
+                strip_html_tags(&date)
+            } else {
+                format!("{} {}", strip_html_tags(&date), strip_html_tags(&uid))
+            };
+            let body = extract_between(chunk, "class=\"post-content\">", "</div>")
+                .or_else(|| extract_between(chunk, "class=\"message\">", "</div>"))
+                .or_else(|| extract_between(chunk, "class=\"msg\">", "</div>"))
+                .unwrap_or_default();
+            if !body.is_empty() || !name.is_empty() {
+                out.push(DatEntry {
+                    name: strip_html_tags(&name),
+                    mail: String::new(),
+                    date_and_id: date_id,
+                    body: sanitize_dat_body(&body),
+                });
+            }
+        }
+    }
+
+    // Fallback: <dt>N ：<a ...><b>NAME</b></a>：DATE ID:xxx<dd>BODY
+    if out.is_empty() {
+        let parts: Vec<&str> = html.split("<dt>").collect();
+        for part in parts.iter().skip(1) {
+            let (dt_part, dd_rest) = match part.split_once("<dd>") {
+                Some(p) => p,
+                None => continue,
+            };
+            let body_raw = dd_rest
+                .split("<dt>").next()
+                .and_then(|s| s.split("<br><br>").next())
+                .unwrap_or(dd_rest);
+            let name = extract_between(dt_part, "<b>", "</b>").unwrap_or_default();
+            let date_id = dt_part
+                .rsplit_once("：")
+                .or_else(|| dt_part.rsplit_once(":"))
+                .map(|(_, d)| d.trim().to_string())
+                .unwrap_or_default();
+            out.push(DatEntry {
+                name: strip_html_tags(&name),
+                mail: String::new(),
+                date_and_id: strip_html_tags(&date_id),
+                body: sanitize_dat_body(body_raw),
+            });
+        }
+    }
+
+    ReadCgiResult { title, entries: out }
+}
+
+fn extract_between(s: &str, start: &str, end: &str) -> Option<String> {
+    let start_idx = s.find(start)? + start.len();
+    let rest = &s[start_idx..];
+    let end_idx = rest.find(end)?;
+    Some(rest[..end_idx].to_string())
+}
+
+fn strip_html_tags(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for ch in s.chars() {
+        if ch == '<' { in_tag = true; continue; }
+        if ch == '>' { in_tag = false; continue; }
+        if !in_tag { result.push(ch); }
+    }
+    result.replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&amp;", "&")
         .replace("&quot;", "\"")

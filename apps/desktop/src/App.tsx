@@ -352,8 +352,6 @@ export default function App() {
   const tabCacheRef = useRef<Map<string, { responses: ThreadResponseItem[]; selectedResponse: number; scrollResponseNo?: number; newResponseStart?: number | null }>>(new Map());
   const [selectedBoard, setSelectedBoard] = useState("Favorite");
   const [selectedThread, setSelectedThread] = useState<number | null>(1);
-  const [closedThreadIds, setClosedThreadIds] = useState<number[]>([]);
-  const [closedThreadHistory, setClosedThreadHistory] = useState<number[]>([]);
   const [selectedResponse, setSelectedResponse] = useState<number>(1);
   const [threadReadMap, setThreadReadMap] = useState<Record<number, boolean>>({ 1: false, 2: true });
   const [threadLastReadCount, setThreadLastReadCount] = useState<Record<number, number>>({});
@@ -951,7 +949,6 @@ export default function App() {
         limit: null,
       });
       setFetchedThreads(rows);
-      setClosedThreadIds([]);
       setThreadSortKey("id");
       setThreadSortAsc(true);
       setThreadSearchQuery("");
@@ -1000,10 +997,15 @@ export default function App() {
     setResponseListProbe("running...");
     setResponsesLoading(true);
     try {
-      const rows = await invoke<ThreadResponseItem[]>("fetch_thread_responses_command", {
+      const result = await invoke<{ responses: ThreadResponseItem[]; title: string | null }>("fetch_thread_responses_command", {
         threadUrl: url,
         limit: null,
       });
+      const rows = result.responses;
+      // Update tab title if server returned a real title (e.g. from read.cgi HTML)
+      if (result.title) {
+        setThreadTabs((prev) => prev.map((t) => t.threadUrl === url ? { ...t, title: result.title! } : t));
+      }
       const cachedEntry = tabCacheRef.current.get(url);
       const prevCount = cachedEntry ? cachedEntry.responses.length : fetchedResponses.length;
       // If server returned empty but we have cached data, keep cache
@@ -1069,7 +1071,8 @@ export default function App() {
       const msg = String(error);
       // Keep existing responses on error instead of clearing
       setResponseListProbe(`error: ${msg}`);
-      setStatus(`response load error: ${msg}`);
+      const isDatOchi = msg.includes("404") || msg.includes("Not Found") || msg.includes("HttpStatus");
+      setStatus(isDatOchi ? `dat落ちまたは存在しないスレです` : `response load error: ${msg}`);
     } finally {
       setResponsesLoading(false);
     }
@@ -1209,11 +1212,12 @@ export default function App() {
           });
         }
         setComposeOpen(false);
-        const rows = await invoke<ThreadResponseItem[]>("fetch_thread_responses_command", {
+        const postResult = await invoke<{ responses: ThreadResponseItem[]; title: string | null }>("fetch_thread_responses_command", {
           threadUrl: threadUrl.trim(),
           limit: null,
         }).catch(() => null);
-        if (rows) {
+        if (postResult) {
+          const rows = postResult.responses;
           setFetchedResponses(rows);
           tabCacheRef.current.set(threadUrl.trim(), { responses: rows, selectedResponse: rows.length > 0 ? rows[rows.length - 1].responseNo : 1 });
           setSelectedResponse(rows.length > 0 ? rows[rows.length - 1].responseNo : 1);
@@ -1377,7 +1381,6 @@ export default function App() {
   );
   const visibleThreadItems = threadItems
     .filter((t) => {
-      if (closedThreadIds.includes(t.id)) return false;
       if (ngFilters.words.some((w) => ngMatch(w, t.title))) return false;
       if (ngFilters.thread_words.some((w) => ngMatch(w, t.title))) return false;
       if (threadSearchQuery.trim()) {
@@ -1484,7 +1487,9 @@ export default function App() {
     // Detect 5ch thread URL and open in tab
     if (/^https?:\/\/[^/]*\.5ch\.(net|io)\/test\/read\.cgi\//.test(next)) {
       const parts = next.replace(/\/+$/, "").split("/");
-      const title = parts[parts.length - 1] || next;
+      const board = parts[parts.length - 2] || "";
+      const key = parts[parts.length - 1] || "";
+      const title = board && key ? `${board}/${key}` : next;
       openThreadInTab(next, title);
       return;
     }
@@ -1517,61 +1522,6 @@ export default function App() {
     setThreadReadMap((prev) => ({ ...prev, [threadId]: value }));
     setThreadMenu(null);
   };
-
-  const closeThread = (threadId: number) => {
-    const ids = visibleThreadItems.map((t) => t.id);
-    const idx = ids.indexOf(threadId);
-    if (idx < 0) return;
-    setClosedThreadIds((prev) => (prev.includes(threadId) ? prev : [...prev, threadId]));
-    setClosedThreadHistory((prev) => [...prev, threadId]);
-    setSelectedThread((prev) => {
-      if (prev !== threadId) return prev;
-      const nextIds = ids.filter((id) => id !== threadId);
-      return nextIds.length > 0 ? nextIds[Math.min(idx, nextIds.length - 1)] : null;
-    });
-    setThreadMenu(null);
-    setStatus(`thread closed: #${threadId}`);
-  };
-
-  const closeOtherThreads = (threadId: number) => {
-    const keep = threadItems.find((t) => t.id === threadId);
-    if (!keep) return;
-    const nextClosed = threadItems.filter((t) => t.id !== threadId).map((t) => t.id);
-    setClosedThreadIds(nextClosed);
-    setClosedThreadHistory((prev) => [...prev, ...nextClosed]);
-    setSelectedThread(threadId);
-    setThreadMenu(null);
-    setStatus(`other threads closed; keep #${threadId}`);
-  };
-
-  const reopenAllThreads = () => {
-    setClosedThreadIds([]);
-    setClosedThreadHistory([]);
-    if (selectedThread == null && threadItems.length > 0) setSelectedThread(threadItems[0].id);
-    setThreadMenu(null);
-    setStatus("all threads reopened");
-  };
-
-  const reopenLastClosedThread = () => {
-    const closedSet = new Set(closedThreadIds);
-    let idx = closedThreadHistory.length - 1;
-    while (idx >= 0 && !closedSet.has(closedThreadHistory[idx])) {
-      idx -= 1;
-    }
-    if (idx < 0) {
-      setStatus("no closed thread to reopen");
-      setThreadMenu(null);
-      return;
-    }
-    const reopened = closedThreadHistory[idx];
-    setClosedThreadHistory((prev) => prev.slice(0, idx));
-    setClosedThreadIds((prev) => prev.filter((id) => id !== reopened));
-    setSelectedThread(reopened);
-    setThreadMenu(null);
-    setStatus(`thread reopened: #${reopened}`);
-  };
-
-  const hasReopenableClosedThread = closedThreadHistory.some((id) => closedThreadIds.includes(id));
 
   const copyThreadUrl = async (threadId: number) => {
     const target = threadItems.find((t) => t.id === threadId);
@@ -1764,11 +1714,6 @@ export default function App() {
         if (activeTabIndex >= 0 && threadTabs.length > 0) {
           closeTab(activeTabIndex);
         }
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "w") {
-        e.preventDefault();
-        reopenLastClosedThread();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === "/" || e.code === "Slash")) {
@@ -2232,9 +2177,6 @@ export default function App() {
             { text: "お気に入りタブ", action: () => setBoardPaneTab("fav-threads") },
           ]},
           { label: "スレッド", items: [
-            { text: "閉じたスレを戻す", action: reopenLastClosedThread },
-            { text: "すべてのスレを開く", action: reopenAllThreads },
-            { text: "sep" },
             { text: "すべてのタブを閉じる", action: closeAllTabs },
           ]},
           { label: "ツール", items: [
@@ -2281,7 +2223,6 @@ export default function App() {
         <input className="address-input" value={locationInput} onChange={(e) => setLocationInput(e.target.value)} onKeyDown={onLocationInputKeyDown} onFocus={(e) => e.target.select()} />
         <button onClick={goFromLocationInput}>移動</button>
         <span className="tool-sep" />
-        <button onClick={reopenLastClosedThread} disabled={!hasReopenableClosedThread} title="閉じたスレを戻す">↩</button>
         <label className="auto-refresh-toggle">
           <input
             type="checkbox"
@@ -3126,14 +3067,6 @@ export default function App() {
         <div className="thread-menu" style={{ left: threadMenu.x, top: threadMenu.y }} onClick={(e) => e.stopPropagation()}>
           <button onClick={() => markThreadRead(threadMenu.threadId, true)}>既読にする</button>
           <button onClick={() => markThreadRead(threadMenu.threadId, false)}>未読にする</button>
-          <button onClick={() => closeThread(threadMenu.threadId)}>スレを閉じる</button>
-          <button onClick={() => closeOtherThreads(threadMenu.threadId)}>他を閉じる</button>
-          <button onClick={reopenLastClosedThread} disabled={!hasReopenableClosedThread}>
-            最後に閉じたスレを開く
-          </button>
-          <button onClick={reopenAllThreads} disabled={closedThreadIds.length === 0}>
-            すべて開く
-          </button>
           <button onClick={() => void copyThreadUrl(threadMenu.threadId)}>スレURLをコピー</button>
           <button onClick={() => {
             const t = threadItems.find((item) => item.id === threadMenu.threadId);
@@ -3445,7 +3378,6 @@ export default function App() {
             <div className="shortcuts-body">
               {[
                 ["Ctrl+W", "選択スレを閉じる"],
-                ["Ctrl+Shift+W", "最後に閉じたスレを戻す"],
                 ["Ctrl+Shift+R", "スレ一覧を再取得"],
                 ["Ctrl+Alt+/", "次のスレへ切替"],
                 ["Ctrl+Tab", "次のタブ"],

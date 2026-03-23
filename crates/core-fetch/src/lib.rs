@@ -330,37 +330,70 @@ pub fn resolve_dat_url_from_thread_url(thread_url: &str) -> Result<String, Fetch
     Ok(format!("{}://{}/{}/dat/{}.dat", parsed.scheme(), host, board, key))
 }
 
+/// Returns (responses, optional_title). Title is only set when fetched from read.cgi HTML fallback.
 pub async fn fetch_thread_responses(
     client: &Client,
     thread_url: &str,
     limit: usize,
-) -> Result<Vec<ThreadResponse>, FetchError> {
+) -> Result<(Vec<ThreadResponse>, Option<String>), FetchError> {
     let dat_url = resolve_dat_url_from_thread_url(thread_url)?;
     let response = client.get(&dat_url).send().await?;
     let status = response.status();
-    if !status.is_success() {
-        return Err(FetchError::HttpStatus(status));
-    }
-    let bytes = response.bytes().await?;
-    let (decoded, _, _) = SHIFT_JIS.decode(&bytes);
-    let body = decoded.into_owned();
 
-    let mut out = Vec::new();
-    for (idx, line) in body.lines().enumerate() {
-        if let Some(row) = parse_dat_line(line) {
-            out.push(ThreadResponse {
-                response_no: (idx + 1) as u32,
-                name: row.name,
-                mail: row.mail,
-                date_and_id: row.date_and_id,
-                body: row.body,
-            });
-            if out.len() >= limit {
-                break;
+    if status.is_success() {
+        let bytes = response.bytes().await?;
+        let (decoded, _, _) = SHIFT_JIS.decode(&bytes);
+        let body = decoded.into_owned();
+
+        let mut out = Vec::new();
+        for (idx, line) in body.lines().enumerate() {
+            if let Some(row) = parse_dat_line(line) {
+                out.push(ThreadResponse {
+                    response_no: (idx + 1) as u32,
+                    name: row.name,
+                    mail: row.mail,
+                    date_and_id: row.date_and_id,
+                    body: row.body,
+                });
+                if out.len() >= limit {
+                    break;
+                }
             }
         }
+        if !out.is_empty() {
+            return Ok((out, None));
+        }
     }
-    Ok(out)
+
+    // Fallback: fetch read.cgi HTML (for archived/過去ログ threads)
+    let html_response = client.get(thread_url).send().await?;
+    if !html_response.status().is_success() {
+        return Err(FetchError::HttpStatus(html_response.status()));
+    }
+    let html_bytes = html_response.bytes().await?;
+    let (html_decoded, _, _) = SHIFT_JIS.decode(&html_bytes);
+    let html_body = html_decoded.into_owned();
+
+    let result = core_parse::parse_read_cgi_html(&html_body);
+    let (entries, title) = if !result.entries.is_empty() {
+        (result.entries, result.title)
+    } else {
+        // Try UTF-8 if Shift-JIS didn't work
+        let html_utf8 = String::from_utf8_lossy(&html_bytes).into_owned();
+        let result_utf8 = core_parse::parse_read_cgi_html(&html_utf8);
+        if result_utf8.entries.is_empty() {
+            return Err(FetchError::Parse("no responses found in HTML".into()));
+        }
+        (result_utf8.entries, result_utf8.title)
+    };
+
+    Ok((entries.into_iter().enumerate().take(limit).map(|(i, e)| ThreadResponse {
+        response_no: (i + 1) as u32,
+        name: e.name,
+        mail: e.mail,
+        date_and_id: e.date_and_id,
+        body: e.body,
+    }).collect(), title))
 }
 
 pub fn parse_post_form_tokens(thread_url: &str, html: &str) -> Result<PostFormTokens, FetchError> {
