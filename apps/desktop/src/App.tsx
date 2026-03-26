@@ -1480,13 +1480,20 @@ export default function App() {
       .trim();
 
   // Build ID count map for highlighting frequent posters
-  const idCountMap = (() => {
-    const map = new Map<string, number>();
+  const { idCountMap, idSeqMap } = (() => {
+    const countMap = new Map<string, number>();
+    const seqMap = new Map<number, number>();
+    const running = new Map<string, number>();
     for (const r of responseItems) {
       const id = extractId(r.time);
-      if (id) map.set(id, (map.get(id) ?? 0) + 1);
+      if (id) {
+        countMap.set(id, (countMap.get(id) ?? 0) + 1);
+        const seq = (running.get(id) ?? 0) + 1;
+        running.set(id, seq);
+        seqMap.set(r.id, seq);
+      }
     }
-    return map;
+    return { idCountMap: countMap, idSeqMap: seqMap };
   })();
 
   const watchoiCountMap = (() => {
@@ -2964,7 +2971,7 @@ export default function App() {
                               idPopupCloseTimer.current = setTimeout(() => setIdPopup(null), 300);
                             }}
                           >
-                            ID:{id}({count})
+                            ID:{id}({idSeqMap.get(r.id) ?? 1}/{count})
                           </span>
                         )}
                         {r.beNumber && (
