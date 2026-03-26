@@ -67,7 +67,10 @@
       "Bash(powershell -Command \"Compress-Archive -Path ''target/release/ember.exe'' -DestinationPath ''ember-win-x64.zip'' -Force\")",
       "Bash(cd:*)",
       "mcp__ide__getDiagnostics",
-      "Bash(find C:Usersalldeveloppython5ch-browser-template -maxdepth 2 -name README* -o -name CLAUDE* -o -name wrangler* -o -name .github -type f)"
+      "Bash(find C:Usersalldeveloppython5ch-browser-template -maxdepth 2 -name README* -o -name CLAUDE* -o -name wrangler* -o -name .github -type f)",
+      "Bash(code --update-extensions)",
+      "Bash(code --list-extensions --show-versions)",
+      "Bash(code:*)"
     ]
   }
 }
