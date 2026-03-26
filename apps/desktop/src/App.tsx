@@ -685,6 +685,8 @@ export default function App() {
     const existingIndex = threadTabs.findIndex((t) => t.threadUrl === url);
     if (existingIndex >= 0) {
       if (existingIndex === activeTabIndex) {
+        setThreadUrl(url);
+        setLocationInput(url);
         void fetchResponsesFromCurrent(url, { keepSelection: true });
         return;
       }
