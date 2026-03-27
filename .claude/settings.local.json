@@ -70,7 +70,10 @@
       "Bash(find C:Usersalldeveloppython5ch-browser-template -maxdepth 2 -name README* -o -name CLAUDE* -o -name wrangler* -o -name .github -type f)",
       "Bash(code --update-extensions)",
       "Bash(code --list-extensions --show-versions)",
-      "Bash(code:*)"
+      "Bash(code:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(gh run:*)"
     ]
   }
 }

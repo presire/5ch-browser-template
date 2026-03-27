@@ -195,12 +195,15 @@ export default function App() {
           </div>
           <div className="install-platform">
             <h3>Linux版 (x64 / AArch64)</h3>
-            <p className="lead">Linux版はビルド済みバイナリを配布していません。ソースコードからビルドしてください。</p>
+            <p className="lead">Linux版はGitHub Releasesからビルド済みバイナリをダウンロードできます。</p>
             <ol className="install-steps">
-              <li><a href="https://github.com/kiyohken2000/5ch-browser-template" target="_blank" rel="noreferrer">GitHubリポジトリ</a>からソースコードをクローンまたはダウンロードします。</li>
-              <li>Rust, Node.js, および Tauri v2 の依存パッケージをインストールします。</li>
-              <li>`cd apps/desktop && npm install && npm run tauri:build` でビルドします。</li>
+              <li><a href="https://github.com/kiyohken2000/5ch-browser-template/releases/latest" target="_blank" rel="noreferrer">最新リリースページ</a>から AppImage, deb, または rpm をダウンロードします。</li>
+              <li>AppImage: `chmod +x` して実行。deb: `sudo dpkg -i` でインストール。rpm: `sudo rpm -i` でインストール。</li>
+              <li>初回起動後、板一覧を取得して利用開始します。</li>
             </ol>
+            <p className="lead" style={{ marginTop: 8 }}>
+              x64 と AArch64 の両アーキテクチャに対応しています。ファイル名のサフィックスで判別してください。
+            </p>
             <p className="lead" style={{ marginTop: 8 }}>
               Raspberry Pi (AArch64) では画面描画に問題がある場合、環境変数
               `LIBGL_ALWAYS_SOFTWARE=1` を設定して起動してください。
@@ -243,9 +246,9 @@ export default function App() {
             <li>
               <span>Linux (x64 / AArch64)</span>
               <strong>
-                <a href="https://github.com/kiyohken2000/5ch-browser-template" target="_blank" rel="noreferrer">ソースからビルド</a>
+                <a href="https://github.com/kiyohken2000/5ch-browser-template/releases/latest" target="_blank" rel="noreferrer">GitHub Releases</a>
               </strong>
-              <em>-</em>
+              <em>AppImage / deb / rpm</em>
             </li>
           </ul>
         </section>

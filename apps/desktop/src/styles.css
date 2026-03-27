@@ -102,6 +102,9 @@ body {
   font-size: 11px;
   border: 1px solid transparent;
   background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .tool-bar button:hover:not(:disabled) {
@@ -678,17 +681,21 @@ body {
 .thread-title-actions button {
   padding: 2px 6px;
   font-size: calc(15px + var(--fs-delta, 0px));
-  border: 1px solid #666;
-  background: #3a3a3a;
-  color: #d0d0d0;
+  border: 1px solid #bbb;
+  background: #f0f0f0;
+  color: #333;
   cursor: pointer;
   line-height: 1.2;
   min-width: 28px;
   min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
 }
 
 .thread-title-actions button:hover {
-  background: #555;
+  background: #ddd;
 }
 
 .new-response-separator {
@@ -1222,7 +1229,9 @@ pre {
 }
 
 .fav-star {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 14px;
   font-size: 10px;
   color: #c0c0c0;
@@ -1453,6 +1462,9 @@ pre {
   font-size: 10px;
   color: #555;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .tab-scroll-btn:hover {
   background: #c8c8c8;
@@ -1533,6 +1545,13 @@ pre {
   font-weight: 700;
 }
 
+.response-thumbs-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
 .thumb-link {
   display: inline-block;
 }
@@ -1543,7 +1562,6 @@ pre {
   min-width: 80px;
   min-height: 60px;
   border: 1px solid #d0d0d0;
-  margin: 4px 0;
   cursor: pointer;
   background: #f0f0f0;
   object-fit: contain;
@@ -2086,6 +2104,12 @@ pre {
   background: #1e1e1e;
   color: var(--ink);
   border-color: #555;
+}
+.title-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
 }
 /* --- Dark mode: generic buttons & inputs in panels --- */
 .dark .title-action-btn {

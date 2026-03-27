@@ -10,19 +10,31 @@ use std::collections::HashMap;
 use std::process::Command;
 use std::sync::Mutex;
 
-static LOGIN_COOKIES: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+/// (cookie_name, cookie_value, provider)
+static LOGIN_COOKIES: Mutex<Vec<(String, String, String)>> = Mutex::new(Vec::new());
 
 fn get_login_cookie_header() -> Option<String> {
+    get_login_cookie_header_filtered2(true, true)
+}
+
+fn get_login_cookie_header_filtered2(include_be: bool, include_uplift: bool) -> Option<String> {
     let cookies = LOGIN_COOKIES.lock().ok()?;
     if cookies.is_empty() {
         return None;
     }
     let header = cookies
         .iter()
-        .map(|(k, v)| format!("{}={}", k, v))
+        .filter(|(_, _, provider)| {
+            match provider.as_str() {
+                "be" => include_be,
+                "uplift" | "donguri" => include_uplift,
+                _ => true,
+            }
+        })
+        .map(|(k, v, _)| format!("{}={}", k, v))
         .collect::<Vec<_>>()
         .join("; ");
-    Some(header)
+    if header.is_empty() { None } else { Some(header) }
 }
 
 #[derive(Serialize)]
@@ -532,6 +544,8 @@ async fn probe_post_flow_trace(
     mail: Option<String>,
     message: Option<String>,
     allow_real_submit: bool,
+    include_be: Option<bool>,
+    include_uplift: Option<bool>,
 ) -> Result<PostFlowTrace, String> {
     let client = reqwest::Client::builder()
         .user_agent("Monazilla/1.00 Ember/0.1")
@@ -552,7 +566,8 @@ async fn probe_post_flow_trace(
         tokens.post_url, tokens.bbs, tokens.key, tokens.time
     ));
 
-    let cookie_header = get_login_cookie_header();
+    let cookie_header = get_login_cookie_header_filtered2(include_be.unwrap_or(true), include_uplift.unwrap_or(true));
+    let _ = core_store::append_log(&format!("post_flow: include_be={} include_uplift={} cookie_header={}", include_be.unwrap_or(true), include_uplift.unwrap_or(true), cookie_header.as_deref().unwrap_or("(none)")));
     let (confirm, confirm_html) = submit_post_confirm_with_html(
         &client,
         &tokens,
@@ -972,8 +987,8 @@ async fn login_with_config(target: String, be_email: String, be_password: String
                 if r.success {
                     if let Ok(mut cookies) = LOGIN_COOKIES.lock() {
                         for (k, v) in &r.cookie_values {
-                            cookies.retain(|(ek, _)| ek != k);
-                            cookies.push((k.clone(), v.clone()));
+                            cookies.retain(|(ek, _, _)| ek != k);
+                            cookies.push((k.clone(), v.clone(), "be".to_string()));
                         }
                     }
                 }
@@ -1009,8 +1024,8 @@ async fn login_with_config(target: String, be_email: String, be_password: String
                 if r.success {
                     if let Ok(mut cookies) = LOGIN_COOKIES.lock() {
                         for (k, v) in &r.cookie_values {
-                            cookies.retain(|(ek, _)| ek != k);
-                            cookies.push((k.clone(), v.clone()));
+                            cookies.retain(|(ek, _, _)| ek != k);
+                            cookies.push((k.clone(), v.clone(), "uplift".to_string()));
                         }
                     }
                 }
@@ -1078,12 +1093,10 @@ fn clear_login_cookies(provider: String) -> Result<(), String> {
     let mut cookies = LOGIN_COOKIES.lock().unwrap_or_else(|e| e.into_inner());
     if provider == "all" {
         cookies.clear();
-    } else if provider == "ronin" {
-        cookies.retain(|(k, _)| k != "sid" && k != "acorn");
+    } else if provider == "ronin" || provider == "uplift" {
+        cookies.retain(|(_, _, p)| p != "uplift" && p != "donguri");
     } else if provider == "be" {
-        cookies.retain(|(k, _)| {
-            !k.eq_ignore_ascii_case("be3m") && !k.eq_ignore_ascii_case("be3d")
-        });
+        cookies.retain(|(_, _, p)| p != "be");
     }
     let _ = core_store::append_log(&format!("clear_login_cookies: provider={} remaining={}", provider, cookies.len()));
     Ok(())

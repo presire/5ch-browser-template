@@ -9,6 +9,10 @@ import {
   type UIEventHandler,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  ClipboardList, RefreshCw, ArrowDownToLine, Pencil, FilePlus, Save,
+  Star, X, ChevronLeft, ChevronRight, Ban,
+} from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
 type AuthEnvStatus = {
@@ -240,13 +244,15 @@ const renderResponseBody = (html: string, opts?: { hideImages?: boolean }): { __
     safe = safe.split("\n").filter((line) => !/(?:https?:\/\/|ttps?:\/\/|s:\/\/)[^\s]+\.(?:jpg|jpeg|png|gif|webp)/i.test(line)).join("\n");
   }
   safe = safe.replace(/\n/g, "<br>");
+  const collectedThumbs: string[] = [];
   if (!opts?.hideImages) {
     safe = safe.replace(
       /((?:https?:\/\/|ttps?:\/\/|s:\/\/)[^\s<>&"]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s<>&"]*(?:&amp;[^\s<>&"]*)*)?)/gi,
       (match) => {
         const href = normalizeExternalUrl(match);
         if (!href) return match;
-        return `<span class="thumb-link" data-lightbox-src="${href}"><a class="body-link" href="${href}" target="_blank" rel="noopener">${match}</a><br><img class="response-thumb" src="${href}" loading="lazy" alt="" /></span>`;
+        collectedThumbs.push(`<span class="thumb-link" data-lightbox-src="${href}"><img class="response-thumb" src="${href}" loading="lazy" alt="" /></span>`);
+        return `<a class="body-link" href="${href}" target="_blank" rel="noopener">${match}</a>`;
       }
     );
   }
@@ -270,6 +276,9 @@ const renderResponseBody = (html: string, opts?: { hideImages?: boolean }): { __
     /sssp:\/\/(img\.5ch\.net\/[^\s<>&]+|img\.5ch\.io\/[^\s<>&]+)/gi,
     (_match, path) => `<img class="be-icon" src="https://${path}" loading="lazy" alt="BE" />`
   );
+  if (collectedThumbs.length > 0) {
+    safe += `<div class="response-thumbs-row">${collectedThumbs.join("")}</div>`;
+  }
   return { __html: safe };
 };
 const renderResponseBodyHighlighted = (html: string, query: string, opts?: { hideImages?: boolean }): { __html: string } => {
@@ -1081,7 +1090,7 @@ export default function App() {
         if (prevCount > 0 && rows.length > prevCount) {
           setTimeout(() => {
             const newEl = responseScrollRef.current?.querySelector(`[data-response-no="${prevCount + 1}"]`);
-            if (newEl) newEl.scrollIntoView({ block: "start", behavior: "smooth" });
+            if (newEl) newEl.scrollIntoView({ block: "start" });
           }, 50);
         }
       } else if (opts?.resetScroll) {
@@ -1248,6 +1257,8 @@ export default function App() {
         mail: composeMailValue || null,
         message: composeBody || null,
         allowRealSubmit: true,
+        includeBe: beLoggedIn,
+        includeUplift: roninLoggedIn,
       });
       setPostFlowTraceProbe(
         [
@@ -2098,6 +2109,8 @@ export default function App() {
     }
     if (hoverPreviewRef.current) {
       hoverPreviewRef.current.style.display = "block";
+      hoverPreviewRef.current.scrollTop = 0;
+      hoverPreviewRef.current.scrollLeft = 0;
     }
   };
 
@@ -2367,7 +2380,7 @@ export default function App() {
         ))}
       </header>
       <div className="tool-bar">
-        <button onClick={() => { void fetchMenu(); void fetchBoardCategories(); }} title="板更新">📋</button>
+        <button onClick={() => { void fetchMenu(); void fetchBoardCategories(); }} title="板更新"><ClipboardList size={14} /></button>
         <span className="tool-sep" />
         <input className="address-input" value={locationInput} onChange={(e) => setLocationInput(e.target.value)} onKeyDown={onLocationInputKeyDown} onFocus={(e) => e.target.select()} />
         <button onClick={goFromLocationInput}>移動</button>
@@ -2437,7 +2450,7 @@ export default function App() {
                               onClick={() => selectBoard(b)}
                               title={b.url}
                             >
-                              <span className="fav-star active" onClick={(e) => { e.stopPropagation(); toggleFavoriteBoard(b); }}>★</span>
+                              <span className="fav-star active" onClick={(e) => { e.stopPropagation(); toggleFavoriteBoard(b); }}><Star size={12} /></span>
                               {b.boardName}
                             </button>
                           </li>
@@ -2474,7 +2487,7 @@ export default function App() {
                                     className={`fav-star ${isFavoriteBoard(b.url) ? "active" : ""}`}
                                     onClick={(e) => { e.stopPropagation(); toggleFavoriteBoard(b); }}
                                   >
-                                    {isFavoriteBoard(b.url) ? "★" : "☆"}
+                                    <Star size={12} fill={isFavoriteBoard(b.url) ? "currentColor" : "none"} />
                                   </span>
                                   {b.boardName}
                                 </button>
@@ -2514,7 +2527,7 @@ export default function App() {
                         }}
                         title={ft.threadUrl}
                       >
-                        <span className="fav-star active" onClick={(e) => { e.stopPropagation(); toggleFavoriteThread(ft); }}>★</span>
+                        <span className="fav-star active" onClick={(e) => { e.stopPropagation(); toggleFavoriteThread(ft); }}><Star size={12} /></span>
                         {ft.title}
                       </button>
                     </li>
@@ -2547,9 +2560,9 @@ export default function App() {
               placeholder="検索..."
               style={{ flex: 1 }}
             />
-            {threadSearchQuery && <button className="title-action-btn" onClick={() => setThreadSearchQuery("")} title="検索クリア">✕</button>}
-            <button className="title-action-btn" onClick={() => fetchThreadListFromCurrent()} title="スレ一覧を更新">🔄</button>
-            <button className="title-action-btn" onClick={() => setShowNewThreadDialog(true)} title="スレ立て">📝</button>
+            {threadSearchQuery && <button className="title-action-btn" onClick={() => setThreadSearchQuery("")} title="検索クリア"><X size={14} /></button>}
+            <button className="title-action-btn" onClick={() => fetchThreadListFromCurrent()} title="スレ一覧を更新"><RefreshCw size={14} /></button>
+            <button className="title-action-btn" onClick={() => setShowNewThreadDialog(true)} title="スレ立て"><FilePlus size={14} /></button>
             <button
               className={`title-action-btn ${showCachedOnly ? "active-toggle" : ""}`}
               onClick={() => {
@@ -2588,12 +2601,12 @@ export default function App() {
                 }
               }}
               title="dat落ちキャッシュ表示"
-            >💾</button>
+            ><Save size={14} /></button>
             <button
               className={`title-action-btn ${threadNgOpen ? "active-toggle" : ""}`}
               onClick={() => setThreadNgOpen(!threadNgOpen)}
               title="スレ一覧NGワード"
-            >🚫{ngFilters.thread_words.length > 0 ? ngFilters.thread_words.length : ""}</button>
+            ><Ban size={14} />{ngFilters.thread_words.length > 0 ? ngFilters.thread_words.length : ""}</button>
           </div>
           {threadNgOpen && (
             <div className="thread-ng-popup">
@@ -2734,14 +2747,14 @@ export default function App() {
                 {" "}[{fetchedResponses.length}]
               </span>
               <span className="thread-title-actions">
-                <button className="title-action-btn" onClick={() => fetchResponsesFromCurrent(undefined, { resetScroll: true })} title="再読み込み">🔄</button>
-                <button className="title-action-btn" onClick={() => fetchResponsesFromCurrent(undefined, { keepSelection: true })} title="新着取得">📥</button>
-                <button className="title-action-btn" onClick={() => { setComposeOpen(true); setComposePos(null); setComposeBody(""); setComposeResult(null); }} title="書き込み">✏️</button>
+                <button className="title-action-btn" onClick={() => { const u = threadTabs[activeTabIndex]?.threadUrl; if (u) { setThreadUrl(u); setLocationInput(u); } fetchResponsesFromCurrent(u, { resetScroll: true }); }} title="再読み込み"><RefreshCw size={14} /></button>
+                <button className="title-action-btn" onClick={() => { const u = threadTabs[activeTabIndex]?.threadUrl; if (u) { setThreadUrl(u); setLocationInput(u); } fetchResponsesFromCurrent(u, { keepSelection: true }); }} title="新着取得"><ArrowDownToLine size={14} /></button>
+                <button className="title-action-btn" onClick={() => { setComposeOpen(true); setComposePos(null); setComposeBody(""); setComposeResult(null); }} title="書き込み"><Pencil size={14} /></button>
                 <button className="title-action-btn" onClick={() => {
                   const tab = threadTabs[activeTabIndex];
                   if (tab) toggleFavoriteThread({ threadUrl: tab.threadUrl, title: tab.title });
                 }} title="お気に入り">
-                  {favorites.threads.some((f) => f.threadUrl === threadTabs[activeTabIndex].threadUrl) ? "★" : "☆"}
+                  <Star size={14} fill={favorites.threads.some((f) => f.threadUrl === threadTabs[activeTabIndex].threadUrl) ? "currentColor" : "none"} />
                 </button>
               </span>
             </div>
@@ -2825,8 +2838,8 @@ export default function App() {
               </div>
             ))}
           </div>
-          <button className="tab-scroll-btn" onClick={() => { if (tabBarRef.current) tabBarRef.current.scrollLeft -= 150; }} title="左スクロール">◀</button>
-          <button className="tab-scroll-btn" onClick={() => { if (tabBarRef.current) tabBarRef.current.scrollLeft += 150; }} title="右スクロール">▶</button>
+          <button className="tab-scroll-btn" onClick={() => { if (tabBarRef.current) tabBarRef.current.scrollLeft -= 150; }} title="左スクロール"><ChevronLeft size={14} /></button>
+          <button className="tab-scroll-btn" onClick={() => { if (tabBarRef.current) tabBarRef.current.scrollLeft += 150; }} title="右スクロール"><ChevronRight size={14} /></button>
           </div>
           <div
             className="response-layout"
@@ -2896,6 +2909,8 @@ export default function App() {
                 }
                 if (hoverPreviewRef.current) {
                   hoverPreviewRef.current.style.display = "block";
+                  hoverPreviewRef.current.scrollTop = 0;
+                  hoverPreviewRef.current.scrollLeft = 0;
                 }
               }}
               onMouseOver={(e) => {
@@ -3039,7 +3054,7 @@ export default function App() {
                 onChange={(e) => setResponseSearchQuery(e.target.value)}
                 placeholder="レス検索..."
               />
-              {responseSearchQuery && <button className="title-action-btn" onClick={() => setResponseSearchQuery("")} title="検索クリア">✕</button>}
+              {responseSearchQuery && <button className="title-action-btn" onClick={() => setResponseSearchQuery("")} title="検索クリア"><X size={14} /></button>}
               <span className="nav-buttons">
                 <button onClick={() => { if (visibleResponseItems.length > 0) setSelectedResponse(visibleResponseItems[0].id); }}>Top</button>
                 {newResponseStart !== null && (
