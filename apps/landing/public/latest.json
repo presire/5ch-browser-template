@@ -1,27 +1,17 @@
 {
-  "version": "0.0.24",
-  "released_at": "2026-03-27T22:57:00+09:00",
-  "download_page_url": "https://github.com/kiyohken2000/5ch-browser-template/releases/tag/v0.0.24",
+  "version": "0.0.25",
+  "released_at": "2026-03-28T12:55:59+09:00",
+  "download_page_url": "https://github.com/kiyohken2000/5ch-browser-template/releases/tag/v0.0.25",
   "platforms": {
     "windows-x64": {
-      "sha256": "906dc0813dcf3243f623d1a0be89f41cadeb6391fecfac449c0810536cfbb5c1",
-      "size": 5663203,
+      "sha256": "045fbf7b61a5edd91772b28e0a1a01aea00a29edc49f1f48679ad466e69d548b",
+      "size": 5663280,
       "filename": "ember-win-x64.zip"
     },
     "macos-arm64": {
-      "sha256": "c9b174fbc4d92b66276900ff516ebdf58b010ad2cdc4aa1455669046c2aa64f5",
-      "size": 6077176,
+      "sha256": "49f7c9c2d003443093853b87bcf66967273db6912a4607bc796a3a6501276d6e",
+      "size": 6077260,
       "filename": "ember-mac-arm64.zip"
-    },
-    "linux-x64": {
-      "sha256": "",
-      "size": 0,
-      "filename": "ember-linux-x64.zip"
-    },
-    "linux-aarch64": {
-      "sha256": "",
-      "size": 0,
-      "filename": "ember-linux-aarch64.zip"
     }
   }
 }
