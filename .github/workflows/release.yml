@@ -82,9 +82,9 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p out
-          cp target/release/bundle/appimage/*.AppImage out/ember_amd64.AppImage
-          cp target/release/bundle/deb/*.deb out/ember_amd64.deb
-          cp target/release/bundle/rpm/*.rpm out/ember_amd64.rpm
+          cp target/release/bundle/appimage/*.AppImage out/ember-linux-amd64.AppImage
+          cp target/release/bundle/deb/*.deb out/ember-linux-amd64.deb
+          cp target/release/bundle/rpm/*.rpm out/ember-linux-amd64.rpm
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -168,9 +168,9 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p out
-          cp target/release/bundle/appimage/*.AppImage out/ember_aarch64.AppImage
-          cp target/release/bundle/deb/*.deb out/ember_aarch64.deb
-          cp target/release/bundle/rpm/*.rpm out/ember_aarch64.rpm
+          cp target/release/bundle/appimage/*.AppImage out/ember-linux-aarch64.AppImage
+          cp target/release/bundle/deb/*.deb out/ember-linux-aarch64.deb
+          cp target/release/bundle/rpm/*.rpm out/ember-linux-aarch64.rpm
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
