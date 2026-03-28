@@ -8,6 +8,7 @@ use core_fetch::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Command;
+use tauri::Manager;
 use std::sync::Mutex;
 
 /// (cookie_name, cookie_value, provider)
@@ -1102,6 +1103,27 @@ fn clear_login_cookies(provider: String) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowSize {
+    width: f64,
+    height: f64,
+}
+
+#[tauri::command]
+fn save_window_size(width: f64, height: f64) -> Result<(), String> {
+    let size = WindowSize { width, height };
+    core_store::save_json("window_size.json", &size).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_window_size() -> Result<Option<WindowSize>, String> {
+    match core_store::load_json::<WindowSize>("window_size.json") {
+        Ok(data) => Ok(Some(data)),
+        Err(_) => Ok(None),
+    }
+}
+
 #[tauri::command]
 fn set_window_theme(window: tauri::WebviewWindow, dark: bool) -> Result<(), String> {
     use tauri::Theme;
@@ -1114,6 +1136,14 @@ pub fn run() {
     let _ = core_store::init_portable_layout();
     let _ = core_store::append_log("app started");
     tauri::Builder::default()
+        .setup(|app| {
+            if let Ok(size) = core_store::load_json::<WindowSize>("window_size.json") {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.set_size(tauri::LogicalSize::new(size.width, size.height));
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             fetch_bbsmenu_summary,
             fetch_board_categories,
@@ -1150,6 +1180,8 @@ pub fn run() {
             load_all_cached_threads,
             delete_thread_cache,
             set_window_theme,
+            save_window_size,
+            load_window_size,
             clear_login_cookies
         ])
         .run(tauri::generate_context!())
