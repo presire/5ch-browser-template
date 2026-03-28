@@ -271,6 +271,37 @@ h1 {
   color: var(--ink-sub);
 }
 
+.cmd-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  background: #1e1e2e;
+  border-radius: 6px;
+  padding: 8px 12px;
+  overflow-x: auto;
+}
+.cmd-block code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88rem;
+  color: #cdd6f4;
+  white-space: nowrap;
+  flex: 1;
+}
+.cmd-copy {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  border: 1px solid #585b70;
+  border-radius: 4px;
+  background: #313244;
+  color: #cdd6f4;
+  cursor: pointer;
+}
+.cmd-copy:hover {
+  background: #45475a;
+}
+
 @media (max-width: 900px) {
   .hero-block {
     grid-template-columns: 1fr;

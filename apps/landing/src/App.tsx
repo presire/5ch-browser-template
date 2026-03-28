@@ -188,10 +188,12 @@ export default function App() {
               更新時は新しいDMGを開き、`Ember.app` を Applications に上書きしてください。
             </p>
             <p className="lead" style={{ marginTop: 8 }}>
-              「壊れているため開けません」と表示される場合は、ターミナルで
-              `xattr -dr com.apple.quarantine /Applications/Ember.app`
-              を実行してから再度起動してください。
+              「壊れているため開けません」と表示される場合は、ターミナルで以下のコマンドを実行してから再度起動してください。
             </p>
+            <div className="cmd-block">
+              <code>xattr -dr com.apple.quarantine /Applications/Ember.app</code>
+              <button className="cmd-copy" onClick={() => { void navigator.clipboard.writeText("xattr -dr com.apple.quarantine /Applications/Ember.app"); }}>コピー</button>
+            </div>
           </div>
           <div className="install-platform">
             <h3>Linux版 (x64 / AArch64)</h3>
