@@ -2232,10 +2232,11 @@ export default function App() {
     const onResize = () => {
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        const size = JSON.stringify({ width: window.outerWidth, height: window.outerHeight });
-        localStorage.setItem(WINDOW_STATE_KEY, size);
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        localStorage.setItem(WINDOW_STATE_KEY, JSON.stringify({ width, height }));
         if (isTauriRuntime()) {
-          void invoke("save_window_size", { size }).catch((e: unknown) => console.warn("save_window_size failed", e));
+          void invoke("save_window_size", { width, height }).catch((e: unknown) => console.warn("save_window_size failed", e));
         }
       }, 300);
     };

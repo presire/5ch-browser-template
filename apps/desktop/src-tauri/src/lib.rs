@@ -1103,16 +1103,24 @@ fn clear_login_cookies(provider: String) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WindowSize {
+    width: f64,
+    height: f64,
+}
+
 #[tauri::command]
-fn save_window_size(size: String) -> Result<(), String> {
+fn save_window_size(width: f64, height: f64) -> Result<(), String> {
+    let size = WindowSize { width, height };
     core_store::save_json("window_size.json", &size).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn load_window_size() -> Result<String, String> {
-    match core_store::load_json::<String>("window_size.json") {
-        Ok(data) => Ok(data),
-        Err(_) => Ok(String::new()),
+fn load_window_size() -> Result<Option<WindowSize>, String> {
+    match core_store::load_json::<WindowSize>("window_size.json") {
+        Ok(data) => Ok(Some(data)),
+        Err(_) => Ok(None),
     }
 }
 
@@ -1129,13 +1137,9 @@ pub fn run() {
     let _ = core_store::append_log("app started");
     tauri::Builder::default()
         .setup(|app| {
-            if let Ok(raw) = core_store::load_json::<String>("window_size.json") {
-                if let Ok(size) = serde_json::from_str::<serde_json::Value>(&raw) {
-                    if let (Some(w), Some(h)) = (size["width"].as_f64(), size["height"].as_f64()) {
-                        if let Some(win) = app.get_webview_window("main") {
-                            let _ = win.set_size(tauri::LogicalSize::new(w, h));
-                        }
-                    }
+            if let Ok(size) = core_store::load_json::<WindowSize>("window_size.json") {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.set_size(tauri::LogicalSize::new(size.width, size.height));
                 }
             }
             Ok(())
