@@ -20,7 +20,8 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
-            rpm
+            rpm \
+            fcitx5-frontend-gtk3
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -49,7 +50,7 @@ jobs:
           npm run tauri:build -- --config "$TMP_CONFIG"
           rm -f "$TMP_CONFIG"
 
-      - name: Repack AppImage with bundled FreeType
+      - name: Repack AppImage with bundled libs
         run: |
           sudo apt-get install -y libfuse2
           cd target/release/bundle/appimage
@@ -59,6 +60,19 @@ jobs:
 
           # Bundle FreeType to avoid symbol mismatch with bundled WebKit2GTK
           cp /usr/lib/x86_64-linux-gnu/libfreetype.so.6* squashfs-root/usr/lib/
+
+          # Bundle Fcitx5 client library (required by im-fcitx5.so for daemon communication)
+          cp /usr/lib/x86_64-linux-gnu/libFcitx5GClient.so.2* squashfs-root/usr/lib/ 2>/dev/null || true
+
+          # Bundle GTK3 IM modules for Fcitx5/IBus input method support
+          IMMODULES_DIR=squashfs-root/usr/lib/x86_64-linux-gnu/gtk-3.0/3.0.0/immodules
+          mkdir -p "$IMMODULES_DIR"
+          cp /usr/lib/x86_64-linux-gnu/gtk-3.0/3.0.0/immodules/im-fcitx5.so "$IMMODULES_DIR/" 2>/dev/null || true
+          cp /usr/lib/x86_64-linux-gnu/gtk-3.0/3.0.0/immodules/im-ibus.so "$IMMODULES_DIR/" 2>/dev/null || true
+
+          # Regenerate immodules.cache from ALL bundled modules (do not overwrite on failure)
+          CACHE_FILE=squashfs-root/usr/lib/x86_64-linux-gnu/gtk-3.0/3.0.0/immodules.cache
+          gtk-query-immodules-3.0 "$IMMODULES_DIR"/*.so > "${CACHE_FILE}.new" 2>/dev/null && mv "${CACHE_FILE}.new" "$CACHE_FILE" || rm -f "${CACHE_FILE}.new"
 
           # Download appimagetool and repackage
           wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage" -O appimagetool
@@ -92,7 +106,8 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
-            rpm
+            rpm \
+            fcitx5-frontend-gtk3
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -121,7 +136,7 @@ jobs:
           npm run tauri:build -- --config "$TMP_CONFIG"
           rm -f "$TMP_CONFIG"
 
-      - name: Repack AppImage with bundled FreeType
+      - name: Repack AppImage with bundled libs
         run: |
           sudo apt-get install -y libfuse2
           cd target/release/bundle/appimage
@@ -131,6 +146,19 @@ jobs:
 
           # Bundle FreeType to avoid symbol mismatch with bundled WebKit2GTK
           cp /usr/lib/aarch64-linux-gnu/libfreetype.so.6* squashfs-root/usr/lib/
+
+          # Bundle Fcitx5 client library (required by im-fcitx5.so for daemon communication)
+          cp /usr/lib/aarch64-linux-gnu/libFcitx5GClient.so.2* squashfs-root/usr/lib/ 2>/dev/null || true
+
+          # Bundle GTK3 IM modules for Fcitx5/IBus input method support
+          IMMODULES_DIR=squashfs-root/usr/lib/aarch64-linux-gnu/gtk-3.0/3.0.0/immodules
+          mkdir -p "$IMMODULES_DIR"
+          cp /usr/lib/aarch64-linux-gnu/gtk-3.0/3.0.0/immodules/im-fcitx5.so "$IMMODULES_DIR/" 2>/dev/null || true
+          cp /usr/lib/aarch64-linux-gnu/gtk-3.0/3.0.0/immodules/im-ibus.so "$IMMODULES_DIR/" 2>/dev/null || true
+
+          # Regenerate immodules.cache from ALL bundled modules (do not overwrite on failure)
+          CACHE_FILE=squashfs-root/usr/lib/aarch64-linux-gnu/gtk-3.0/3.0.0/immodules.cache
+          gtk-query-immodules-3.0 "$IMMODULES_DIR"/*.so > "${CACHE_FILE}.new" 2>/dev/null && mv "${CACHE_FILE}.new" "$CACHE_FILE" || rm -f "${CACHE_FILE}.new"
 
           # Download appimagetool and repackage
           wget -q "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-aarch64.AppImage" -O appimagetool
