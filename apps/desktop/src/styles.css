@@ -146,10 +146,10 @@ body {
   background: #e8e8e8;
   padding: 2px 4px;
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   align-items: center;
-  overflow: hidden;
-  height: 28px;
+  min-height: 28px;
   box-sizing: border-box;
 }
 .board-btn {
@@ -829,8 +829,9 @@ body {
 .anchor-popup {
   position: fixed;
   z-index: 60;
-  width: min(620px, calc(100vw - 24px));
-  max-width: 620px;
+  width: fit-content;
+  min-width: 320px;
+  max-width: min(820px, calc(100vw - 24px));
   max-height: 300px;
   overflow-y: auto;
   border: 1px solid #a0a0a0;

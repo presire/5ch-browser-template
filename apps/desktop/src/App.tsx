@@ -2316,7 +2316,7 @@ export default function App() {
   return (
     <div
       className={`shell${darkMode ? " dark" : ""}`}
-      style={{ fontFamily: fontFamily || undefined, gridTemplateRows: showBoardButtons && favorites.boards.length > 0 ? "26px 32px 28px 1fr 22px" : undefined }}
+      style={{ fontFamily: fontFamily || undefined, gridTemplateRows: showBoardButtons && favorites.boards.length > 0 ? "26px 32px auto 1fr 22px" : undefined }}
       onClick={() => {
         setThreadMenu(null);
         setResponseMenu(null);
