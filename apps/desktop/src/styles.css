@@ -755,7 +755,7 @@ body {
 .response-id-cell {
   font-size: 0.85em;
   color: #555;
-  max-width: 120px;
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
