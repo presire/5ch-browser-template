@@ -1737,6 +1737,33 @@ export default function App() {
     void fetchThreadListFromCurrent(next);
   };
 
+  const refreshByLocationInput = () => {
+    const raw = locationInput.trim();
+    const next = rewrite5chNet(raw);
+    if (!next) return;
+    if (next !== raw) setLocationInput(next);
+
+    let pathname = "";
+    try {
+      pathname = new URL(next, "https://dummy").pathname;
+    } catch {
+      return;
+    }
+    const isThreadUrl = /\/test\/read\.cgi\/[^/]+\/[^/]+/.test(pathname);
+    if (isThreadUrl) {
+      setThreadUrl(next);
+      const parts = next.replace(/\/+$/, "").split("/");
+      const board = parts[parts.length - 2] || "";
+      const key = parts[parts.length - 1] || "";
+      const title = board && key ? `${board}/${key}` : next;
+      openThreadInTab(next, title);
+      void fetchResponsesFromCurrent(next, { keepSelection: true });
+      return;
+    }
+    setThreadUrl(next);
+    void fetchThreadListFromCurrent(next);
+  };
+
   const onLocationInputKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter") return;
     e.preventDefault();
@@ -2070,6 +2097,13 @@ export default function App() {
         if (shortcutsOpen) { setShortcutsOpen(false); return; }
         if (responseReloadMenuOpen) { setResponseReloadMenuOpen(false); return; }
         if (openMenu) { setOpenMenu(null); return; }
+      }
+      const isRefreshShortcut = e.key === "F5"
+        || ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "r");
+      if (isRefreshShortcut) {
+        e.preventDefault();
+        refreshByLocationInput();
+        return;
       }
       if (isTypingTarget(e.target)) return;
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "r") {
