@@ -1,6 +1,7 @@
 import {
   Fragment,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEventHandler,
@@ -111,6 +112,9 @@ type ThreadTab = {
   title: string;
 };
 
+const stripHtmlForMatch = (html: string): string =>
+  html.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, " ").trim();
+
 const MIN_BOARD_PANE_PX = 160;
 const MIN_THREAD_PANE_PX = 280;
 const MIN_RESPONSE_PANE_PX = 360;
@@ -144,6 +148,7 @@ const NEW_THREAD_SIZE_KEY = "desktop.newThreadDialogSize.v1";
 const THREAD_FETCH_TIMES_KEY = "desktop.threadFetchTimes.v1";
 const WINDOW_STATE_KEY = "desktop.windowState.v1";
 const SEARCH_HISTORY_KEY = "desktop.searchHistory.v1";
+const MY_POSTS_KEY = "desktop.myPosts.v1";
 const MAX_SEARCH_HISTORY = 20;
 const MENU_EDGE_PADDING = 8;
 
@@ -434,6 +439,11 @@ export default function App() {
   const newThreadPanelRef = useRef<HTMLDivElement>(null);
   const [postHistory, setPostHistory] = useState<{ time: string; threadUrl: string; body: string; ok: boolean }[]>([]);
   const [postHistoryOpen, setPostHistoryOpen] = useState(false);
+  const [myPosts, setMyPosts] = useState<Record<string, number[]>>(() => {
+    try { const v = localStorage.getItem(MY_POSTS_KEY); if (v) return JSON.parse(v); } catch { /* ignore */ }
+    return {};
+  });
+  const pendingMyPostRef = useRef<{ threadUrl: string; body: string; prevCount: number } | null>(null);
   const [postFlowTraceProbe, setPostFlowTraceProbe] = useState("not run");
   const [threadListProbe, setThreadListProbe] = useState("not run");
   const [responseListProbe, setResponseListProbe] = useState("not run");
@@ -545,6 +555,29 @@ export default function App() {
   });
   const [roninLoggedIn, setRoninLoggedIn] = useState(false);
   const [beLoggedIn, setBeLoggedIn] = useState(false);
+
+  // Detect own post after re-fetch
+  useEffect(() => {
+    const pending = pendingMyPostRef.current;
+    if (!pending) return;
+    if (fetchedResponses.length <= pending.prevCount) return;
+    pendingMyPostRef.current = null;
+    const normalizedBody = pending.body.replace(/\s+/g, " ").trim();
+    const newResponses = fetchedResponses.slice(pending.prevCount);
+    const matched = newResponses.find((r) => {
+      const stripped = stripHtmlForMatch(r.body || "");
+      return stripped === normalizedBody || stripped.includes(normalizedBody) || normalizedBody.includes(stripped);
+    });
+    if (matched) {
+      setMyPosts((prev) => {
+        const list = prev[pending.threadUrl] ?? [];
+        if (list.includes(matched.responseNo)) return prev;
+        const next = { ...prev, [pending.threadUrl]: [...list, matched.responseNo] };
+        try { localStorage.setItem(MY_POSTS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+        return next;
+      });
+    }
+  }, [fetchedResponses]);
 
   const fetchMenu = async () => {
     setStatus("loading...");
@@ -1393,7 +1426,11 @@ export default function App() {
       const msg = ok ? `Post submitted (status ${r.status})` : `Post failed: ${r.bodyPreview}`;
       setComposeResult({ ok, message: msg });
       setPostHistory((prev) => [{ time: new Date().toLocaleTimeString(), threadUrl, body: composeBody.slice(0, 100), ok }, ...prev].slice(0, 50));
-      if (ok) void fetchResponsesFromCurrent();
+      if (ok) {
+        const prevCount = tabCacheRef.current.get(threadUrl.trim())?.responses.length ?? 0;
+        pendingMyPostRef.current = { threadUrl: threadUrl.trim(), body: composeBody, prevCount };
+        void fetchResponsesFromCurrent();
+      }
     } catch (error) {
       setPostFinalizeSubmitProbe(`error: ${String(error)}`);
       setComposeResult({ ok: false, message: `Error: ${String(error)}` });
@@ -1433,6 +1470,7 @@ export default function App() {
       } else if (r.submitSummary) {
         setComposeResult({ ok: true, message: `Post submitted: ${r.submitSummary}` });
         setPostHistory((prev) => [{ time: new Date().toLocaleTimeString(), threadUrl, body: composeBody.slice(0, 100), ok: true }, ...prev].slice(0, 50));
+        const postedBody = composeBody;
         setComposeBody("");
         if (composeName.trim()) {
           setNameHistory((prev) => {
@@ -1442,6 +1480,8 @@ export default function App() {
           });
         }
         setComposeOpen(false);
+        const prevCount = tabCacheRef.current.get(threadUrl.trim())?.responses.length ?? 0;
+        pendingMyPostRef.current = { threadUrl: threadUrl.trim(), body: postedBody, prevCount };
         // Re-fetch responses via standard path to update thread list counts, cache, and timestamps
         await fetchResponsesFromCurrent(threadUrl.trim());
         // Scroll to bottom to show the new post
@@ -1683,6 +1723,8 @@ export default function App() {
     }
     return { idCountMap: countMap, idSeqMap: seqMap };
   })();
+
+  const myPostNos = useMemo(() => new Set(myPosts[threadUrl.trim()] ?? []), [myPosts, threadUrl]);
 
   const watchoiCountMap = (() => {
     const map = new Map<string, number>();
@@ -3408,7 +3450,7 @@ export default function App() {
                   )}
                   <div
                     data-response-no={r.id}
-                    className={`response-block ${selectedResponse === r.id ? "selected" : ""}`}
+                    className={`response-block ${selectedResponse === r.id ? "selected" : ""}${myPostNos.has(r.id) ? " my-post" : ""}`}
                     onClick={() => setSelectedResponse(r.id)}
                     onDoubleClick={() => appendComposeQuote(`>>${r.id}`)}
                   >
@@ -3416,6 +3458,7 @@ export default function App() {
                       <span className="response-no" onClick={(e) => onResponseNoClick(e, r.id)}>
                         {r.id}
                       </span>
+                      {myPostNos.has(r.id) && <span className="my-post-label">[自分]</span>}
                       <span
                         className="response-name"
                         dangerouslySetInnerHTML={renderHighlightedPlainText(r.nameWithoutWatchoi, responseSearchQuery)}

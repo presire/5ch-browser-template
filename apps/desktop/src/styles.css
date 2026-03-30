@@ -591,6 +591,16 @@ li.fav-drag-over {
 .response-block:hover:not(.selected) {
   background: #f5f8ff;
 }
+.response-block.my-post {
+  border-left: 4px solid #e08010;
+  padding-left: 2px;
+}
+.my-post-label {
+  color: #e08010;
+  font-weight: 700;
+  font-size: 11px;
+  margin-left: 4px;
+}
 
 .response-header {
   display: flex;
@@ -1877,7 +1887,9 @@ button.search-history-btn:hover {
   box-shadow: 0 12px 24px rgba(20, 20, 20, 0.3);
   width: min(480px, 90vw);
   max-height: 80vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .settings-header {
   display: flex;
@@ -1886,12 +1898,16 @@ button.search-history-btn:hover {
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
   background: #e8e8e8;
+  flex-shrink: 0;
 }
 .settings-header button {
   margin-left: auto;
 }
 .settings-body {
   padding: 8px 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 .settings-body fieldset {
   border: 1px solid #d0d0d0;
@@ -1936,10 +1952,11 @@ button.search-history-btn:hover {
   border-color: #555;
 }
 
-.post-history-body {
+.settings-panel > .post-history-body {
   padding: 4px 8px;
-  max-height: 400px;
   overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 .post-history-item {
   display: flex;
@@ -2172,6 +2189,9 @@ button.search-history-btn:hover {
 }
 .dark .response-block:hover:not(.selected) {
   background: #2a2a2e;
+}
+.dark .response-block.my-post {
+  border-left: 4px solid #e08010;
 }
 .dark .response-name {
   color: #4ec94e;
