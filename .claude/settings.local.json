@@ -84,7 +84,11 @@
       "Bash(powershell -NoProfile -Command \"Compress-Archive -Path ember.exe -DestinationPath ember-win-x64.zip -Force\")",
       "Bash(rm ember.exe)",
       "Bash(taskkill //F //IM \"cargo-tauri.exe\")",
-      "Bash(cargo search:*)"
+      "Bash(cargo search:*)",
+      "Bash(node -p \"require\\(''./apps/desktop/src-tauri/tauri.conf.json''\\).version\")",
+      "Bash(cp ember.exe ember-temp.exe)",
+      "Bash(powershell -NoProfile -Command \"Compress-Archive -Path ember-temp.exe -DestinationPath ember-win-x64.zip -Force\")",
+      "Bash(rm ember-temp.exe)"
     ]
   }
 }
