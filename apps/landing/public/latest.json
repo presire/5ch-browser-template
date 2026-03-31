@@ -4,9 +4,14 @@
   "download_page_url": "https://github.com/kiyohken2000/5ch-browser-template/releases/tag/v0.0.40",
   "platforms": {
     "windows-x64": {
-      "sha256": "efa5a7bfac9d5d602e3e6b4a869a6b166b110e6d90bf70b46b94b135fe550c1e",
-      "size": 5681114,
+      "sha256": "a8d20ce7c6a005762c73d26ef2c310c4218e1e693126070d74b7b15550322288",
+      "size": 5681382,
       "filename": "ember-win-x64.zip"
+    },
+    "macos-arm64": {
+      "sha256": "59dfb75bda8968808b3120e45ba1007a4f758db6e32712c5c206676a947f5a91",
+      "size": 6102144,
+      "filename": "ember-mac-arm64.zip"
     }
   }
 }
