@@ -33,6 +33,8 @@ npx tauri build
 
 成果物: `target/release/ember.exe`
 
+> **注意**: 必ず `npx tauri build` を使うこと。`cargo build --release -p ember` を直接実行するとフロントエンドがバイナリに埋め込まれず、起動しても白画面になる。
+
 ZIP作成:
 ```powershell
 cd target/release

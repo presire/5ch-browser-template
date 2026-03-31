@@ -107,6 +107,7 @@ cd apps/desktop && npx tsc --noEmit      # TypeScript型チェック
 - 新規npm依存の無断追加禁止
 - Cookie値 (`Be3M`, `Be3D`, `sid`) のDEBUG以上でのログ記録禁止
 - `App.tsx` の分割禁止 (明示的指示がない限り)
+- リリースビルドで `cargo build --release -p ember` を直接使用禁止 — 必ず `npx tauri build` を通すこと (フロントエンドが埋め込まれず白画面になる)
 
 ## ドキュメント
 
