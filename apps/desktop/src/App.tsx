@@ -277,7 +277,7 @@ const getCaretClientPoint = (el: HTMLInputElement | HTMLTextAreaElement): { x: n
   };
 };
 
-const emitTypingConfetti = (x: number, y: number, count = 6) => {
+const emitTypingConfetti = (x: number, y: number, count = 3) => {
   for (let i = 0; i < count; i += 1) {
     const piece = document.createElement("span");
     piece.className = "typing-confetti-piece";
@@ -292,6 +292,25 @@ const emitTypingConfetti = (x: number, y: number, count = 6) => {
     piece.style.setProperty("--ty", `${ty.toFixed(1)}px`);
     piece.style.setProperty("--rot", rot);
     piece.style.setProperty("--h", hue);
+    piece.style.setProperty("--dur", dur);
+    document.body.appendChild(piece);
+    piece.addEventListener("animationend", () => piece.remove(), { once: true });
+  }
+};
+
+const emitDeleteExplosion = (x: number, y: number, count = 4) => {
+  for (let i = 0; i < count; i += 1) {
+    const piece = document.createElement("span");
+    piece.className = "delete-explosion-piece";
+    const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.6;
+    const dist = 18 + Math.random() * 28;
+    const tx = Math.cos(angle) * dist;
+    const ty = Math.sin(angle) * dist;
+    const dur = `${300 + Math.floor(Math.random() * 200)}ms`;
+    piece.style.setProperty("--x", `${x}px`);
+    piece.style.setProperty("--y", `${y}px`);
+    piece.style.setProperty("--tx", `${tx.toFixed(1)}px`);
+    piece.style.setProperty("--ty", `${ty.toFixed(1)}px`);
     piece.style.setProperty("--dur", dur);
     document.body.appendChild(piece);
     piece.addEventListener("animationend", () => piece.remove(), { once: true });
@@ -315,7 +334,7 @@ const getIdColor = (id: string): string => {
   return color;
 };
 
-const renderResponseBody = (html: string, opts?: { hideImages?: boolean }): { __html: string } => {
+const renderResponseBody = (html: string, opts?: { hideImages?: boolean; imageSizeLimitKb?: number }): { __html: string } => {
   let safe = html
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<a\s[^>]*>(.*?)<\/a>/gi, "$1")
@@ -332,13 +351,18 @@ const renderResponseBody = (html: string, opts?: { hideImages?: boolean }): { __
   }
   safe = safe.replace(/\n/g, "<br>");
   const collectedThumbs: string[] = [];
+  const sizeGated = opts?.imageSizeLimitKb && opts.imageSizeLimitKb > 0;
   if (!opts?.hideImages) {
     safe = safe.replace(
       /((?:https?:\/\/|ttps?:\/\/|ps:\/\/|s:\/\/)[^\s<>&"]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s<>&"]*(?:&amp;[^\s<>&"]*)*)?|(?<!\S)(?:[a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}\/[^\s<>&"]*\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s<>&"]*(?:&amp;[^\s<>&"]*)*)?)/gi,
       (match) => {
         const href = normalizeExternalUrl(match);
         if (!href) return match;
-        collectedThumbs.push(`<span class="thumb-link" data-lightbox-src="${href}"><img class="response-thumb" src="${href}" loading="lazy" alt="" /></span>`);
+        if (sizeGated) {
+          collectedThumbs.push(`<span class="thumb-link thumb-size-gate" data-lightbox-src="${href}" data-gate-src="${href}" data-size-limit="${opts.imageSizeLimitKb}"><span class="thumb-gate-loading">画像を確認中…</span></span>`);
+        } else {
+          collectedThumbs.push(`<span class="thumb-link" data-lightbox-src="${href}"><img class="response-thumb" src="${href}" loading="lazy" alt="" /></span>`);
+        }
         return `<a class="body-link" href="${href}" target="_blank" rel="noopener">${match}</a>`;
       }
     );
@@ -368,7 +392,7 @@ const renderResponseBody = (html: string, opts?: { hideImages?: boolean }): { __
   }
   return { __html: safe };
 };
-const renderResponseBodyHighlighted = (html: string, query: string, opts?: { hideImages?: boolean }): { __html: string } => {
+const renderResponseBodyHighlighted = (html: string, query: string, opts?: { hideImages?: boolean; imageSizeLimitKb?: number }): { __html: string } => {
   const rendered = renderResponseBody(html, opts).__html;
   return { __html: highlightHtmlPreservingTags(rendered, query) };
 };
@@ -463,6 +487,7 @@ export default function App() {
   keepSortOnRefreshRef.current = keepSortOnRefresh;
   const [composeSubmitKey, setComposeSubmitKey] = useState<"shift" | "ctrl">("shift");
   const [typingConfettiEnabled, setTypingConfettiEnabled] = useState(false);
+  const [imageSizeLimit, setImageSizeLimit] = useState(0); // KB, 0 = unlimited
   const [boardPaneTab, setBoardPaneTab] = useState<"boards" | "fav-threads">("boards");
   const [showCachedOnly, setShowCachedOnly] = useState(false);
   const [cachedThreadList, setCachedThreadList] = useState<{ threadUrl: string; title: string; resCount: number }[]>([]);
@@ -578,6 +603,48 @@ export default function App() {
       });
     }
   }, [fetchedResponses]);
+
+  // Process size-gated image thumbnails after render
+  const imageSizeCacheRef = useRef(new Map<string, Promise<number | null>>());
+  useEffect(() => {
+    if (imageSizeLimit <= 0) return;
+    const processGates = () => {
+      const gates = document.querySelectorAll<HTMLElement>(".thumb-size-gate[data-gate-src]");
+      if (gates.length === 0) return;
+      const limitBytes = imageSizeLimit * 1024;
+      const cache = imageSizeCacheRef.current;
+      gates.forEach((gate) => {
+        const src = gate.dataset.gateSrc;
+        if (!src) return;
+        let sizePromise = cache.get(src);
+        if (!sizePromise) {
+          sizePromise = fetch(src, { method: "HEAD" }).then((res) => {
+            const cl = res.headers.get("content-length");
+            return cl ? parseInt(cl, 10) : null;
+          }).catch(() => null);
+          cache.set(src, sizePromise);
+        }
+        sizePromise.then((size) => {
+          if (!gate.dataset.gateSrc) return;
+          delete gate.dataset.gateSrc;
+          delete gate.dataset.sizeLimit;
+          if (size !== null && size > limitBytes) {
+            const sizeStr = size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)}MB` : `${Math.round(size / 1024)}KB`;
+            gate.innerHTML = `<span class="thumb-gate-blocked" data-reveal-src="${src}">サイズ制限 (${sizeStr}) により非表示 — クリックで表示</span>`;
+          } else {
+            gate.innerHTML = `<img class="response-thumb" src="${src}" loading="lazy" alt="" />`;
+          }
+        }).catch(() => {
+          if (!gate.dataset.gateSrc) return;
+          delete gate.dataset.gateSrc;
+          gate.innerHTML = `<img class="response-thumb" src="${src}" loading="lazy" alt="" />`;
+        });
+      });
+    };
+    // Use rAF to ensure DOM is updated after React render
+    const raf = requestAnimationFrame(processGates);
+    return () => cancelAnimationFrame(raf);
+  });
 
   const fetchMenu = async () => {
     setStatus("loading...");
@@ -2267,6 +2334,7 @@ export default function App() {
           keepSortOnRefresh?: boolean;
           composeSubmitKey?: "shift" | "ctrl";
           typingConfettiEnabled?: boolean;
+          imageSizeLimit?: number;
         };
         if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
         if (typeof parsed.threadPanePx === "number") {
@@ -2290,6 +2358,7 @@ export default function App() {
         if (typeof parsed.keepSortOnRefresh === "boolean") setKeepSortOnRefresh(parsed.keepSortOnRefresh);
         if (parsed.composeSubmitKey === "shift" || parsed.composeSubmitKey === "ctrl") setComposeSubmitKey(parsed.composeSubmitKey);
         if (typeof parsed.typingConfettiEnabled === "boolean") setTypingConfettiEnabled(parsed.typingConfettiEnabled);
+        if (typeof parsed.imageSizeLimit === "number") setImageSizeLimit(parsed.imageSizeLimit);
       } catch { /* ignore */ }
     };
     // Try localStorage first, then file-based persistence
@@ -2591,12 +2660,13 @@ export default function App() {
       keepSortOnRefresh,
       composeSubmitKey,
       typingConfettiEnabled,
+      imageSizeLimit,
     });
     localStorage.setItem(LAYOUT_PREFS_KEY, payload);
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -2606,13 +2676,19 @@ export default function App() {
       if (target.readOnly || target.disabled) return;
       if (!isTextLikeInput(target)) return;
       const inputEv = ev as InputEvent;
-      if (inputEv.inputType && !inputEv.inputType.startsWith("insert")) return;
+      const isDelete = inputEv.inputType && (inputEv.inputType.startsWith("delete") || inputEv.inputType === "historyUndo");
+      const isInsert = inputEv.inputType && inputEv.inputType.startsWith("insert");
+      if (!isDelete && !isInsert) return;
       const now = performance.now();
-      if (now - lastTypingConfettiTsRef.current < 28) return;
+      if (now - lastTypingConfettiTsRef.current < 50) return;
       const point = getCaretClientPoint(target);
       if (!point) return;
       lastTypingConfettiTsRef.current = now;
-      emitTypingConfetti(point.x, point.y);
+      if (isDelete) {
+        emitDeleteExplosion(point.x, point.y);
+      } else {
+        emitTypingConfetti(point.x, point.y);
+      }
     };
     window.addEventListener("input", onInput, true);
     return () => window.removeEventListener("input", onInput, true);
@@ -3371,6 +3447,19 @@ export default function App() {
                   }
                   return;
                 }
+                // Size-gated image click: reveal the image
+                const gateBlocked = target.closest<HTMLElement>(".thumb-gate-blocked");
+                if (gateBlocked) {
+                  e.preventDefault();
+                  const src = gateBlocked.dataset.revealSrc;
+                  if (src) {
+                    const parent = gateBlocked.closest<HTMLElement>(".thumb-size-gate");
+                    if (parent) {
+                      parent.innerHTML = `<img class="response-thumb" src="${src}" loading="lazy" alt="" />`;
+                    }
+                  }
+                  return;
+                }
                 const anchor = target.closest<HTMLElement>(".anchor-ref");
                 if (!anchor) return;
                 const no = Number(anchor.dataset.anchor);
@@ -3535,7 +3624,7 @@ export default function App() {
                         )}
                       </span>
                     </div>
-                    <div className="response-body" dangerouslySetInnerHTML={renderResponseBodyHighlighted(r.text, responseSearchQuery, { hideImages: ngResultMap.get(r.id) === "hide-images" })} />
+                    <div className="response-body" dangerouslySetInnerHTML={renderResponseBodyHighlighted(r.text, responseSearchQuery, { hideImages: ngResultMap.get(r.id) === "hide-images", imageSizeLimitKb: imageSizeLimit })} />
                   </div>
                   </Fragment>
                 );
@@ -4237,6 +4326,11 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={keepSortOnRefresh} onChange={(e) => setKeepSortOnRefresh(e.target.checked)} />
                   <span>スレ一覧の更新時にソートを維持</span>
+                </label>
+                <label className="settings-row">
+                  <span>画像サイズ制限 (KB)</span>
+                  <input type="number" value={imageSizeLimit} min={0} max={99999} onChange={(e) => setImageSizeLimit(Number(e.target.value))} />
+                  <span className="settings-hint">0 = 無制限</span>
                 </label>
               </fieldset>
               <fieldset>
