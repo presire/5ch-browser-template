@@ -119,5 +119,7 @@ cd apps/desktop && npx tsc --noEmit      # TypeScript型チェック
 
 ## リリース
 
-リリースフローの詳細は `docs/DEPLOYMENT_RUNBOOK.md` を参照。  
-`/release` スキルでバージョン更新・検証・差分確認を自動化できる。  
+リリースフローの詳細は `docs/DEPLOYMENT_RUNBOOK.md` を参照。
+
+- `scripts/release.sh <version> <release-notes>` — バージョン更新からデプロイまで一括実行（Mac版ビルド待ちで一時停止）
+- `/release` スキル — バージョン更新・検証・差分確認のみ（コミットやビルドは行わない）
