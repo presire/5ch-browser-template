@@ -2686,6 +2686,6 @@ button.search-history-btn:hover {
 @media (prefers-reduced-motion: reduce) {
   .typing-confetti-piece,
   .delete-explosion-piece {
-    animation-duration: 1ms;
+    /* コンフェティはアプリ内設定で制御するため、OS設定を無視 */
   }
 }
