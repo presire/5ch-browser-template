@@ -1256,6 +1256,7 @@ export default function App() {
   };
 
   const fetchThreadListFromCurrent = async (targetThreadUrl?: string) => {
+    setShowFavoritesOnly(false);
     const url = (targetThreadUrl ?? threadUrl).trim();
     if (!url) return;
     if (!isTauriRuntime()) {
@@ -1701,16 +1702,22 @@ export default function App() {
         threadUrl: ct.threadUrl,
       }))
     : showFavoritesOnly
-    ? favorites.threads.map((ft, i) => ({
-        id: i + 1,
-        title: ft.title || "(タイトルなし)",
-        res: 0,
-        got: 0,
-        speed: 0,
-        lastLoad: "-",
-        lastPost: "-",
-        threadUrl: ft.threadUrl,
-      }))
+    ? favorites.threads.map((ft, i) => {
+        const cached = tabCacheRef.current.get(ft.threadUrl);
+        const cachedCount = cached ? cached.responses.length : 0;
+        const fetched = fetchedThreads.find((t) => t.threadUrl === ft.threadUrl);
+        const res = fetched ? fetched.responseCount : (cachedCount > 0 ? cachedCount : -1);
+        return {
+          id: i + 1,
+          title: ft.title || "(タイトルなし)",
+          res,
+          got: cachedCount > 0 ? cachedCount : -1,
+          speed: 0,
+          lastLoad: "-",
+          lastPost: "-",
+          threadUrl: ft.threadUrl,
+        };
+      })
     : (
     fetchedThreads.length > 0
       ? fetchedThreads.map((t, i) => {
@@ -3297,7 +3304,7 @@ export default function App() {
                     }}
                     onContextMenu={(e) => onThreadContextMenu(e, t.id)}
                   >
-                    <td className="thread-fetched-cell">{threadReadMap[t.id] ? "\u25CF" : ""}</td>
+                    <td className="thread-fetched-cell">{!showFavoritesOnly && threadReadMap[t.id] ? "\u25CF" : ""}</td>
                     <td>{t.id}</td>
                     <td
                       className="thread-title-cell"
@@ -3305,8 +3312,8 @@ export default function App() {
                     />
                     <td>{t.res >= 0 ? t.res : "-"}</td>
                     <td>{t.got > 0 ? t.got : "-"}</td>
-                    <td className={`new-count ${t.got > 0 && t.res > 0 && t.res - t.got > 0 ? "has-new" : ""}`}>
-                      {t.got > 0 && t.res > 0 ? Math.max(0, t.res - t.got) : "-"}
+                    <td className={`new-count ${!showFavoritesOnly && t.got > 0 && t.res > 0 && t.res - t.got > 0 ? "has-new" : ""}`}>
+                      {!showFavoritesOnly && t.got > 0 && t.res > 0 ? Math.max(0, t.res - t.got) : "-"}
                     </td>
                     <td className="last-fetch-cell">{threadFetchTimesRef.current[t.threadUrl] ?? "-"}</td>
                     <td className="speed-cell">
@@ -4056,6 +4063,15 @@ export default function App() {
             addNgEntry("thread_words", beMenu.beNumber);
             setBeMenu(null);
           }}>このBEをスレタイNGに追加</button>
+          <button onClick={() => {
+            const url = `https://ame.hacca.jp/sasss/log-be2.cgi?i=${beMenu.beNumber}`;
+            if (isTauriRuntime()) {
+              void invoke("open_external_url", { url }).catch(() => window.open(url, "_blank"));
+            } else {
+              window.open(url, "_blank");
+            }
+            setBeMenu(null);
+          }}>スレ立て履歴を表示</button>
         </div>
       )}
       {searchHistoryMenu && (
