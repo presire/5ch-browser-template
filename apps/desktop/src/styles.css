@@ -582,6 +582,7 @@ li.fav-drag-over {
   overflow-y: auto;
   background: #ffffff;
   padding: 0;
+  padding-bottom: 32px;
   overflow-anchor: none;
 }
 
