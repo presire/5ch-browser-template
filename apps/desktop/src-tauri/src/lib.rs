@@ -1133,6 +1133,20 @@ fn set_window_theme(window: tauri::WebviewWindow, dark: bool) -> Result<(), Stri
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Disable WebKit2GTK's DMA-BUF renderer and GPU compositing on Wayland
+    // to prevent white screen / EGL errors on some GPU/driver combinations
+    // See: https://github.com/tauri-apps/tauri/issues/11988
+    //      https://github.com/tauri-apps/tauri/issues/10749
+    #[cfg(target_os = "linux")]
+    {
+        let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+            || std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false);
+        if is_wayland {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        }
+    }
+
     let _ = core_store::init_portable_layout();
     let _ = core_store::append_log("app started");
     tauri::Builder::default()
