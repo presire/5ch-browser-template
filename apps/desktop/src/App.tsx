@@ -544,6 +544,7 @@ export default function App() {
   const [threadTabs, setThreadTabs] = useState<ThreadTab[]>([]);
   const [activeTabIndex, setActiveTabIndex] = useState(-1);
   const tabCacheRef = useRef<Map<string, { responses: ThreadResponseItem[]; selectedResponse: number; scrollResponseNo?: number; newResponseStart?: number | null }>>(new Map());
+  const closedTabsRef = useRef<{ threadUrl: string; title: string }[]>([]);
   const tabsRestoredRef = useRef(false);
   const lastBoardUrlRef = useRef("");
   const pendingLastBoardRef = useRef<{ boardName: string; url: string } | null>(null);
@@ -1086,11 +1087,14 @@ export default function App() {
 
   const closeTab = (index: number) => {
     if (index < 0 || index >= threadTabs.length) return;
+    const closing = threadTabs[index];
+    closedTabsRef.current.push({ threadUrl: closing.threadUrl, title: closing.title });
+    if (closedTabsRef.current.length > 20) closedTabsRef.current.shift();
     if (index === activeTabIndex) {
-      saveBookmark(threadTabs[index].threadUrl, selectedResponse);
-      saveScrollPos(threadTabs[index].threadUrl);
+      saveBookmark(closing.threadUrl, selectedResponse);
+      saveScrollPos(closing.threadUrl);
     }
-    tabCacheRef.current.delete(threadTabs[index].threadUrl);
+    tabCacheRef.current.delete(closing.threadUrl);
     const nextTabs = threadTabs.filter((_, i) => i !== index);
     setThreadTabs(nextTabs);
     if (nextTabs.length === 0) {
@@ -2405,6 +2409,14 @@ export default function App() {
         e.preventDefault();
         if (activeTabIndex >= 0 && threadTabs.length > 0) {
           closeTab(activeTabIndex);
+        }
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === "t") {
+        e.preventDefault();
+        const last = closedTabsRef.current.pop();
+        if (last) {
+          openThreadInTab(last.threadUrl, last.title);
         }
         return;
       }
@@ -4593,6 +4605,7 @@ export default function App() {
             <div className="shortcuts-body">
               {[
                 ["Ctrl+W", "選択スレを閉じる"],
+                ["Ctrl+Shift+T", "閉じたタブを再度開く"],
                 ["Ctrl+Shift+R", "スレ一覧を再取得"],
                 ["Ctrl+Alt+/", "次のスレへ切替"],
                 ["Ctrl+Tab", "次のタブ"],
