@@ -3524,10 +3524,19 @@ export default function App() {
                           void fetchResponsesFromCurrent(t.threadUrl, { keepSelection: true });
                         }
                         // persist read status
-                        const ft = fetchedThreads[t.id - 1];
-                        if (ft) {
+                        if (showFavoritesOnly) {
                           const boardUrl = getBoardUrlFromThreadUrl(t.threadUrl);
-                          void persistReadStatus(boardUrl, ft.threadKey, ft.responseCount);
+                          const parts = t.threadUrl.replace(/\/$/, "").split("/");
+                          const threadKey = parts[parts.length - 1] ?? "";
+                          if (threadKey && t.res > 0) {
+                            void persistReadStatus(boardUrl, threadKey, t.res);
+                          }
+                        } else {
+                          const ft = fetchedThreads[t.id - 1];
+                          if (ft) {
+                            const boardUrl = getBoardUrlFromThreadUrl(t.threadUrl);
+                            void persistReadStatus(boardUrl, ft.threadKey, ft.responseCount);
+                          }
                         }
                       }
                     }}
@@ -3542,7 +3551,7 @@ export default function App() {
                     }}
                     onContextMenu={(e) => onThreadContextMenu(e, t.id)}
                   >
-                    <td className="thread-fetched-cell">{hasUnread || threadReadMap[t.id] ? "\u25CF" : ""}</td>
+                    <td className="thread-fetched-cell">{showFavoritesOnly ? (hasUnread ? "\u25CF" : "") : (hasUnread || threadReadMap[t.id] ? "\u25CF" : "")}</td>
                     <td>{t.id}</td>
                     <td
                       className="thread-title-cell"
