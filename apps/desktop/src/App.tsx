@@ -213,6 +213,18 @@ const renderHighlightedPlainText = (text: string, query: string): { __html: stri
   ({ __html: highlightHtmlPreservingTags(escapeHtml(decodeHtmlEntities(text)), query) });
 const rewrite5chNet = (url: string): string => url.replace(/\.5ch\.net\b/gi, ".5ch.io");
 
+const getAnchorIds = (el: HTMLElement): number[] => {
+  const anchors = el.dataset.anchors;
+  if (anchors) return anchors.split(",").map(Number).filter((n) => n > 0);
+  const start = Number(el.dataset.anchor);
+  const end = Number(el.dataset.anchorEnd);
+  if (end > start) {
+    const ids: number[] = [];
+    for (let i = start; i <= end && i - start < 1000; i++) ids.push(i);
+    return ids;
+  }
+  return start > 0 ? [start] : [];
+};
 const normalizeExternalUrl = (raw: string): string | null => {
   const v = raw.replace(/&amp;/g, "&");
   let result: string | null = null;
@@ -405,19 +417,41 @@ const renderResponseBody = (html: string, opts?: { hideImages?: boolean; imageSi
       return `<a class="body-link" href="${href}" target="_blank" rel="noopener">${match}</a>`;
     }
   );
+  // >> range (>>2-10)
   safe = safe.replace(
-    /&gt;&gt;(\d+(?:[\s,、]+\d+)*)/g,
+    /&gt;&gt;(\d+)-(\d+)/g,
+    (_m, s: string, e: string) => `<span class="anchor-ref" data-anchor="${s}" data-anchor-end="${e}" role="link" tabindex="0">&gt;&gt;${s}-${e}</span>`
+  );
+  // >> comma (>>2,3) — keep original display
+  safe = safe.replace(
+    /&gt;&gt;(\d+(?:[,、]\d+)+)/g,
     (_m, nums: string) => {
-      const ids = nums.split(/[\s,、]+/).filter(Boolean);
-      return ids.map((id) => `<span class="anchor-ref" data-anchor="${id}" role="link" tabindex="0">&gt;&gt;${id}</span>`).join(",");
+      const first = nums.split(/[,、]/)[0];
+      return `<span class="anchor-ref" data-anchor="${first}" data-anchors="${nums.replace(/、/g, ",")}" role="link" tabindex="0">&gt;&gt;${nums}</span>`;
     }
   );
+  // >> single (>>2)
   safe = safe.replace(
-    /&gt;(\d+(?:[\s,、]+\d+)*)/g,
+    /&gt;&gt;(\d+)/g,
+    '<span class="anchor-ref" data-anchor="$1" role="link" tabindex="0">&gt;&gt;$1</span>'
+  );
+  // > range (>2-10)
+  safe = safe.replace(
+    /&gt;(\d+)-(\d+)/g,
+    (_m, s: string, e: string) => `<span class="anchor-ref" data-anchor="${s}" data-anchor-end="${e}" role="link" tabindex="0">&gt;${s}-${e}</span>`
+  );
+  // > comma (>2,3) — keep original display
+  safe = safe.replace(
+    /&gt;(\d+(?:[,、]\d+)+)/g,
     (_m, nums: string) => {
-      const ids = nums.split(/[\s,、]+/).filter(Boolean);
-      return ids.map((id) => `<span class="anchor-ref" data-anchor="${id}" role="link" tabindex="0">&gt;${id}</span>`).join(",");
+      const first = nums.split(/[,、]/)[0];
+      return `<span class="anchor-ref" data-anchor="${first}" data-anchors="${nums.replace(/、/g, ",")}" role="link" tabindex="0">&gt;${nums}</span>`;
     }
+  );
+  // > single (>2)
+  safe = safe.replace(
+    /&gt;(\d+)/g,
+    '<span class="anchor-ref" data-anchor="$1" role="link" tabindex="0">&gt;$1</span>'
   );
   // Convert sssp:// BE icons to https:// img preview
   safe = safe.replace(
@@ -568,8 +602,8 @@ export default function App() {
   const [threadMenu, setThreadMenu] = useState<{ x: number; y: number; threadId: number } | null>(null);
   const [responseMenu, setResponseMenu] = useState<{ x: number; y: number; responseId: number } | null>(null);
   const [aaOverrides, setAaOverrides] = useState<Map<number, boolean>>(new Map());
-  const [anchorPopup, setAnchorPopup] = useState<{ x: number; y: number; anchorTop: number; responseId: number } | null>(null);
-  const [nestedPopups, setNestedPopups] = useState<{ x: number; y: number; anchorTop: number; responseId: number }[]>([]);
+  const [anchorPopup, setAnchorPopup] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[] } | null>(null);
+  const [nestedPopups, setNestedPopups] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[] }[]>([]);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const hoverPreviewRef = useRef<HTMLDivElement | null>(null);
   const hoverPreviewImgRef = useRef<HTMLImageElement | null>(null);
@@ -2019,12 +2053,20 @@ export default function App() {
   // Build back-reference map: responseNo → list of responseNos that reference it
   const backRefMap = (() => {
     const map = new Map<number, number[]>();
+    const addRef = (target: number, from: number) => {
+      if (!map.has(target)) map.set(target, []);
+      const arr = map.get(target)!;
+      if (!arr.includes(from)) arr.push(from);
+    };
     for (const r of responseItems) {
-      const refs = r.text.matchAll(/>>(\d+)/g);
-      for (const m of refs) {
-        const target = Number(m[1]);
-        if (!map.has(target)) map.set(target, []);
-        map.get(target)!.push(r.id);
+      // single >>N or >N
+      for (const m of r.text.matchAll(/>>(\d+)/g)) {
+        addRef(Number(m[1]), r.id);
+      }
+      // range >>N-M or >N-M
+      for (const m of r.text.matchAll(/>>(\d+)-(\d+)/g)) {
+        const s = Number(m[1]), e = Number(m[2]);
+        for (let i = s; i <= e && i - s < 1000; i++) addRef(i, r.id);
       }
     }
     return map;
@@ -3832,11 +3874,12 @@ export default function App() {
                 }
                 const anchor = target.closest<HTMLElement>(".anchor-ref");
                 if (!anchor) return;
-                const no = Number(anchor.dataset.anchor);
-                if (no > 0 && responseItems.some((r) => r.id === no)) {
-                  setSelectedResponse(no);
+                const ids = getAnchorIds(anchor);
+                const first = ids.find((id) => responseItems.some((r) => r.id === id));
+                if (first) {
+                  setSelectedResponse(first);
                   setAnchorPopup(null);
-                  setStatus(`jumped to >>${no}`);
+                  setStatus(`jumped to >>${first}`);
                 }
               }}
               onMouseMove={(e) => {
@@ -3851,8 +3894,8 @@ export default function App() {
                 const target = e.target as HTMLElement;
                 const anchor = target.closest<HTMLElement>(".anchor-ref");
                 if (!anchor) { return; }
-                const no = Number(anchor.dataset.anchor);
-                if (no > 0 && responseItems.some((r) => r.id === no)) {
+                const ids = getAnchorIds(anchor).filter((id) => responseItems.some((r) => r.id === id));
+                if (ids.length > 0) {
                   if (anchorPopupCloseTimer.current) {
                     clearTimeout(anchorPopupCloseTimer.current);
                     anchorPopupCloseTimer.current = null;
@@ -3860,7 +3903,7 @@ export default function App() {
                   const rect = anchor.getBoundingClientRect();
                   const popupWidth = Math.min(620, window.innerWidth - 24);
                   const x = Math.max(8, Math.min(rect.left, window.innerWidth - popupWidth - 8));
-                  setAnchorPopup({ x, y: rect.bottom + 1, anchorTop: rect.top, responseId: no });
+                  setAnchorPopup({ x, y: rect.bottom + 1, anchorTop: rect.top, responseIds: ids });
                 }
               }}
               onMouseOut={(e) => {
@@ -4396,8 +4439,8 @@ export default function App() {
         </div>
       )}
       {anchorPopup && (() => {
-        const popupResp = responseItems.find((r) => r.id === anchorPopup.responseId);
-        if (!popupResp) return null;
+        const popupResps = anchorPopup.responseIds.map((id) => responseItems.find((r) => r.id === id)).filter(Boolean) as typeof responseItems;
+        if (popupResps.length === 0) return null;
         const maxH = 300;
         const spaceBelow = window.innerHeight - anchorPopup.y;
         const flipUp = spaceBelow < maxH && anchorPopup.anchorTop > spaceBelow;
@@ -4428,10 +4471,10 @@ export default function App() {
               const t = ev.target as HTMLElement;
               const a = t.closest<HTMLElement>(".anchor-ref");
               if (!a) return;
-              const no = Number(a.dataset.anchor);
-              if (no > 0 && responseItems.some((r) => r.id === no)) {
+              const ids = getAnchorIds(a).filter((id) => responseItems.some((r) => r.id === id));
+              if (ids.length > 0) {
                 const rect = a.getBoundingClientRect();
-                setNestedPopups([{ x: rect.left, y: rect.bottom + 1, anchorTop: rect.top, responseId: no }]);
+                setNestedPopups([{ x: rect.left, y: rect.bottom + 1, anchorTop: rect.top, responseIds: ids }]);
               }
             }}
             onMouseOut={(ev) => {
@@ -4444,11 +4487,15 @@ export default function App() {
             onClick={handlePopupImageClick}
             onMouseMove={handlePopupImageHover}
           >
-            <div className="anchor-popup-header">
-              <span className="response-viewer-no">{popupResp.id}</span> {popupResp.name}
-              <time>{popupResp.time}</time>
-            </div>
-            <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(popupResp.text)} />
+            {popupResps.map((popupResp) => (
+              <div key={popupResp.id}>
+                <div className="anchor-popup-header">
+                  <span className="response-viewer-no">{popupResp.id}</span> {popupResp.name}
+                  <time>{popupResp.time}</time>
+                </div>
+                <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(popupResp.text)} />
+              </div>
+            ))}
           </div>
         );
       })()}
@@ -4467,10 +4514,10 @@ export default function App() {
               const t = ev.target as HTMLElement;
               const a = t.closest<HTMLElement>(".anchor-ref");
               if (!a) return;
-              const no = Number(a.dataset.anchor);
-              if (no > 0 && responseItems.some((r) => r.id === no)) {
+              const ids = getAnchorIds(a).filter((id) => responseItems.some((r) => r.id === id));
+              if (ids.length > 0) {
                 const rect = a.getBoundingClientRect();
-                setNestedPopups([{ x: rect.left, y: rect.bottom + 1, anchorTop: rect.top, responseId: no }]);
+                setNestedPopups([{ x: rect.left, y: rect.bottom + 1, anchorTop: rect.top, responseIds: ids }]);
               }
             }}
             onMouseOut={(ev) => {
@@ -4500,8 +4547,8 @@ export default function App() {
         );
       })()}
       {nestedPopups.map((np, i) => {
-        const nestedResp = responseItems.find((r) => r.id === np.responseId);
-        if (!nestedResp) return null;
+        const nestedResps = np.responseIds.map((id) => responseItems.find((r) => r.id === id)).filter(Boolean) as typeof responseItems;
+        if (nestedResps.length === 0) return null;
         const nMaxH = 300;
         const nSpaceBelow = window.innerHeight - np.y;
         const nFlipUp = nSpaceBelow < nMaxH && np.anchorTop > nSpaceBelow;
@@ -4510,7 +4557,7 @@ export default function App() {
           : { left: np.x + i * 8, top: np.y + i * 8 };
         return (
           <div
-            key={`${np.responseId}-${i}`}
+            key={`${np.responseIds[0]}-${i}`}
             className="anchor-popup nested-popup"
             style={nPosStyle}
             onMouseEnter={() => {
@@ -4534,13 +4581,14 @@ export default function App() {
               const t = ev.target as HTMLElement;
               const a = t.closest<HTMLElement>(".anchor-ref");
               if (!a) return;
-              const no = Number(a.dataset.anchor);
-              if (no <= 0 || !responseItems.some((r) => r.id === no)) return;
+              const ids = getAnchorIds(a).filter((id) => responseItems.some((r) => r.id === id));
+              if (ids.length === 0) return;
               const rect = a.getBoundingClientRect();
               setNestedPopups((prev) => {
                 const head = prev.slice(0, i + 1);
-                if (head[head.length - 1]?.responseId === no) return head;
-                return [...head, { x: rect.left, y: rect.bottom + 1, anchorTop: rect.top, responseId: no }];
+                const last = head[head.length - 1];
+                if (last && last.responseIds.length === ids.length && last.responseIds.every((v, j) => v === ids[j])) return head;
+                return [...head, { x: rect.left, y: rect.bottom + 1, anchorTop: rect.top, responseIds: ids }];
               });
             }}
             onMouseOut={(ev) => {
@@ -4553,11 +4601,15 @@ export default function App() {
             onClick={handlePopupImageClick}
             onMouseMove={handlePopupImageHover}
           >
-            <div className="anchor-popup-header">
-              <span className="response-viewer-no">{nestedResp.id}</span> {nestedResp.name}
-              <time>{nestedResp.time}</time>
-            </div>
-            <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(nestedResp.text)} />
+            {nestedResps.map((nestedResp) => (
+              <div key={nestedResp.id}>
+                <div className="anchor-popup-header">
+                  <span className="response-viewer-no">{nestedResp.id}</span> {nestedResp.name}
+                  <time>{nestedResp.time}</time>
+                </div>
+                <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(nestedResp.text)} />
+              </div>
+            ))}
           </div>
         );
       })}
@@ -4583,13 +4635,13 @@ export default function App() {
               const t = ev.target as HTMLElement;
               const a = t.closest<HTMLElement>(".anchor-ref");
               if (!a) return;
-              const no = Number(a.dataset.anchor);
-              if (no > 0 && responseItems.some((r) => r.id === no)) {
+              const ids = getAnchorIds(a).filter((id) => responseItems.some((r) => r.id === id));
+              if (ids.length > 0) {
                 if (anchorPopupCloseTimer.current) { clearTimeout(anchorPopupCloseTimer.current); anchorPopupCloseTimer.current = null; }
                 const rect = a.getBoundingClientRect();
                 const popupWidth = Math.min(620, window.innerWidth - 24);
                 const x = Math.max(8, Math.min(rect.left, window.innerWidth - popupWidth - 8));
-                setAnchorPopup({ x, y: rect.bottom + 1, anchorTop: rect.top, responseId: no });
+                setAnchorPopup({ x, y: rect.bottom + 1, anchorTop: rect.top, responseIds: ids });
               }
             }}
             onMouseOut={(ev) => {
