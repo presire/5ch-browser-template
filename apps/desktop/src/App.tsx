@@ -2569,6 +2569,7 @@ export default function App() {
           hoverPreviewDelay?: number;
           thumbSize?: number;
           restoreSession?: boolean;
+          autoRefreshInterval?: number;
         };
         if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
         if (typeof parsed.threadPanePx === "number") {
@@ -2600,6 +2601,7 @@ export default function App() {
         if (typeof parsed.hoverPreviewDelay === "number") setHoverPreviewDelay(parsed.hoverPreviewDelay);
         if (typeof parsed.thumbSize === "number") setThumbSize(parsed.thumbSize);
         if (typeof parsed.restoreSession === "boolean") { setRestoreSession(parsed.restoreSession); restoreSessionRef.current = parsed.restoreSession; }
+        if (typeof parsed.autoRefreshInterval === "number") setAutoRefreshInterval(parsed.autoRefreshInterval);
       } catch { /* ignore */ }
     };
     // Try localStorage first, then file-based persistence
@@ -2979,12 +2981,13 @@ export default function App() {
       hoverPreviewDelay,
       thumbSize,
       restoreSession,
+      autoRefreshInterval,
     });
     localStorage.setItem(LAYOUT_PREFS_KEY, payload);
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, restoreSession]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, restoreSession, autoRefreshInterval]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
