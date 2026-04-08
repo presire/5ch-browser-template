@@ -1514,6 +1514,19 @@ pre {
   white-space: nowrap;
 }
 
+.upload-history-url {
+  font-size: 10px;
+  color: var(--link);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.upload-history-url:hover {
+  text-decoration: underline;
+}
+
 .upload-history-date {
   font-size: 10px;
   color: var(--sub);

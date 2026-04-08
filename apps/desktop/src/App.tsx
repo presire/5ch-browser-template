@@ -1704,7 +1704,7 @@ export default function App() {
     setUploadResults(results);
     setUploadingFiles([]);
     if (newHistoryEntries.length > 0) {
-      const updated = [...newHistoryEntries, ...uploadHistory].slice(0, 100);
+      const updated = [...newHistoryEntries, ...uploadHistory].slice(0, 20);
       setUploadHistory(updated);
       invoke("save_upload_history", { history: { entries: updated } }).catch((e) => console.warn("save upload history:", e));
     }
@@ -2881,6 +2881,12 @@ export default function App() {
       }).catch((e) => console.warn("upload history load failed:", e));
     }
   }, []);
+
+  useEffect(() => {
+    if (!authSaveMsg) return;
+    const timer = window.setTimeout(() => setAuthSaveMsg(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [authSaveMsg]);
 
   useEffect(() => {
     if (!tabsRestoredRef.current) return;
@@ -4315,7 +4321,7 @@ export default function App() {
             <div className="upload-panel">
               <div className="upload-panel-tabs">
                 <button className={uploadPanelTab === "upload" ? "active" : ""} onClick={() => setUploadPanelTab("upload")}><Upload size={12} /> アップロード</button>
-                <button className={uploadPanelTab === "history" ? "active" : ""} onClick={() => setUploadPanelTab("history")}><History size={12} /> 履歴 ({uploadHistory.length})</button>
+                <button className={uploadPanelTab === "history" ? "active" : ""} onClick={() => setUploadPanelTab("history")}><History size={12} /> 履歴 ({uploadHistory.length}/20)</button>
               </div>
               {uploadPanelTab === "upload" && (
                 <div className="upload-tab-content">
@@ -4356,6 +4362,13 @@ export default function App() {
                       {entry.thumbnail && <img src={entry.thumbnail} alt="" className="upload-history-thumb" loading="lazy" />}
                       <div className="upload-history-info">
                         <span className="upload-history-name">{entry.fileName}</span>
+                        <span
+                          className="upload-history-url"
+                          onClick={() => { void invoke("open_external_url", { url: entry.sourceUrl }).catch(() => window.open(entry.sourceUrl, "_blank")); }}
+                          title="ブラウザで開く"
+                        >
+                          {entry.sourceUrl}
+                        </span>
                         <span className="upload-history-date">{new Date(entry.uploadedAt).toLocaleString()}</span>
                       </div>
                       <div className="upload-history-actions">
