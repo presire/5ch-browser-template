@@ -13,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, Film, ExternalLink,
+  Image, Film, ExternalLink, Upload, History, Copy, Trash2,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -675,6 +675,14 @@ export default function App() {
   const [roninLoggedIn, setRoninLoggedIn] = useState(false);
   const [beLoggedIn, setBeLoggedIn] = useState(false);
   const [authSaveMsg, setAuthSaveMsg] = useState("");
+
+  // Image upload state
+  const [uploadPanelOpen, setUploadPanelOpen] = useState(false);
+  const [uploadPanelTab, setUploadPanelTab] = useState<"upload" | "history">("upload");
+  const [uploadingFiles, setUploadingFiles] = useState<string[]>([]);
+  const [uploadResults, setUploadResults] = useState<{ fileName: string; sourceUrl?: string; thumbnail?: string; error?: string }[]>([]);
+  const [uploadHistory, setUploadHistory] = useState<{ sourceUrl: string; thumbnail: string; pageUrl: string; fileName: string; uploadedAt: string }[]>([]);
+  const uploadFileRef = useRef<HTMLInputElement | null>(null);
 
   // Detect own post after re-fetch
   useEffect(() => {
@@ -1665,6 +1673,55 @@ export default function App() {
     }
   };
 
+  const handleUploadFiles = async (files: FileList) => {
+    if (!isTauriRuntime()) return;
+    const fileArray = Array.from(files).slice(0, 4);
+    if (fileArray.length === 0) return;
+    setUploadResults([]);
+    setUploadingFiles(fileArray.map((f) => f.name));
+    const results: { fileName: string; sourceUrl?: string; thumbnail?: string; error?: string }[] = [];
+    const newHistoryEntries: typeof uploadHistory = [];
+    for (const file of fileArray) {
+      try {
+        const buf = await file.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const fileData = btoa(binary);
+        const r = await invoke<{ success: boolean; sourceUrl: string; thumbnail: string; pageUrl: string }>("upload_image", { fileData, fileName: file.name });
+        results.push({ fileName: file.name, sourceUrl: r.sourceUrl, thumbnail: r.thumbnail });
+        newHistoryEntries.push({
+          sourceUrl: r.sourceUrl,
+          thumbnail: r.thumbnail,
+          pageUrl: r.pageUrl,
+          fileName: file.name,
+          uploadedAt: new Date().toISOString(),
+        });
+      } catch (e) {
+        results.push({ fileName: file.name, error: String(e) });
+      }
+    }
+    setUploadResults(results);
+    setUploadingFiles([]);
+    if (newHistoryEntries.length > 0) {
+      const updated = [...newHistoryEntries, ...uploadHistory].slice(0, 100);
+      setUploadHistory(updated);
+      invoke("save_upload_history", { history: { entries: updated } }).catch((e) => console.warn("save upload history:", e));
+    }
+  };
+
+  const insertUploadUrl = (url: string) => {
+    setComposeBody((prev) => prev ? prev + "\n" + url : url);
+  };
+
+  const deleteHistoryEntry = (index: number) => {
+    const updated = uploadHistory.filter((_, i) => i !== index);
+    setUploadHistory(updated);
+    if (isTauriRuntime()) {
+      invoke("save_upload_history", { history: { entries: updated } }).catch((e) => console.warn("save upload history:", e));
+    }
+  };
+
   const probePostFlowTraceFromCompose = async () => {
     if (composeSubmitting) return;
     setComposeSubmitting(true);
@@ -1707,6 +1764,8 @@ export default function App() {
           });
         }
         setComposeOpen(false);
+        setUploadPanelOpen(false);
+        setUploadResults([]);
         const prevCount = tabCacheRef.current.get(threadUrl.trim())?.responses.length ?? 0;
         pendingMyPostRef.current = { threadUrl: threadUrl.trim(), body: postedBody, prevCount };
         // Re-fetch responses via standard path to update thread list counts, cache, and timestamps
@@ -2816,6 +2875,10 @@ export default function App() {
           }).catch(() => {});
         }
       }).catch(() => {});
+      // Load upload history
+      invoke<{ entries: { sourceUrl: string; thumbnail: string; pageUrl: string; fileName: string; uploadedAt: string }[] }>("load_upload_history").then((data) => {
+        setUploadHistory(data.entries);
+      }).catch((e) => console.warn("upload history load failed:", e));
     }
   }, []);
 
@@ -4200,7 +4263,7 @@ export default function App() {
             <span className="compose-target" title={threadUrl}>
               {selectedThreadItem ? selectedThreadItem.title : threadUrl}
             </span>
-            <button onClick={() => { setComposeOpen(false); setComposeResult(null); }}>閉じる</button>
+            <button onClick={() => { setComposeOpen(false); setComposeResult(null); setUploadPanelOpen(false); setUploadResults([]); }}>閉じる</button>
           </header>
           <div className="compose-grid">
             <label>
@@ -4237,6 +4300,7 @@ export default function App() {
           )}
           <div className="compose-actions">
             <button onClick={probePostFlowTraceFromCompose} disabled={composeSubmitting}>{composeSubmitting ? "送信中..." : `送信 (${composeSubmitKey === "shift" ? "Shift" : "Ctrl"}+Enter)`}</button>
+            <button onClick={() => setUploadPanelOpen((v) => { if (v) setUploadResults([]); return !v; })} title="画像アップロード" style={{ marginLeft: 4 }}><Upload size={14} /></button>
             <button onClick={async () => {
               setComposeResult({ ok: false, message: "診断中..." });
               try {
@@ -4245,8 +4309,65 @@ export default function App() {
               } catch (e) {
                 setComposeResult({ ok: false, message: `診断エラー: ${String(e)}` });
               }
-            }} style={{ marginLeft: 8, fontSize: "0.85em" }}>接続診断</button>
+            }} style={{ marginLeft: "auto", fontSize: "0.85em" }}>接続診断</button>
           </div>
+          {uploadPanelOpen && (
+            <div className="upload-panel">
+              <div className="upload-panel-tabs">
+                <button className={uploadPanelTab === "upload" ? "active" : ""} onClick={() => setUploadPanelTab("upload")}><Upload size={12} /> アップロード</button>
+                <button className={uploadPanelTab === "history" ? "active" : ""} onClick={() => setUploadPanelTab("history")}><History size={12} /> 履歴 ({uploadHistory.length})</button>
+              </div>
+              {uploadPanelTab === "upload" && (
+                <div className="upload-tab-content">
+                  <input ref={uploadFileRef} type="file" multiple accept="image/*,video/mp4,video/webm" style={{ display: "none" }} onChange={(e) => { if (e.target.files) handleUploadFiles(e.target.files); e.target.value = ""; }} />
+                  <button className="upload-select-btn" onClick={() => uploadFileRef.current?.click()} disabled={uploadingFiles.length > 0}>
+                    {uploadingFiles.length > 0 ? `アップロード中... (${uploadingFiles.length}件)` : "ファイルを選択 (最大4枚)"}
+                  </button>
+                  {uploadingFiles.length > 0 && (
+                    <div className="upload-progress">
+                      {uploadingFiles.map((f, i) => <div key={i} className="upload-progress-item">⏳ {f}</div>)}
+                    </div>
+                  )}
+                  {uploadResults.length > 0 && (
+                    <div className="upload-results">
+                      {uploadResults.map((r, i) => (
+                        <div key={i} className={`upload-result-item ${r.error ? "upload-err" : "upload-ok"}`}>
+                          {r.thumbnail && <img src={r.thumbnail} alt="" className="upload-result-thumb" />}
+                          <span className="upload-result-name">{r.fileName}</span>
+                          {r.sourceUrl ? (
+                            <span className="upload-result-actions">
+                              <button onClick={() => insertUploadUrl(r.sourceUrl!)} title="本文に挿入"><Copy size={12} /> 挿入</button>
+                              <span className="upload-result-link" onClick={() => { void invoke("open_external_url", { url: r.sourceUrl }).catch(() => window.open(r.sourceUrl, "_blank")); }} title="ブラウザで開く">{r.sourceUrl}</span>
+                            </span>
+                          ) : (
+                            <span className="upload-result-error">{r.error}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {uploadPanelTab === "history" && (
+                <div className="upload-tab-content upload-history-list">
+                  {uploadHistory.length === 0 && <div className="upload-empty">アップロード履歴はありません</div>}
+                  {uploadHistory.map((entry, i) => (
+                    <div key={i} className="upload-history-item">
+                      {entry.thumbnail && <img src={entry.thumbnail} alt="" className="upload-history-thumb" loading="lazy" />}
+                      <div className="upload-history-info">
+                        <span className="upload-history-name">{entry.fileName}</span>
+                        <span className="upload-history-date">{new Date(entry.uploadedAt).toLocaleString()}</span>
+                      </div>
+                      <div className="upload-history-actions">
+                        <button onClick={() => insertUploadUrl(entry.sourceUrl)} title="本文に挿入"><Copy size={12} /></button>
+                        <button onClick={() => deleteHistoryEntry(i)} title="削除"><Trash2 size={12} /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {composeResult && (
             <div className={`compose-result ${composeResult.ok ? "compose-result-ok" : "compose-result-err"}`}>
               {composeResult.ok ? "OK" : "NG"}: {composeResult.message}
