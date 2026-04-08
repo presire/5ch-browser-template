@@ -115,7 +115,10 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Read(//tmp/syn2chro/**)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "WebFetch(domain:tadaup.jp)",
+      "Bash(mv:*)",
+      "Bash(powershell -command \"Compress-Archive -Path ember.exe -DestinationPath ember-win-x64.zip -Force\")"
     ]
   }
 }

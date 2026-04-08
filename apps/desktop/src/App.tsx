@@ -4319,7 +4319,7 @@ export default function App() {
               </div>
               {uploadPanelTab === "upload" && (
                 <div className="upload-tab-content">
-                  <input ref={uploadFileRef} type="file" multiple accept="image/*,video/mp4,video/webm" style={{ display: "none" }} onChange={(e) => { if (e.target.files) handleUploadFiles(e.target.files); e.target.value = ""; }} />
+                  <input ref={uploadFileRef} type="file" multiple accept="image/*" style={{ display: "none" }} onChange={(e) => { if (e.target.files) handleUploadFiles(e.target.files); e.target.value = ""; }} />
                   <button className="upload-select-btn" onClick={() => uploadFileRef.current?.click()} disabled={uploadingFiles.length > 0}>
                     {uploadingFiles.length > 0 ? `アップロード中... (${uploadingFiles.length}件)` : "ファイルを選択 (最大4枚)"}
                   </button>

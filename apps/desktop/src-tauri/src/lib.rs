@@ -1158,8 +1158,6 @@ async fn upload_image(file_data: String, file_name: String) -> Result<ImageUploa
     let mime = if file_name.ends_with(".png") { "image/png" }
         else if file_name.ends_with(".gif") { "image/gif" }
         else if file_name.ends_with(".webp") { "image/webp" }
-        else if file_name.ends_with(".mp4") { "video/mp4" }
-        else if file_name.ends_with(".webm") { "video/webm" }
         else { "image/jpeg" };
     let part = multipart::Part::bytes(file_bytes)
         .file_name(file_name)
