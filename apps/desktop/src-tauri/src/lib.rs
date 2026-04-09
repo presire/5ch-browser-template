@@ -1136,6 +1136,11 @@ fn set_window_theme(window: tauri::WebviewWindow, dark: bool) -> Result<(), Stri
         .map_err(|e| format!("{}", e))
 }
 
+#[tauri::command]
+fn set_always_on_top(window: tauri::WebviewWindow, on_top: bool) -> Result<(), String> {
+    window.set_always_on_top(on_top).map_err(|e| format!("{}", e))
+}
+
 // --- Image upload (tadaup.jp) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1303,7 +1308,8 @@ pub fn run() {
             quit_app,
             upload_image,
             load_upload_history,
-            save_upload_history
+            save_upload_history,
+            set_always_on_top
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

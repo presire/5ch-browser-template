@@ -128,17 +128,26 @@ body {
 }
 
 .auto-refresh-toggle {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 3px;
   font-size: 11px;
   color: var(--sub);
   cursor: pointer;
+  line-height: 1;
 }
 
-.auto-refresh-toggle input {
-  width: auto;
-  margin: 0;
+.auto-refresh-toggle input[type="checkbox"] {
+  width: auto !important;
+  margin: 0 !important;
+  flex-shrink: 0;
+  position: relative;
+  top: 1px;
+}
+
+.auto-refresh-toggle span {
+  position: relative;
+  top: 1px;
 }
 
 .board-button-bar {

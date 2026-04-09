@@ -13,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, Film, ExternalLink, Upload, History, Copy, Trash2,
+  Image, Film, ExternalLink, Upload, History, Copy, Trash2, Pin,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -583,6 +583,7 @@ export default function App() {
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(60);
+  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [threadSortKey, setThreadSortKey] = useState<"fetched" | "id" | "title" | "res" | "got" | "new" | "lastFetch" | "speed">("id");
   const [threadSortAsc, setThreadSortAsc] = useState(true);
   const cachedSortOrderRef = useRef<string[]>([]);
@@ -2708,6 +2709,7 @@ export default function App() {
           thumbSize?: number;
           restoreSession?: boolean;
           autoRefreshInterval?: number;
+          alwaysOnTop?: boolean;
         };
         if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
         if (typeof parsed.threadPanePx === "number") {
@@ -2740,6 +2742,7 @@ export default function App() {
         if (typeof parsed.thumbSize === "number") setThumbSize(parsed.thumbSize);
         if (typeof parsed.restoreSession === "boolean") { setRestoreSession(parsed.restoreSession); restoreSessionRef.current = parsed.restoreSession; }
         if (typeof parsed.autoRefreshInterval === "number") setAutoRefreshInterval(parsed.autoRefreshInterval);
+        if (typeof parsed.alwaysOnTop === "boolean") setAlwaysOnTop(parsed.alwaysOnTop);
       } catch { /* ignore */ }
     };
     // Try localStorage first, then file-based persistence
@@ -3130,12 +3133,13 @@ export default function App() {
       thumbSize,
       restoreSession,
       autoRefreshInterval,
+      alwaysOnTop,
     });
     localStorage.setItem(LAYOUT_PREFS_KEY, payload);
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, restoreSession, autoRefreshInterval]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, restoreSession, autoRefreshInterval, alwaysOnTop]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -3168,6 +3172,12 @@ export default function App() {
       invoke("set_window_theme", { dark: darkMode }).catch(() => {});
     }
   }, [darkMode]);
+
+  useEffect(() => {
+    if (isTauriRuntime()) {
+      invoke("set_always_on_top", { onTop: alwaysOnTop }).catch(() => {});
+    }
+  }, [alwaysOnTop]);
 
   useEffect(() => {
     localStorage.setItem(COMPOSE_PREFS_KEY, JSON.stringify({ name: composeName, mail: composeMail, sage: composeSage, fontSize: composeFontSize }));
@@ -3255,6 +3265,8 @@ export default function App() {
             { text: darkMode ? "ライトテーマ" : "ダークテーマ", action: () => setDarkMode((v) => !v) },
             { text: "sep" },
             { text: showBoardButtons ? "板ボタンを非表示" : "板ボタンを表示", action: () => setShowBoardButtons((v) => !v) },
+            { text: "sep" },
+            { text: alwaysOnTop ? "最前面表示を解除" : "最前面に固定", action: () => setAlwaysOnTop((v) => !v) },
           ]},
           { label: "板", items: [
             { text: "板一覧を取得", action: () => fetchBoardCategories() },
@@ -3315,7 +3327,7 @@ export default function App() {
             checked={autoRefreshEnabled}
             onChange={(e) => setAutoRefreshEnabled(e.target.checked)}
           />
-          自動更新
+          <span>自動更新</span>
         </label>
         <button onClick={() => setNgPanelOpen((v) => !v)}>NG</button>
       </div>
@@ -4976,6 +4988,10 @@ export default function App() {
                 <label className="settings-row">
                   <span>自動更新間隔 (秒)</span>
                   <input type="number" value={autoRefreshInterval} min={10} max={600} onChange={(e) => setAutoRefreshInterval(Number(e.target.value))} />
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={alwaysOnTop} onChange={(e) => setAlwaysOnTop(e.target.checked)} />
+                  <span>ウィンドウを最前面に固定</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={showBoardButtons} onChange={(e) => setShowBoardButtons(e.target.checked)} />
