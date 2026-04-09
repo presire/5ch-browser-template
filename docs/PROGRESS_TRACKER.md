@@ -59,6 +59,40 @@
 - [ ] 書き込み後のスレ一覧自動更新
 - [ ] Linux版の正式配布
 
+## 未実装（計画済み）
+
+### 画像一括ダウンロード
+
+スレ全体またはレス単位で画像をまとめてダウンロードする。
+
+**変更ファイル**
+- `apps/desktop/src-tauri/src/lib.rs` — `download_images` コマンド追加
+- `apps/desktop/src-tauri/Cargo.toml` — `tauri-plugin-dialog` 追加
+- `apps/desktop/src-tauri/tauri.conf.json` — `dialog` プラグイン許可
+- `apps/desktop/src-tauri/capabilities/default.json` — `dialog:default` 追加
+- `apps/desktop/src/App.tsx` — UI（ボタン、レスメニュー項目、URL抽出ロジック）
+- `apps/desktop/src/styles.css` — ボタンスタイル
+- `apps/desktop/package.json` — `@tauri-apps/plugin-dialog` 追加
+
+**Rust側**
+- `download_images(urls: Vec<String>, dest_dir: String) -> Result<DownloadResult, String>`
+- `reqwest` で各URLをGET → `dest_dir` にファイル保存
+- ファイル名はURLのパス末尾から生成、重複時は `_1`, `_2` サフィックス
+- 戻り値: 成功数・失敗数
+
+**フロントエンド側**
+- ツールバーに「画像DL」ボタン（`Download` lucide icon）— スレ全体の画像を一括DL
+- レス右クリックメニューに「画像を保存」— そのレスの画像のみDL（画像がある場合のみ表示）
+- `@tauri-apps/plugin-dialog` の `open()` でフォルダ選択ダイアログ
+- ステータスバーに進捗表示
+
+**フロー**
+1. ユーザーがDLボタン/メニュー項目クリック
+2. フォルダ選択ダイアログ表示
+3. responseItems から画像URL抽出（既存の画像判定正規表現を流用）
+4. `invoke("download_images", { urls, destDir })` 呼び出し
+5. ステータスバーに結果表示（「12枚ダウンロード完了」等）
+
 ## 未実装（検討中）
 
 ### 外部板対応

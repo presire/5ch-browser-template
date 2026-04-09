@@ -118,7 +118,24 @@
       "Read(//tmp/**)",
       "WebFetch(domain:tadaup.jp)",
       "Bash(mv:*)",
-      "Bash(powershell -command \"Compress-Archive -Path ember.exe -DestinationPath ember-win-x64.zip -Force\")"
+      "Bash(powershell -command \"Compress-Archive -Path ember.exe -DestinationPath ember-win-x64.zip -Force\")",
+      "Bash(sed -i 's/\"version\": \"0.0.73\"/\"version\": \"0.0.74\"/' apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json)",
+      "Bash(sed -i 's/^version = \"0.0.73\"/version = \"0.0.74\"/' apps/desktop/src-tauri/Cargo.toml)",
+      "Bash(sed -i 's/\"version\": \"0.0.74\"/\"version\": \"0.0.75\"/' apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json)",
+      "Bash(sed -i 's/^version = \"0.0.74\"/version = \"0.0.75\"/' apps/desktop/src-tauri/Cargo.toml)",
+      "Bash(mv ember-win-x64.zip ../../out/)",
+      "Bash(iconv -f SHIFT_JIS -t UTF-8)",
+      "Bash(sed -i 's/\"version\": \"0.0.75\"/\"version\": \"0.0.76\"/' apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json)",
+      "Bash(sed -i 's/^version = \"0.0.75\"/version = \"0.0.76\"/' apps/desktop/src-tauri/Cargo.toml)",
+      "Bash(sed -i 's/\"version\": \"0.0.76\"/\"version\": \"0.0.77\"/' apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json)",
+      "Bash(sed -i 's/^version = \"0.0.76\"/version = \"0.0.77\"/' apps/desktop/src-tauri/Cargo.toml)",
+      "Bash(sed -i 's/\"version\": \"0.0.77\"/\"version\": \"0.0.78\"/' apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json)",
+      "Bash(sed -i 's/^version = \"0.0.77\"/version = \"0.0.78\"/' apps/desktop/src-tauri/Cargo.toml)",
+      "Bash(sed -i 's/\"version\": \"0.0.78\"/\"version\": \"0.0.79\"/' apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json)",
+      "Bash(sed -i 's/^version = \"0.0.78\"/version = \"0.0.79\"/' apps/desktop/src-tauri/Cargo.toml)",
+      "Bash(taskkill //F //IM cargo.exe)",
+      "Bash(sed -i 's/\"version\": \"0.0.79\"/\"version\": \"0.0.80\"/' apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json)",
+      "Bash(sed -i 's/^version = \"0.0.79\"/version = \"0.0.80\"/' apps/desktop/src-tauri/Cargo.toml)"
     ]
   }
 }
