@@ -2231,7 +2231,7 @@ export default function App() {
   const onResponseNoClick = (e: ReactMouseEvent, responseId: number) => {
     e.stopPropagation();
     setSelectedResponse(responseId);
-    const p = clampMenuPosition(e.clientX, e.clientY, 240, 280);
+    const p = clampMenuPosition(e.clientX, e.clientY, 240, 320);
     setResponseMenu({ x: p.x, y: p.y, responseId });
     setThreadMenu(null);
   };
