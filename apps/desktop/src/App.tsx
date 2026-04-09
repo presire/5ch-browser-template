@@ -2120,14 +2120,19 @@ export default function App() {
       if (!arr.includes(from)) arr.push(from);
     };
     for (const r of responseItems) {
-      // single >>N or >N
-      for (const m of r.text.matchAll(/>>(\d+)/g)) {
-        addRef(Number(m[1]), r.id);
+      const plain = r.text.replace(/<[^>]+>/g, "");
+      // comma-separated >>N,M,... or >N,M,...
+      for (const m of plain.matchAll(/>>?(\d+(?:[,、]\d+)+)/g)) {
+        for (const n of m[1].split(/[,、]/)) addRef(Number(n), r.id);
       }
       // range >>N-M or >N-M
-      for (const m of r.text.matchAll(/>>(\d+)-(\d+)/g)) {
+      for (const m of plain.matchAll(/>>?(\d+)-(\d+)/g)) {
         const s = Number(m[1]), e = Number(m[2]);
         for (let i = s; i <= e && i - s < 1000; i++) addRef(i, r.id);
+      }
+      // single >>N or >N
+      for (const m of plain.matchAll(/>>?(\d+)(?![\d,、\-])/g)) {
+        addRef(Number(m[1]), r.id);
       }
     }
     return map;
