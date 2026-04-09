@@ -2061,7 +2061,8 @@ export default function App() {
     if (myPostNos.size === 0) return new Set<number>();
     const set = new Set<number>();
     for (const r of responseItems) {
-      const refs = r.text.matchAll(/>>(\d+)/g);
+      const plain = decodeHtmlEntities(r.text.replace(/<[^>]+>/g, ""));
+      const refs = plain.matchAll(/>>?(\d+)/g);
       for (const m of refs) {
         if (myPostNos.has(Number(m[1]))) { set.add(r.id); break; }
       }
