@@ -2325,7 +2325,10 @@ export default function App() {
     });
   };
 
-  const buildResponseUrl = (responseId: number) => `${threadUrl.endsWith("/") ? threadUrl : `${threadUrl}/`}${responseId}`;
+  const buildResponseUrl = (responseId: number) => {
+    const base = (activeTabIndex >= 0 && activeTabIndex < threadTabs.length) ? threadTabs[activeTabIndex].threadUrl : threadUrl;
+    return `${base.endsWith("/") ? base : `${base}/`}${responseId}`;
+  };
 
   const appendComposeQuote = (line: string) => {
     setComposeOpen(true);
