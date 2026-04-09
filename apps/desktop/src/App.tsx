@@ -3093,11 +3093,17 @@ export default function App() {
     window.addEventListener("mouseup", onMouseUp);
     window.addEventListener("wheel", onWheel, { passive: false });
 
-    // Save window size on resize (debounced)
+    // Save window size on resize (debounced) — skip while maximized
     let resizeTimer: ReturnType<typeof setTimeout>;
     const onResize = () => {
       clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
+      resizeTimer = setTimeout(async () => {
+        if (isTauriRuntime()) {
+          try {
+            const { getCurrentWindow } = await import("@tauri-apps/api/window");
+            if (await getCurrentWindow().isMaximized()) return;
+          } catch { /* proceed with save */ }
+        }
         const width = window.innerWidth;
         const height = window.innerHeight;
         localStorage.setItem(WINDOW_STATE_KEY, JSON.stringify({ width, height }));

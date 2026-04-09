@@ -1090,8 +1090,8 @@ fn delete_thread_cache(thread_url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn quit_app() {
-    std::process::exit(0);
+fn quit_app(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.close().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1113,11 +1113,17 @@ fn clear_login_cookies(provider: String) -> Result<(), String> {
 struct WindowSize {
     width: f64,
     height: f64,
+    #[serde(default)]
+    x: Option<i32>,
+    #[serde(default)]
+    y: Option<i32>,
+    #[serde(default)]
+    maximized: bool,
 }
 
 #[tauri::command]
-fn save_window_size(width: f64, height: f64) -> Result<(), String> {
-    let size = WindowSize { width, height };
+fn save_window_size(width: f64, height: f64, x: Option<i32>, y: Option<i32>, maximized: Option<bool>) -> Result<(), String> {
+    let size = WindowSize { width, height, x, y, maximized: maximized.unwrap_or(false) };
     core_store::save_json("window_size.json", &size).map_err(|e| e.to_string())
 }
 
@@ -1259,10 +1265,75 @@ pub fn run() {
             }
         }))
         .setup(|app| {
-            if let Ok(size) = core_store::load_json::<WindowSize>("window_size.json") {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.set_size(tauri::LogicalSize::new(size.width, size.height));
+            if let Some(win) = app.get_webview_window("main") {
+                // Restore saved window size, position, and maximized state
+                let saved = core_store::load_json::<WindowSize>("window_size.json").ok();
+                if let Some(ref s) = saved {
+                    let _ = win.set_size(tauri::LogicalSize::new(s.width, s.height));
+                    if let (Some(x), Some(y)) = (s.x, s.y) {
+                        let x = x.max(0);
+                        let y = y.max(0);
+                        let monitors = win.available_monitors().unwrap_or_default();
+                        let pos_visible = monitors.iter().any(|m| {
+                            let mp = m.position();
+                            let ms = m.size();
+                            x >= mp.x && x < mp.x + ms.width as i32
+                                && y >= mp.y && y < mp.y + ms.height as i32
+                        });
+                        if pos_visible {
+                            let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+                        }
+                    }
+                    if s.maximized {
+                        let _ = win.maximize();
+                    }
                 }
+
+                // Track maximize state to restore saved size on un-maximize
+                let started_maximized = saved.as_ref().map_or(false, |s| s.maximized);
+                let restore_on_unmaximize = std::cell::Cell::new(started_maximized);
+                let restore_w = saved.as_ref().map_or(1400.0, |s| s.width);
+                let restore_h = saved.as_ref().map_or(900.0, |s| s.height);
+                let restore_x = saved.as_ref().and_then(|s| s.x);
+                let restore_y = saved.as_ref().and_then(|s| s.y);
+
+                let win_clone = win.clone();
+                win.on_window_event(move |event| {
+                    match event {
+                        tauri::WindowEvent::Resized(_) => {
+                            if restore_on_unmaximize.get() {
+                                let is_max = win_clone.is_maximized().unwrap_or(true);
+                                if !is_max {
+                                    restore_on_unmaximize.set(false);
+                                    let _ = win_clone.set_size(tauri::LogicalSize::new(restore_w, restore_h));
+                                    if let (Some(x), Some(y)) = (restore_x, restore_y) {
+                                        let _ = win_clone.set_position(tauri::PhysicalPosition::new(x, y));
+                                    }
+                                }
+                            }
+                        }
+                        tauri::WindowEvent::CloseRequested { .. } => {
+                            let is_maximized = win_clone.is_maximized().unwrap_or(false);
+                            if is_maximized {
+                                if let Ok(mut prev) = core_store::load_json::<WindowSize>("window_size.json") {
+                                    prev.maximized = true;
+                                    let _ = core_store::save_json("window_size.json", &prev);
+                                }
+                            } else if let (Ok(pos), Ok(inner_size)) = (win_clone.outer_position(), win_clone.inner_size()) {
+                                let scale = win_clone.scale_factor().unwrap_or(1.0);
+                                let size = WindowSize {
+                                    width: inner_size.width as f64 / scale,
+                                    height: inner_size.height as f64 / scale,
+                                    x: Some(pos.x.max(0)),
+                                    y: Some(pos.y.max(0)),
+                                    maximized: false,
+                                };
+                                let _ = core_store::save_json("window_size.json", &size);
+                            }
+                        }
+                        _ => {}
+                    }
+                });
             }
             Ok(())
         })
