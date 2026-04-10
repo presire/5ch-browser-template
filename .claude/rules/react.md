@@ -5,7 +5,7 @@ globs: "**/*.tsx,**/*.ts"
 ## Ember React/TypeScript コード規約
 
 ### アーキテクチャ
-- `App.tsx` は単一ファイルモノリス — 意図的な設計であり、明示的な指示がない限り分割しない
+- `App.tsx` は現在単一ファイルモノリス構成 — 分割推奨、大規模化時は分割すること
 - 全状態は App.tsx 内の `useState`/`useEffect` で管理 — Redux, Context Providerは不使用
 - 外部UIライブラリ不使用 — 全コンポーネントは手書き
 

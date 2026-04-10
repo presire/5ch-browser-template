@@ -85,11 +85,11 @@ cd apps/desktop && npx tsc --noEmit      # TypeScript型チェック
 
 ## アーキテクチャ要点
 
-- **フロントエンド**: `App.tsx` 単一ファイルモノリス。状態は `useState`/`useEffect` で完結。外部UIライブラリ不使用
+- **フロントエンド**: `App.tsx` は複数ファイルに分割して開発する（分割推奨）。状態は `useState`/`useEffect` で完結。外部UIライブラリ不使用
 - **スタイル**: `styles.css` 単一ファイル。`.dark` クラスでダークモード切替
 - **ランタイム依存**: react, react-dom, @tauri-apps/api, lucide-react のみ
 - **Tauri IPC**: `invoke()` は `isTauriRuntime()` チェックで囲む。コマンド名は snake_case、パラメータはcamelCase
-- **Rust crate**: 各crateは単一 `lib.rs` を維持 (2000行超まで分割しない)
+- **Rust crate**: ライブラリcrate (`core-*`) は各 `lib.rs` に集約。Tauriアプリ (`ember`) は `commands/`, `types.rs`, `state.rs` 等に分割して開発する（分割推奨）
 - **エラー処理**: Tauriコマンドは `Result<T, String>`、ライブラリcrateは `thiserror` カスタム型
 - **5ch固有**: レスポンスは Shift_JIS デコード必須、URLは `normalize_5ch_url()` を通す
 - **永続化**: localStorage (`desktop.*` プレフィックス) + JSON/SQLite (core-store 経由)
@@ -106,7 +106,7 @@ cd apps/desktop && npx tsc --noEmit      # TypeScript型チェック
 - `.catch(() => {})` 禁止 — エラーは `console.warn` でログ
 - 新規npm依存の無断追加禁止
 - Cookie値 (`Be3M`, `Be3D`, `sid`) のDEBUG以上でのログ記録禁止
-- `App.tsx` の分割禁止 (明示的指示がない限り)
+- `App.tsx` は複数ファイルに分割して開発する（分割推奨）
 - リリースビルドで `cargo build --release -p ember` を直接使用禁止 — 必ず `npx tauri build` を通すこと (フロントエンドが埋め込まれず白画面になる)
 
 ## ドキュメント

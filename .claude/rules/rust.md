@@ -21,10 +21,11 @@ globs: "**/*.rs"
 - 投稿URLは5chドメイン (`.5ch.io`) に限定検証する
 
 ### アーキテクチャ
-- 各crateは単一 `lib.rs` を維持 — 2000行超でない限り分割しない
+- 各crateは現在単一 lib.rs から始める — 分割推奨、大規模化時は分割すること
 - 新規Tauriコマンドは `lib.rs` と `generate_handler![]` マクロの両方に追加
 - ワークスペース依存はルート `Cargo.toml` の `[workspace.dependencies]` で宣言 — crate側は `workspace = true`
 - 全 `reqwest::Client::builder()` に `.timeout(Duration::from_secs(30))` を含めること
+- **Tauriアプリ**: `apps/desktop/src-tauri/src/` はcommands/等に分割済み (types.rs, state.rs, commands/*.rs, lib.rs(runのみ))
 
 ### テスト
 - `core-parse` テストは純粋ユニットテスト (ネットワーク不要)
