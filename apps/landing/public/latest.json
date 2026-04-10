@@ -1,16 +1,16 @@
 {
-  "version": "0.0.83",
-  "released_at": "2026-04-10T07:37:19+09:00",
-  "download_page_url": "https://github.com/kiyohken2000/5ch-browser-template/releases/tag/v0.0.83",
+  "version": "0.0.84",
+  "released_at": "2026-04-10T09:30:05+09:00",
+  "download_page_url": "https://github.com/kiyohken2000/5ch-browser-template/releases/tag/v0.0.84",
   "platforms": {
     "windows-x64": {
-      "sha256": "155018494bb4209a2fe73393df44e44506441433c38738b5bba4c84bceac5b21",
-      "size": 5892132,
+      "sha256": "59a0981328ba0aa318f05196407b9418a90f64322c59984d26a525b8110c9468",
+      "size": 5893673,
       "filename": "ember-win-x64.zip"
     },
     "macos-arm64": {
-      "sha256": "3d4748d9f18dde724b0f9d05d938980f88d993bc26a429875bf8f502d7a10986",
-      "size": 6319130,
+      "sha256": "728721bfa79394dbedf1130bc6c29be70ac1b450d53f3a28074069663feecd13",
+      "size": 6322138,
       "filename": "ember-mac-arm64.zip"
     }
   }
