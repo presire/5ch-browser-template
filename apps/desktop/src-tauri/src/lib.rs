@@ -1238,6 +1238,72 @@ fn save_upload_history(history: UploadHistory) -> Result<(), String> {
     core_store::save_json("upload_history.json", &history).map_err(|e| e.to_string())
 }
 
+// --- Image download ---
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadResult {
+    success_count: u32,
+    fail_count: u32,
+}
+
+#[tauri::command]
+async fn download_images(urls: Vec<String>, dest_dir: String) -> Result<DownloadResult, String> {
+    let dest = std::path::Path::new(&dest_dir);
+    if !dest.is_dir() {
+        return Err(format!("保存先ディレクトリが存在しません: {}", dest_dir));
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTPクライアント作成エラー: {}", e))?;
+    let mut success_count: u32 = 0;
+    let mut fail_count: u32 = 0;
+    for url in &urls {
+        // Extract filename from URL path
+        let file_name = url
+            .split('?')
+            .next()
+            .unwrap_or(url)
+            .rsplit('/')
+            .next()
+            .unwrap_or("image.jpg")
+            .to_string();
+        // Determine unique file path
+        let mut target = dest.join(&file_name);
+        if target.exists() {
+            let stem = target.file_stem().and_then(|s| s.to_str()).unwrap_or("image").to_string();
+            let ext = target.extension().and_then(|s| s.to_str()).unwrap_or("jpg").to_string();
+            let mut n = 1u32;
+            loop {
+                target = dest.join(format!("{}_{}.{}", stem, n, ext));
+                if !target.exists() { break; }
+                n += 1;
+            }
+        }
+        match client.get(url).send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    match resp.bytes().await {
+                        Ok(bytes) => {
+                            if std::fs::write(&target, &bytes).is_ok() {
+                                success_count += 1;
+                            } else {
+                                fail_count += 1;
+                            }
+                        }
+                        Err(_) => { fail_count += 1; }
+                    }
+                } else {
+                    fail_count += 1;
+                }
+            }
+            Err(_) => { fail_count += 1; }
+        }
+    }
+    Ok(DownloadResult { success_count, fail_count })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Disable WebKit2GTK's DMA-BUF renderer and GPU compositing on Wayland
@@ -1257,6 +1323,7 @@ pub fn run() {
     let _ = core_store::init_portable_layout();
     let _ = core_store::append_log("app started");
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // Focus the existing window when a second instance is launched
             if let Some(win) = app.get_webview_window("main") {
@@ -1380,7 +1447,8 @@ pub fn run() {
             upload_image,
             load_upload_history,
             save_upload_history,
-            set_always_on_top
+            set_always_on_top,
+            download_images
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
