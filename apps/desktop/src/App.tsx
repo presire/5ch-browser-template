@@ -13,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff,
+  Image, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -159,6 +159,7 @@ type ResizeDragState =
   | { mode: "thread-response"; startX: number; startBoardPx: number; startThreadPx: number }
   | { mode: "response-rows"; startY: number; startThreadPx: number; responseLayoutHeight: number }
   | { mode: "col-resize"; colKey: string; startX: number; startWidth: number; reverse: boolean };
+type PaneLayoutMode = "classic" | "river";
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const clampMenuPosition = (x: number, y: number, width: number, height: number) => ({
@@ -646,6 +647,8 @@ export default function App() {
   const tabDragRef = useRef<{ srcIndex: number; startX: number } | null>(null);
   const tabDragOverRef = useRef<number | null>(null);
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; tabIndex: number } | null>(null);
+  const [threadTitlePopup, setThreadTitlePopup] = useState<{ x: number; y: number; title: string } | null>(null);
+  const threadTitleHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [responseReloadMenuOpen, setResponseReloadMenuOpen] = useState(false);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -672,6 +675,7 @@ export default function App() {
   const [boardPanePx, setBoardPanePx] = useState(DEFAULT_BOARD_PANE_PX);
   const [threadPanePx, setThreadPanePx] = useState(DEFAULT_THREAD_PANE_PX);
   const [responseTopRatio, setResponseTopRatio] = useState(DEFAULT_RESPONSE_TOP_RATIO);
+  const [paneLayoutMode, setPaneLayoutMode] = useState<PaneLayoutMode>("classic");
   const resizeDragRef = useRef<ResizeDragState | null>(null);
   const [threadColWidths, setThreadColWidths] = useState<Record<string, number>>({ ...DEFAULT_COL_WIDTHS });
   const layoutPrefsLoadedRef = useRef(false);
@@ -2300,6 +2304,27 @@ export default function App() {
     setThreadMenu({ x: p.x, y: p.y, threadId });
     setResponseMenu(null);
   };
+  const hideThreadTitlePopup = () => {
+    if (threadTitleHoverTimerRef.current) {
+      clearTimeout(threadTitleHoverTimerRef.current);
+      threadTitleHoverTimerRef.current = null;
+    }
+    setThreadTitlePopup(null);
+  };
+  const onThreadTitleMouseEnter = (event: ReactMouseEvent<HTMLTableCellElement>, title: string) => {
+    if (paneLayoutMode !== "river") return;
+    hideThreadTitlePopup();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const popupWidth = Math.min(720, Math.max(320, Math.floor(window.innerWidth * 0.6)));
+    const p = clampMenuPosition(rect.left, rect.bottom + 2, popupWidth, 100);
+    threadTitleHoverTimerRef.current = setTimeout(() => {
+      setThreadTitlePopup({ x: p.x, y: p.y, title: decodeHtmlEntities(title) });
+      threadTitleHoverTimerRef.current = null;
+    }, 200);
+  };
+  const onThreadTitleMouseLeave = () => {
+    hideThreadTitlePopup();
+  };
 
   const onResponseNoClick = (e: ReactMouseEvent, responseId: number) => {
     e.stopPropagation();
@@ -2544,6 +2569,7 @@ export default function App() {
     setBoardPanePx(DEFAULT_BOARD_PANE_PX);
     setThreadPanePx(DEFAULT_THREAD_PANE_PX);
     setResponseTopRatio(DEFAULT_RESPONSE_TOP_RATIO);
+    setPaneLayoutMode("classic");
     setThreadColWidths({ ...DEFAULT_COL_WIDTHS });
     setBoardsFontSize(12);
     setThreadsFontSize(12);
@@ -2582,6 +2608,17 @@ export default function App() {
 
   const beginResponseRowResize = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
+    if (paneLayoutMode === "river") {
+      resizeDragRef.current = {
+        mode: "thread-response",
+        startX: event.clientX,
+        startBoardPx: boardPanePx,
+        startThreadPx: threadPanePx,
+      };
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+      return;
+    }
     const layoutHeight = responseLayoutRef.current?.clientHeight ?? 360;
     resizeDragRef.current = {
       mode: "response-rows",
@@ -2761,6 +2798,19 @@ export default function App() {
   }, [selectedThread, selectedResponse, visibleThreadItems, responseItems, activeTabIndex, threadTabs, responseReloadMenuOpen]);
 
   useEffect(() => {
+    if (paneLayoutMode !== "river") setThreadTitlePopup(null);
+  }, [paneLayoutMode]);
+
+  useEffect(() => {
+    return () => {
+      if (threadTitleHoverTimerRef.current) {
+        clearTimeout(threadTitleHoverTimerRef.current);
+        threadTitleHoverTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const applyPrefs = (raw: string | null) => {
       if (!raw) return;
       try {
@@ -2768,6 +2818,7 @@ export default function App() {
           boardPanePx?: number;
           threadPanePx?: number;
           responseTopRatio?: number;
+          paneLayoutMode?: PaneLayoutMode;
           fontSize?: number;
           boardsFontSize?: number;
           threadsFontSize?: number;
@@ -2798,6 +2849,7 @@ export default function App() {
           setThreadPanePx(nextThread);
           setResponseTopRatio(parsed.responseTopRatio);
         }
+        if (parsed.paneLayoutMode === "classic" || parsed.paneLayoutMode === "river") setPaneLayoutMode(parsed.paneLayoutMode);
         const fallbackFs = typeof parsed.fontSize === "number" ? parsed.fontSize : 12;
         setBoardsFontSize(typeof parsed.boardsFontSize === "number" ? parsed.boardsFontSize : fallbackFs);
         setThreadsFontSize(typeof parsed.threadsFontSize === "number" ? parsed.threadsFontSize : fallbackFs);
@@ -3064,26 +3116,42 @@ export default function App() {
 
   useEffect(() => {
     const ensurePaneBounds = () => {
-      const maxBoard = Math.max(
-        MIN_BOARD_PANE_PX,
-        window.innerWidth - MIN_RESPONSE_PANE_PX - SPLITTER_PX
-      );
-      const nextBoard = clamp(boardPanePx, MIN_BOARD_PANE_PX, maxBoard);
-      if (nextBoard !== boardPanePx) setBoardPanePx(nextBoard);
+      if (paneLayoutMode === "river") {
+        const maxBoard = Math.max(
+          MIN_BOARD_PANE_PX,
+          window.innerWidth - MIN_THREAD_PANE_PX - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+        );
+        const nextBoard = clamp(boardPanePx, MIN_BOARD_PANE_PX, maxBoard);
+        if (nextBoard !== boardPanePx) setBoardPanePx(nextBoard);
 
-      const layoutHeight = responseLayoutRef.current?.clientHeight ?? Math.max(520, window.innerHeight - 180);
-      const maxThread = Math.max(MIN_THREAD_PANE_PX, layoutHeight - MIN_RESPONSE_BODY_PX - SPLITTER_PX);
-      const nextThread = clamp(threadPanePx, MIN_THREAD_PANE_PX, maxThread);
-      if (nextThread !== threadPanePx) {
-        setThreadPanePx(nextThread);
-        setResponseTopRatio((nextThread / Math.max(layoutHeight, 1)) * 100);
+        const maxThread = Math.max(
+          MIN_THREAD_PANE_PX,
+          window.innerWidth - nextBoard - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+        );
+        const nextThread = clamp(threadPanePx, MIN_THREAD_PANE_PX, maxThread);
+        if (nextThread !== threadPanePx) setThreadPanePx(nextThread);
+      } else {
+        const maxBoard = Math.max(
+          MIN_BOARD_PANE_PX,
+          window.innerWidth - MIN_RESPONSE_PANE_PX - SPLITTER_PX
+        );
+        const nextBoard = clamp(boardPanePx, MIN_BOARD_PANE_PX, maxBoard);
+        if (nextBoard !== boardPanePx) setBoardPanePx(nextBoard);
+
+        const layoutHeight = responseLayoutRef.current?.clientHeight ?? Math.max(520, window.innerHeight - 180);
+        const maxThread = Math.max(MIN_THREAD_PANE_PX, layoutHeight - MIN_RESPONSE_BODY_PX - SPLITTER_PX);
+        const nextThread = clamp(threadPanePx, MIN_THREAD_PANE_PX, maxThread);
+        if (nextThread !== threadPanePx) {
+          setThreadPanePx(nextThread);
+          setResponseTopRatio((nextThread / Math.max(layoutHeight, 1)) * 100);
+        }
       }
     };
 
     ensurePaneBounds();
     window.addEventListener("resize", ensurePaneBounds);
     return () => window.removeEventListener("resize", ensurePaneBounds);
-  }, [boardPanePx, threadPanePx]);
+  }, [boardPanePx, threadPanePx, paneLayoutMode]);
 
   useEffect(() => {
     const closeHoverPreview = () => {
@@ -3130,12 +3198,26 @@ export default function App() {
       }
       const deltaX = event.clientX - drag.startX;
       if (drag.mode === "board-thread") {
-        const maxBoard = Math.max(
-          MIN_BOARD_PANE_PX,
-          window.innerWidth - MIN_RESPONSE_PANE_PX - SPLITTER_PX
-        );
+        const maxBoard = paneLayoutMode === "river"
+          ? Math.max(
+            MIN_BOARD_PANE_PX,
+            window.innerWidth - drag.startThreadPx - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+          )
+          : Math.max(
+            MIN_BOARD_PANE_PX,
+            window.innerWidth - MIN_RESPONSE_PANE_PX - SPLITTER_PX
+          );
         const nextBoard = clamp(drag.startBoardPx + deltaX, MIN_BOARD_PANE_PX, maxBoard);
         setBoardPanePx(nextBoard);
+        return;
+      }
+      if (drag.mode === "thread-response" && paneLayoutMode === "river") {
+        const maxThread = Math.max(
+          MIN_THREAD_PANE_PX,
+          window.innerWidth - drag.startBoardPx - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+        );
+        const nextThread = clamp(drag.startThreadPx + deltaX, MIN_THREAD_PANE_PX, maxThread);
+        setThreadPanePx(nextThread);
       }
     };
 
@@ -3193,7 +3275,7 @@ export default function App() {
       window.removeEventListener("resize", onResize);
       clearTimeout(resizeTimer);
     };
-  }, []);
+  }, [paneLayoutMode]);
 
   // Mouse gesture detection
   useEffect(() => {
@@ -3341,6 +3423,7 @@ export default function App() {
       boardPanePx,
       threadPanePx,
       responseTopRatio,
+      paneLayoutMode,
       boardsFontSize,
       threadsFontSize,
       responsesFontSize,
@@ -3365,7 +3448,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -3548,6 +3631,20 @@ export default function App() {
       <div className="tool-bar">
         <button onClick={() => { void fetchMenu(); void fetchBoardCategories(); }} title="板更新"><ClipboardList size={14} /></button>
         <span className="tool-sep" />
+        <button
+          className={`title-action-btn ${paneLayoutMode === "river" ? "active-toggle" : ""}`}
+          onClick={() => {
+            setPaneLayoutMode((prev) => {
+              const next: PaneLayoutMode = prev === "classic" ? "river" : "classic";
+              setStatus(next === "river" ? "layout: river" : "layout: classic");
+              return next;
+            });
+          }}
+          title={paneLayoutMode === "river" ? "通常レイアウトに切替" : "川型レイアウトに切替"}
+          aria-label="レイアウト切替"
+        >
+          <Columns3 size={14} />
+        </button>
         <input className="address-input" value={locationInput} onChange={(e) => setLocationInput(e.target.value)} onKeyDown={onLocationInputKeyDown} onFocus={(e) => e.target.select()} />
         <button onClick={goFromLocationInput}>移動</button>
         <span className="tool-sep" />
@@ -3884,8 +3981,10 @@ export default function App() {
         />
         <div
           ref={responseLayoutRef}
-          className="right-pane"
-          style={{ gridTemplateRows: `${threadPanePx}px ${SPLITTER_PX}px 1fr` }}
+          className={`right-pane ${paneLayoutMode === "river" ? "right-pane-river" : ""}`}
+          style={paneLayoutMode === "river"
+            ? { gridTemplateColumns: `${threadPanePx}px ${SPLITTER_PX}px 1fr` }
+            : { gridTemplateRows: `${threadPanePx}px ${SPLITTER_PX}px 1fr` }}
         >
         <section className="pane threads" onMouseDown={() => setFocusedPane("threads")} style={{ '--fs-delta': `${threadsFontSize - 12}px` } as React.CSSProperties}>
           {threadNgOpen && (
@@ -3917,7 +4016,7 @@ export default function App() {
               )}
             </div>
           )}
-          <div className="threads-table-wrap" ref={threadListScrollRef}>
+          <div className="threads-table-wrap" ref={threadListScrollRef} onScroll={hideThreadTitlePopup}>
           <table>
             <thead>
               <tr>
@@ -3998,6 +4097,8 @@ export default function App() {
                     <td>{t.id}</td>
                     <td
                       className="thread-title-cell"
+                      onMouseEnter={(e) => onThreadTitleMouseEnter(e, t.title)}
+                      onMouseLeave={onThreadTitleMouseLeave}
                       dangerouslySetInnerHTML={renderHighlightedPlainText(t.title, threadSearchQuery)}
                     />
                     <td>{t.res >= 0 ? t.res : "-"}</td>
@@ -4021,10 +4122,10 @@ export default function App() {
           </div>
         </section>
         <div
-          className="row-splitter"
+          className={`row-splitter ${paneLayoutMode === "river" ? "row-splitter-river" : ""}`}
           role="separator"
-          aria-orientation="horizontal"
-          aria-label="Resize threads and responses"
+          aria-orientation={paneLayoutMode === "river" ? "vertical" : "horizontal"}
+          aria-label={paneLayoutMode === "river" ? "Resize threads pane" : "Resize threads and responses"}
           onMouseDown={beginResponseRowResize}
           onClick={(e) => e.stopPropagation()}
         />
@@ -4685,6 +4786,11 @@ export default function App() {
             ))}
           </div>
         </section>
+      )}
+      {paneLayoutMode === "river" && threadTitlePopup && (
+        <div className="thread-title-hover-popup" style={{ left: threadTitlePopup.x, top: threadTitlePopup.y }}>
+          {threadTitlePopup.title}
+        </div>
       )}
       {threadMenu && (
         <div className="thread-menu" style={{ left: threadMenu.x, top: threadMenu.y }} onClick={(e) => e.stopPropagation()}>
