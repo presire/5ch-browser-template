@@ -59,6 +59,12 @@
         ]
       }
     },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      }
+    },
     "macOS": {
       "minimumSystemVersion": "13.0"
     }
