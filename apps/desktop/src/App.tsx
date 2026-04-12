@@ -95,6 +95,7 @@ type BoardEntry = { boardName: string; url: string };
 type BoardCategory = { categoryName: string; boards: BoardEntry[] };
 type FavoriteBoard = { boardName: string; url: string };
 type FavoriteThread = { threadUrl: string; title: string; boardUrl: string };
+type RecentThread = FavoriteThread & { updatedAt: number };
 type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
 type NgEntry = { value: string; mode: "hide" | "hide-images" };
 type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: string[] };
@@ -151,7 +152,10 @@ const WINDOW_STATE_KEY = "desktop.windowState.v1";
 const SEARCH_HISTORY_KEY = "desktop.searchHistory.v1";
 const MY_POSTS_KEY = "desktop.myPosts.v1";
 const THREAD_TABS_KEY = "desktop.threadTabs.v1";
+const RECENT_OPENED_THREADS_KEY = "desktop.recentOpenedThreads.v1";
+const RECENT_POSTED_THREADS_KEY = "desktop.recentPostedThreads.v1";
 const MAX_SEARCH_HISTORY = 20;
+const MAX_RECENT_THREADS = 100;
 const MENU_EDGE_PADDING = 8;
 
 type ResizeDragState =
@@ -162,6 +166,8 @@ type ResizeDragState =
 type PaneLayoutMode = "classic" | "river";
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+const upsertRecentThread = (list: RecentThread[], entry: RecentThread): RecentThread[] =>
+  [entry, ...list.filter((item) => item.threadUrl !== entry.threadUrl)].slice(0, MAX_RECENT_THREADS);
 const clampMenuPosition = (x: number, y: number, width: number, height: number) => ({
   x: clamp(x, MENU_EDGE_PADDING, Math.max(MENU_EDGE_PADDING, window.innerWidth - width - MENU_EDGE_PADDING)),
   y: clamp(y, MENU_EDGE_PADDING, Math.max(MENU_EDGE_PADDING, window.innerHeight - height - MENU_EDGE_PADDING)),
@@ -213,6 +219,38 @@ const highlightHtmlPreservingTags = (html: string, query: string) => {
 const renderHighlightedPlainText = (text: string, query: string): { __html: string } =>
   ({ __html: highlightHtmlPreservingTags(escapeHtml(decodeHtmlEntities(text)), query) });
 const rewrite5chNet = (url: string): string => url.replace(/\.5ch\.net\b/gi, ".5ch.io");
+const parseThreadPath = (url: string): { board: string; key: string } | null => {
+  try {
+    const u = new URL(rewrite5chNet(url));
+    const parts = u.pathname.split("/").filter(Boolean);
+    if (parts.length >= 4 && parts[0] === "test" && parts[1] === "read.cgi") {
+      return { board: parts[2], key: parts[3] };
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+};
+const normalizeThreadUrl = (url: string): string => {
+  try {
+    const u = new URL(rewrite5chNet(url));
+    const parsed = parseThreadPath(u.toString());
+    if (parsed) return `${u.origin}/test/read.cgi/${parsed.board}/${parsed.key}/`;
+    return u.toString();
+  } catch {
+    return rewrite5chNet(url);
+  }
+};
+const getThreadKeyFromThreadUrl = (url: string): string => {
+  const parsed = parseThreadPath(url);
+  if (parsed) return parsed.key;
+  try {
+    const parts = new URL(url).pathname.split("/").filter(Boolean);
+    return parts[parts.length - 1] ?? "";
+  } catch {
+    return "";
+  }
+};
 
 const getAnchorIds = (el: HTMLElement): number[] => {
   const anchors = el.dataset.anchors;
@@ -586,6 +624,10 @@ export default function App() {
   const [boardPaneTab, setBoardPaneTab] = useState<"boards" | "fav-threads">("boards");
   const [showCachedOnly, setShowCachedOnly] = useState(false);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [showRecentOpenedOnly, setShowRecentOpenedOnly] = useState(false);
+  const [showRecentPostedOnly, setShowRecentPostedOnly] = useState(false);
+  const [recentOpenedThreads, setRecentOpenedThreads] = useState<RecentThread[]>([]);
+  const [recentPostedThreads, setRecentPostedThreads] = useState<RecentThread[]>([]);
   const [favNewCounts, setFavNewCounts] = useState<Map<string, number>>(new Map());
   const [favNewCountsFetched, setFavNewCountsFetched] = useState(false);
   const [favSearchQuery, setFavSearchQuery] = useState("");
@@ -1083,6 +1125,7 @@ export default function App() {
 
   const openThreadInTab = (url: string, title: string) => {
     setResponseSearchQuery("");
+    pushRecentOpenedThread(url, title);
     const existingIndex = threadTabs.findIndex((t) => t.threadUrl === url);
     if (existingIndex >= 0) {
       if (existingIndex === activeTabIndex) {
@@ -1272,6 +1315,8 @@ export default function App() {
 
   const selectBoard = (board: BoardEntry) => {
     setSelectedBoard(board.boardName);
+    setShowRecentOpenedOnly(false);
+    setShowRecentPostedOnly(false);
     lastBoardUrlRef.current = board.url;
     setLocationInput(board.url);
     setThreadUrl(board.url);
@@ -1446,25 +1491,26 @@ export default function App() {
     }
   };
 
-  const fetchFavNewCounts = async () => {
+  const fetchSavedThreadCounts = async (
+    threads: Array<Pick<FavoriteThread, "threadUrl">>,
+    statusLabel: string
+  ) => {
     if (!isTauriRuntime()) return;
     setFavNewCountsFetched(false);
-    // Group favorite threads by board URL (always derive from threadUrl)
-    const boardMap = new Map<string, FavoriteThread[]>();
-    for (const ft of favorites.threads) {
+    const boardMap = new Map<string, Array<Pick<FavoriteThread, "threadUrl">>>();
+    for (const ft of threads) {
       const bUrl = getBoardUrlFromThreadUrl(ft.threadUrl);
       const arr = boardMap.get(bUrl) ?? [];
       arr.push(ft);
       boardMap.set(bUrl, arr);
     }
     const counts = new Map<string, number>();
-    setStatus("お気に入りスレの新着を確認中...");
-    // Load read status for all boards
+    setStatus(`${statusLabel} new-count loading...`);
     let allReadStatus: Record<string, Record<string, number>> = {};
     try {
       allReadStatus = await invoke<Record<string, Record<string, number>>>("load_read_status");
     } catch {
-      console.warn("load_read_status failed for fav new counts");
+      console.warn(`load_read_status failed for ${statusLabel}`);
     }
     await Promise.all(
       Array.from(boardMap.entries()).map(async ([boardUrl, threads]) => {
@@ -1473,27 +1519,30 @@ export default function App() {
             threadUrl: boardUrl,
             limit: null,
           });
+          const normalizedRowMap = new Map<string, number>();
+          for (const row of rows) {
+            normalizedRowMap.set(normalizeThreadUrl(row.threadUrl), row.responseCount);
+          }
           for (const ft of threads) {
-            const matched = rows.find((r) => r.threadUrl === ft.threadUrl);
-            if (matched) {
-              counts.set(ft.threadUrl, matched.responseCount);
+            const normalizedUrl = normalizeThreadUrl(ft.threadUrl);
+            const responseCount = normalizedRowMap.get(normalizedUrl);
+            if (responseCount != null) {
+              counts.set(ft.threadUrl, responseCount);
+              counts.set(normalizedUrl, responseCount);
             }
           }
         } catch {
-          console.warn(`fav new count fetch failed for board: ${boardUrl}`);
+          console.warn(`${statusLabel} new-count fetch failed for board: ${boardUrl}`);
         }
       })
     );
-    // Build readMap and lastReadMap for favorites
     const readMap: Record<number, boolean> = {};
     const lastReadMap: Record<number, number> = {};
-    favorites.threads.forEach((ft, i) => {
+    threads.forEach((ft, i) => {
       const id = i + 1;
       const bUrl = getBoardUrlFromThreadUrl(ft.threadUrl);
       const boardStatus = allReadStatus[bUrl] ?? {};
-      // Extract thread key from URL
-      const parts = ft.threadUrl.replace(/\/$/, "").split("/");
-      const threadKey = parts[parts.length - 1] ?? "";
+      const threadKey = getThreadKeyFromThreadUrl(ft.threadUrl);
       const lastRead = boardStatus[threadKey] ?? 0;
       readMap[id] = lastRead > 0;
       lastReadMap[id] = lastRead;
@@ -1502,7 +1551,11 @@ export default function App() {
     setThreadLastReadCount(lastReadMap);
     setFavNewCounts(counts);
     setFavNewCountsFetched(true);
-    setStatus(`お気に入り新着確認完了 (${counts.size}/${favorites.threads.length}スレ)`);
+    setStatus(`${statusLabel} new-count loaded (${counts.size}/${threads.length})`);
+  };
+
+  const fetchFavNewCounts = async () => {
+    await fetchSavedThreadCounts(favorites.threads, "favorites");
   };
 
   const fetchResponsesFromCurrent = async (targetThreadUrl?: string, opts?: { keepSelection?: boolean; resetScroll?: boolean }) => {
@@ -1693,6 +1746,8 @@ export default function App() {
       setComposeResult({ ok, message: msg });
       setPostHistory((prev) => [{ time: new Date().toLocaleTimeString(), threadUrl, body: composeBody.slice(0, 100), ok }, ...prev].slice(0, 50));
       if (ok) {
+        const postedTitle = threadTabs.find((t) => t.threadUrl === threadUrl.trim())?.title ?? threadUrl.trim();
+        pushRecentPostedThread(threadUrl.trim(), postedTitle);
         const prevCount = tabCacheRef.current.get(threadUrl.trim())?.responses.length ?? 0;
         pendingMyPostRef.current = { threadUrl: threadUrl.trim(), body: composeBody, prevCount };
         void fetchResponsesFromCurrent();
@@ -1826,6 +1881,8 @@ export default function App() {
       } else if (r.submitSummary) {
         setComposeResult({ ok: true, message: `Post submitted: ${r.submitSummary}` });
         setPostHistory((prev) => [{ time: new Date().toLocaleTimeString(), threadUrl, body: composeBody.slice(0, 100), ok: true }, ...prev].slice(0, 50));
+        const postedTitle = threadTabs.find((t) => t.threadUrl === threadUrl.trim())?.title ?? threadUrl.trim();
+        pushRecentPostedThread(threadUrl.trim(), postedTitle);
         const postedBody = composeBody;
         setComposeBody("");
         if (composeName.trim()) {
@@ -1864,15 +1921,54 @@ export default function App() {
 
   const getBoardUrlFromThreadUrl = (url: string): string => {
     try {
-      const u = new URL(url);
-      const parts = u.pathname.split("/").filter(Boolean);
-      if (parts.length >= 3 && parts[0] === "test" && parts[1] === "read.cgi") {
-        return `${u.origin}/${parts[2]}/`;
+      const u = new URL(normalizeThreadUrl(url));
+      const parsed = parseThreadPath(u.toString());
+      if (parsed) {
+        return `${u.origin}/${parsed.board}/`;
       }
+      const parts = u.pathname.split("/").filter(Boolean);
       return `${u.origin}/${parts[0] || ""}/`;
     } catch {
       return url;
     }
+  };
+  const normalizeThreadTitle = (title: string, url: string): string => {
+    const raw = decodeHtmlEntities((title || "").trim());
+    if (raw) return raw;
+    try {
+      const parts = new URL(url).pathname.split("/").filter(Boolean);
+      return parts[parts.length - 1] || url;
+    } catch {
+      return url;
+    }
+  };
+  const pushRecentOpenedThread = (url: string, title: string) => {
+    const normalizedUrl = normalizeThreadUrl(url);
+    const entry: RecentThread = {
+      threadUrl: normalizedUrl,
+      title: normalizeThreadTitle(title, normalizedUrl),
+      boardUrl: getBoardUrlFromThreadUrl(normalizedUrl),
+      updatedAt: Date.now(),
+    };
+    setRecentOpenedThreads((prev) => {
+      const next = upsertRecentThread(prev, entry);
+      try { localStorage.setItem(RECENT_OPENED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  const pushRecentPostedThread = (url: string, title: string) => {
+    const normalizedUrl = normalizeThreadUrl(url);
+    const entry: RecentThread = {
+      threadUrl: normalizedUrl,
+      title: normalizeThreadTitle(title, normalizedUrl),
+      boardUrl: getBoardUrlFromThreadUrl(normalizedUrl),
+      updatedAt: Date.now(),
+    };
+    setRecentPostedThreads((prev) => {
+      const next = upsertRecentThread(prev, entry);
+      try { localStorage.setItem(RECENT_POSTED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
   };
 
   const submitNewThread = async () => {
@@ -1974,6 +2070,11 @@ export default function App() {
     { id: 2, title: "認証テスト", res: 120, got: 8, speed: 0.8, lastLoad: "13:08", lastPost: "13:09", threadUrl: "https://mao.5ch.io/test/read.cgi/ngt/2/" },
   ];
   const favThreadUrls = useMemo(() => new Set(favorites.threads.map((t) => t.threadUrl)), [favorites.threads]);
+  const selectedSavedThreads = showRecentOpenedOnly
+    ? recentOpenedThreads
+    : showRecentPostedOnly
+    ? recentPostedThreads
+    : favorites.threads;
   const threadItems = showCachedOnly
     ? cachedThreadList.map((ct, i) => ({
         id: i + 1,
@@ -1985,10 +2086,11 @@ export default function App() {
         lastPost: "-",
         threadUrl: ct.threadUrl,
       }))
-    : showFavoritesOnly
-    ? favorites.threads.map((ft, i) => {
+    : (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly)
+    ? selectedSavedThreads.map((ft, i) => {
         const id = i + 1;
-        const serverCount = favNewCounts.get(ft.threadUrl);
+        const normalizedThreadUrl = normalizeThreadUrl(ft.threadUrl);
+        const serverCount = favNewCounts.get(ft.threadUrl) ?? favNewCounts.get(normalizedThreadUrl);
         const fetched = fetchedThreads.find((t) => t.threadUrl === ft.threadUrl);
         const cached = tabCacheRef.current.get(ft.threadUrl);
         const cachedCount = cached ? cached.responses.length : 0;
@@ -2911,6 +3013,32 @@ export default function App() {
         if (Array.isArray(parsed.response)) setResponseSearchHistory(parsed.response);
       }
     } catch { /* ignore */ }
+    try {
+      const raw = localStorage.getItem(RECENT_OPENED_THREADS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as RecentThread[];
+        if (Array.isArray(parsed)) {
+          setRecentOpenedThreads(
+            parsed
+              .filter((t): t is RecentThread => Boolean(t && typeof t.threadUrl === "string" && typeof t.title === "string" && typeof t.boardUrl === "string" && typeof t.updatedAt === "number"))
+              .slice(0, MAX_RECENT_THREADS)
+          );
+        }
+      }
+    } catch { /* ignore */ }
+    try {
+      const raw = localStorage.getItem(RECENT_POSTED_THREADS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as RecentThread[];
+        if (Array.isArray(parsed)) {
+          setRecentPostedThreads(
+            parsed
+              .filter((t): t is RecentThread => Boolean(t && typeof t.threadUrl === "string" && typeof t.title === "string" && typeof t.boardUrl === "string" && typeof t.updatedAt === "number"))
+              .slice(0, MAX_RECENT_THREADS)
+          );
+        }
+      }
+    } catch { /* ignore */ }
     // Restore board categories cache
     try {
       const boardRaw = localStorage.getItem(BOARD_CACHE_KEY);
@@ -3731,6 +3859,8 @@ export default function App() {
                   }));
                   setShowCachedOnly(true);
                   setShowFavoritesOnly(false);
+                  setShowRecentOpenedOnly(false);
+                  setShowRecentPostedOnly(false);
                 }).catch(() => {});
               }
             }
@@ -3744,6 +3874,8 @@ export default function App() {
             setShowFavoritesOnly((v) => !v);
             if (willEnable) {
               setShowCachedOnly(false);
+              setShowRecentOpenedOnly(false);
+              setShowRecentPostedOnly(false);
               void fetchFavNewCounts();
             } else {
               const url = threadUrl.trim();
@@ -3754,6 +3886,44 @@ export default function App() {
           }}
           title="お気に入りスレのみ表示"
         ><Star size={14} /></button>
+        <button
+          className={`title-action-btn ${showRecentOpenedOnly ? "active-toggle" : ""}`}
+          onClick={() => {
+            const willEnable = !showRecentOpenedOnly;
+            setShowRecentOpenedOnly((v) => !v);
+            if (willEnable) {
+              setShowCachedOnly(false);
+              setShowFavoritesOnly(false);
+              setShowRecentPostedOnly(false);
+              void fetchSavedThreadCounts(recentOpenedThreads, "recent-opened");
+            } else {
+              const url = threadUrl.trim();
+              if (url && fetchedThreads.length > 0) {
+                void loadReadStatusForBoard(url, fetchedThreads);
+              }
+            }
+          }}
+          title={`最近開いたスレのみ表示 (${recentOpenedThreads.length}/${MAX_RECENT_THREADS})`}
+        ><History size={14} /></button>
+        <button
+          className={`title-action-btn ${showRecentPostedOnly ? "active-toggle" : ""}`}
+          onClick={() => {
+            const willEnable = !showRecentPostedOnly;
+            setShowRecentPostedOnly((v) => !v);
+            if (willEnable) {
+              setShowCachedOnly(false);
+              setShowFavoritesOnly(false);
+              setShowRecentOpenedOnly(false);
+              void fetchSavedThreadCounts(recentPostedThreads, "recent-posted");
+            } else {
+              const url = threadUrl.trim();
+              if (url && fetchedThreads.length > 0) {
+                void loadReadStatusForBoard(url, fetchedThreads);
+              }
+            }
+          }}
+          title={`最近書き込んだスレのみ表示 (${recentPostedThreads.length}/${MAX_RECENT_THREADS})`}
+        ><Pencil size={14} /></button>
         <button
           className={`title-action-btn ${threadNgOpen ? "active-toggle" : ""}`}
           onClick={() => setThreadNgOpen(!threadNgOpen)}
@@ -4048,8 +4218,9 @@ export default function App() {
             </thead>
             <tbody ref={threadTbodyRef}>
               {visibleThreadItems.map((t) => {
+                const isSavedMode = showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly;
                 const isUnread = !threadReadMap[t.id];
-                const hasUnread = t.got > 0 && t.res - t.got > 0;
+                const hasUnread = isSavedMode ? (t.res >= 0 && t.res - t.got > 0) : (t.got > 0 && t.res - t.got > 0);
                 return (
                   <tr
                     key={t.id}
@@ -4066,10 +4237,9 @@ export default function App() {
                           void fetchResponsesFromCurrent(t.threadUrl, { keepSelection: true });
                         }
                         // persist read status
-                        if (showFavoritesOnly) {
+                        if (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) {
                           const boardUrl = getBoardUrlFromThreadUrl(t.threadUrl);
-                          const parts = t.threadUrl.replace(/\/$/, "").split("/");
-                          const threadKey = parts[parts.length - 1] ?? "";
+                          const threadKey = getThreadKeyFromThreadUrl(t.threadUrl);
                           if (threadKey && t.res > 0) {
                             void persistReadStatus(boardUrl, threadKey, t.res);
                           }
@@ -4093,7 +4263,7 @@ export default function App() {
                     }}
                     onContextMenu={(e) => onThreadContextMenu(e, t.id)}
                   >
-                    <td className="thread-fetched-cell">{showFavoritesOnly ? (hasUnread ? "\u25CF" : "") : (hasUnread || threadReadMap[t.id] ? "\u25CF" : "")}</td>
+                    <td className="thread-fetched-cell">{(showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) ? (hasUnread ? "\u25CF" : "") : (hasUnread || threadReadMap[t.id] ? "\u25CF" : "")}</td>
                     <td>{t.id}</td>
                     <td
                       className="thread-title-cell"
@@ -4102,9 +4272,9 @@ export default function App() {
                       dangerouslySetInnerHTML={renderHighlightedPlainText(t.title, threadSearchQuery)}
                     />
                     <td>{t.res >= 0 ? t.res : "-"}</td>
-                    <td>{t.got > 0 ? t.got : "-"}</td>
-                    <td className={`new-count ${t.got > 0 && t.res > 0 && t.res - t.got > 0 ? "has-new" : ""}`}>
-                      {t.got > 0 && t.res > 0 ? Math.max(0, t.res - t.got) : "-"}
+                    <td>{isSavedMode ? (t.got >= 0 ? t.got : "-") : (t.got > 0 ? t.got : "-")}</td>
+                    <td className={`new-count ${hasUnread ? "has-new" : ""}`}>
+                      {isSavedMode ? (t.res >= 0 ? Math.max(0, t.res - t.got) : "-") : (t.got > 0 && t.res > 0 ? Math.max(0, t.res - t.got) : "-")}
                     </td>
                     <td className="last-fetch-cell">{threadFetchTimesRef.current[t.threadUrl] ?? "-"}</td>
                     <td className="speed-cell">
