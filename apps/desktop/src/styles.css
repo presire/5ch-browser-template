@@ -2055,6 +2055,14 @@ button.search-history-btn:hover {
   border-color: var(--accent);
 }
 
+.thumb-masked .response-thumb {
+  filter: blur(16px) brightness(0.8);
+  transition: filter 0.2s;
+}
+.thumb-masked .thumb-link:hover .response-thumb {
+  filter: none;
+}
+
 .thumb-gate-loading {
   display: inline-block;
   padding: 4px 8px;

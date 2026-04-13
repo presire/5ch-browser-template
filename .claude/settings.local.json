@@ -135,7 +135,9 @@
       "Bash(sed -i 's/^version = \"0.0.78\"/version = \"0.0.79\"/' apps/desktop/src-tauri/Cargo.toml)",
       "Bash(taskkill //F //IM cargo.exe)",
       "Bash(sed -i 's/\"version\": \"0.0.79\"/\"version\": \"0.0.80\"/' apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json)",
-      "Bash(sed -i 's/^version = \"0.0.79\"/version = \"0.0.80\"/' apps/desktop/src-tauri/Cargo.toml)"
+      "Bash(sed -i 's/^version = \"0.0.79\"/version = \"0.0.80\"/' apps/desktop/src-tauri/Cargo.toml)",
+      "Bash(ls CONTRIBUTING.md)",
+      "Bash(ls README.md)"
     ]
   }
 }
