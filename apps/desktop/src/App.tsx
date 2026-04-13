@@ -13,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff,
+  Image, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -95,6 +95,7 @@ type BoardEntry = { boardName: string; url: string };
 type BoardCategory = { categoryName: string; boards: BoardEntry[] };
 type FavoriteBoard = { boardName: string; url: string };
 type FavoriteThread = { threadUrl: string; title: string; boardUrl: string };
+type RecentThread = FavoriteThread & { updatedAt: number };
 type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
 type NgEntry = { value: string; mode: "hide" | "hide-images" };
 type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: string[] };
@@ -151,7 +152,10 @@ const WINDOW_STATE_KEY = "desktop.windowState.v1";
 const SEARCH_HISTORY_KEY = "desktop.searchHistory.v1";
 const MY_POSTS_KEY = "desktop.myPosts.v1";
 const THREAD_TABS_KEY = "desktop.threadTabs.v1";
+const RECENT_OPENED_THREADS_KEY = "desktop.recentOpenedThreads.v1";
+const RECENT_POSTED_THREADS_KEY = "desktop.recentPostedThreads.v1";
 const MAX_SEARCH_HISTORY = 20;
+const MAX_RECENT_THREADS = 100;
 const MENU_EDGE_PADDING = 8;
 
 type ResizeDragState =
@@ -159,8 +163,11 @@ type ResizeDragState =
   | { mode: "thread-response"; startX: number; startBoardPx: number; startThreadPx: number }
   | { mode: "response-rows"; startY: number; startThreadPx: number; responseLayoutHeight: number }
   | { mode: "col-resize"; colKey: string; startX: number; startWidth: number; reverse: boolean };
+type PaneLayoutMode = "classic" | "river";
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+const upsertRecentThread = (list: RecentThread[], entry: RecentThread): RecentThread[] =>
+  [entry, ...list.filter((item) => item.threadUrl !== entry.threadUrl)].slice(0, MAX_RECENT_THREADS);
 const clampMenuPosition = (x: number, y: number, width: number, height: number) => ({
   x: clamp(x, MENU_EDGE_PADDING, Math.max(MENU_EDGE_PADDING, window.innerWidth - width - MENU_EDGE_PADDING)),
   y: clamp(y, MENU_EDGE_PADDING, Math.max(MENU_EDGE_PADDING, window.innerHeight - height - MENU_EDGE_PADDING)),
@@ -212,6 +219,38 @@ const highlightHtmlPreservingTags = (html: string, query: string) => {
 const renderHighlightedPlainText = (text: string, query: string): { __html: string } =>
   ({ __html: highlightHtmlPreservingTags(escapeHtml(decodeHtmlEntities(text)), query) });
 const rewrite5chNet = (url: string): string => url.replace(/\.5ch\.net\b/gi, ".5ch.io");
+const parseThreadPath = (url: string): { board: string; key: string } | null => {
+  try {
+    const u = new URL(rewrite5chNet(url));
+    const parts = u.pathname.split("/").filter(Boolean);
+    if (parts.length >= 4 && parts[0] === "test" && parts[1] === "read.cgi") {
+      return { board: parts[2], key: parts[3] };
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+};
+const normalizeThreadUrl = (url: string): string => {
+  try {
+    const u = new URL(rewrite5chNet(url));
+    const parsed = parseThreadPath(u.toString());
+    if (parsed) return `${u.origin}/test/read.cgi/${parsed.board}/${parsed.key}/`;
+    return u.toString();
+  } catch {
+    return rewrite5chNet(url);
+  }
+};
+const getThreadKeyFromThreadUrl = (url: string): string => {
+  const parsed = parseThreadPath(url);
+  if (parsed) return parsed.key;
+  try {
+    const parts = new URL(url).pathname.split("/").filter(Boolean);
+    return parts[parts.length - 1] ?? "";
+  } catch {
+    return "";
+  }
+};
 
 const getAnchorIds = (el: HTMLElement): number[] => {
   const anchors = el.dataset.anchors;
@@ -585,6 +624,10 @@ export default function App() {
   const [boardPaneTab, setBoardPaneTab] = useState<"boards" | "fav-threads">("boards");
   const [showCachedOnly, setShowCachedOnly] = useState(false);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [showRecentOpenedOnly, setShowRecentOpenedOnly] = useState(false);
+  const [showRecentPostedOnly, setShowRecentPostedOnly] = useState(false);
+  const [recentOpenedThreads, setRecentOpenedThreads] = useState<RecentThread[]>([]);
+  const [recentPostedThreads, setRecentPostedThreads] = useState<RecentThread[]>([]);
   const [favNewCounts, setFavNewCounts] = useState<Map<string, number>>(new Map());
   const [favNewCountsFetched, setFavNewCountsFetched] = useState(false);
   const [favSearchQuery, setFavSearchQuery] = useState("");
@@ -646,6 +689,8 @@ export default function App() {
   const tabDragRef = useRef<{ srcIndex: number; startX: number } | null>(null);
   const tabDragOverRef = useRef<number | null>(null);
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; tabIndex: number } | null>(null);
+  const [threadTitlePopup, setThreadTitlePopup] = useState<{ x: number; y: number; title: string } | null>(null);
+  const threadTitleHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [responseReloadMenuOpen, setResponseReloadMenuOpen] = useState(false);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -672,6 +717,7 @@ export default function App() {
   const [boardPanePx, setBoardPanePx] = useState(DEFAULT_BOARD_PANE_PX);
   const [threadPanePx, setThreadPanePx] = useState(DEFAULT_THREAD_PANE_PX);
   const [responseTopRatio, setResponseTopRatio] = useState(DEFAULT_RESPONSE_TOP_RATIO);
+  const [paneLayoutMode, setPaneLayoutMode] = useState<PaneLayoutMode>("classic");
   const resizeDragRef = useRef<ResizeDragState | null>(null);
   const [threadColWidths, setThreadColWidths] = useState<Record<string, number>>({ ...DEFAULT_COL_WIDTHS });
   const layoutPrefsLoadedRef = useRef(false);
@@ -1079,6 +1125,7 @@ export default function App() {
 
   const openThreadInTab = (url: string, title: string) => {
     setResponseSearchQuery("");
+    pushRecentOpenedThread(url, title);
     const existingIndex = threadTabs.findIndex((t) => t.threadUrl === url);
     if (existingIndex >= 0) {
       if (existingIndex === activeTabIndex) {
@@ -1268,6 +1315,8 @@ export default function App() {
 
   const selectBoard = (board: BoardEntry) => {
     setSelectedBoard(board.boardName);
+    setShowRecentOpenedOnly(false);
+    setShowRecentPostedOnly(false);
     lastBoardUrlRef.current = board.url;
     setLocationInput(board.url);
     setThreadUrl(board.url);
@@ -1442,25 +1491,26 @@ export default function App() {
     }
   };
 
-  const fetchFavNewCounts = async () => {
+  const fetchSavedThreadCounts = async (
+    threads: Array<Pick<FavoriteThread, "threadUrl">>,
+    statusLabel: string
+  ) => {
     if (!isTauriRuntime()) return;
     setFavNewCountsFetched(false);
-    // Group favorite threads by board URL (always derive from threadUrl)
-    const boardMap = new Map<string, FavoriteThread[]>();
-    for (const ft of favorites.threads) {
+    const boardMap = new Map<string, Array<Pick<FavoriteThread, "threadUrl">>>();
+    for (const ft of threads) {
       const bUrl = getBoardUrlFromThreadUrl(ft.threadUrl);
       const arr = boardMap.get(bUrl) ?? [];
       arr.push(ft);
       boardMap.set(bUrl, arr);
     }
     const counts = new Map<string, number>();
-    setStatus("お気に入りスレの新着を確認中...");
-    // Load read status for all boards
+    setStatus(`${statusLabel} new-count loading...`);
     let allReadStatus: Record<string, Record<string, number>> = {};
     try {
       allReadStatus = await invoke<Record<string, Record<string, number>>>("load_read_status");
     } catch {
-      console.warn("load_read_status failed for fav new counts");
+      console.warn(`load_read_status failed for ${statusLabel}`);
     }
     await Promise.all(
       Array.from(boardMap.entries()).map(async ([boardUrl, threads]) => {
@@ -1469,27 +1519,30 @@ export default function App() {
             threadUrl: boardUrl,
             limit: null,
           });
+          const normalizedRowMap = new Map<string, number>();
+          for (const row of rows) {
+            normalizedRowMap.set(normalizeThreadUrl(row.threadUrl), row.responseCount);
+          }
           for (const ft of threads) {
-            const matched = rows.find((r) => r.threadUrl === ft.threadUrl);
-            if (matched) {
-              counts.set(ft.threadUrl, matched.responseCount);
+            const normalizedUrl = normalizeThreadUrl(ft.threadUrl);
+            const responseCount = normalizedRowMap.get(normalizedUrl);
+            if (responseCount != null) {
+              counts.set(ft.threadUrl, responseCount);
+              counts.set(normalizedUrl, responseCount);
             }
           }
         } catch {
-          console.warn(`fav new count fetch failed for board: ${boardUrl}`);
+          console.warn(`${statusLabel} new-count fetch failed for board: ${boardUrl}`);
         }
       })
     );
-    // Build readMap and lastReadMap for favorites
     const readMap: Record<number, boolean> = {};
     const lastReadMap: Record<number, number> = {};
-    favorites.threads.forEach((ft, i) => {
+    threads.forEach((ft, i) => {
       const id = i + 1;
       const bUrl = getBoardUrlFromThreadUrl(ft.threadUrl);
       const boardStatus = allReadStatus[bUrl] ?? {};
-      // Extract thread key from URL
-      const parts = ft.threadUrl.replace(/\/$/, "").split("/");
-      const threadKey = parts[parts.length - 1] ?? "";
+      const threadKey = getThreadKeyFromThreadUrl(ft.threadUrl);
       const lastRead = boardStatus[threadKey] ?? 0;
       readMap[id] = lastRead > 0;
       lastReadMap[id] = lastRead;
@@ -1498,7 +1551,11 @@ export default function App() {
     setThreadLastReadCount(lastReadMap);
     setFavNewCounts(counts);
     setFavNewCountsFetched(true);
-    setStatus(`お気に入り新着確認完了 (${counts.size}/${favorites.threads.length}スレ)`);
+    setStatus(`${statusLabel} new-count loaded (${counts.size}/${threads.length})`);
+  };
+
+  const fetchFavNewCounts = async () => {
+    await fetchSavedThreadCounts(favorites.threads, "favorites");
   };
 
   const fetchResponsesFromCurrent = async (targetThreadUrl?: string, opts?: { keepSelection?: boolean; resetScroll?: boolean }) => {
@@ -1689,6 +1746,8 @@ export default function App() {
       setComposeResult({ ok, message: msg });
       setPostHistory((prev) => [{ time: new Date().toLocaleTimeString(), threadUrl, body: composeBody.slice(0, 100), ok }, ...prev].slice(0, 50));
       if (ok) {
+        const postedTitle = threadTabs.find((t) => t.threadUrl === threadUrl.trim())?.title ?? threadUrl.trim();
+        pushRecentPostedThread(threadUrl.trim(), postedTitle);
         const prevCount = tabCacheRef.current.get(threadUrl.trim())?.responses.length ?? 0;
         pendingMyPostRef.current = { threadUrl: threadUrl.trim(), body: composeBody, prevCount };
         void fetchResponsesFromCurrent();
@@ -1822,6 +1881,8 @@ export default function App() {
       } else if (r.submitSummary) {
         setComposeResult({ ok: true, message: `Post submitted: ${r.submitSummary}` });
         setPostHistory((prev) => [{ time: new Date().toLocaleTimeString(), threadUrl, body: composeBody.slice(0, 100), ok: true }, ...prev].slice(0, 50));
+        const postedTitle = threadTabs.find((t) => t.threadUrl === threadUrl.trim())?.title ?? threadUrl.trim();
+        pushRecentPostedThread(threadUrl.trim(), postedTitle);
         const postedBody = composeBody;
         setComposeBody("");
         if (composeName.trim()) {
@@ -1860,15 +1921,54 @@ export default function App() {
 
   const getBoardUrlFromThreadUrl = (url: string): string => {
     try {
-      const u = new URL(url);
-      const parts = u.pathname.split("/").filter(Boolean);
-      if (parts.length >= 3 && parts[0] === "test" && parts[1] === "read.cgi") {
-        return `${u.origin}/${parts[2]}/`;
+      const u = new URL(normalizeThreadUrl(url));
+      const parsed = parseThreadPath(u.toString());
+      if (parsed) {
+        return `${u.origin}/${parsed.board}/`;
       }
+      const parts = u.pathname.split("/").filter(Boolean);
       return `${u.origin}/${parts[0] || ""}/`;
     } catch {
       return url;
     }
+  };
+  const normalizeThreadTitle = (title: string, url: string): string => {
+    const raw = decodeHtmlEntities((title || "").trim());
+    if (raw) return raw;
+    try {
+      const parts = new URL(url).pathname.split("/").filter(Boolean);
+      return parts[parts.length - 1] || url;
+    } catch {
+      return url;
+    }
+  };
+  const pushRecentOpenedThread = (url: string, title: string) => {
+    const normalizedUrl = normalizeThreadUrl(url);
+    const entry: RecentThread = {
+      threadUrl: normalizedUrl,
+      title: normalizeThreadTitle(title, normalizedUrl),
+      boardUrl: getBoardUrlFromThreadUrl(normalizedUrl),
+      updatedAt: Date.now(),
+    };
+    setRecentOpenedThreads((prev) => {
+      const next = upsertRecentThread(prev, entry);
+      try { localStorage.setItem(RECENT_OPENED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  const pushRecentPostedThread = (url: string, title: string) => {
+    const normalizedUrl = normalizeThreadUrl(url);
+    const entry: RecentThread = {
+      threadUrl: normalizedUrl,
+      title: normalizeThreadTitle(title, normalizedUrl),
+      boardUrl: getBoardUrlFromThreadUrl(normalizedUrl),
+      updatedAt: Date.now(),
+    };
+    setRecentPostedThreads((prev) => {
+      const next = upsertRecentThread(prev, entry);
+      try { localStorage.setItem(RECENT_POSTED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
   };
 
   const submitNewThread = async () => {
@@ -1970,6 +2070,11 @@ export default function App() {
     { id: 2, title: "認証テスト", res: 120, got: 8, speed: 0.8, lastLoad: "13:08", lastPost: "13:09", threadUrl: "https://mao.5ch.io/test/read.cgi/ngt/2/" },
   ];
   const favThreadUrls = useMemo(() => new Set(favorites.threads.map((t) => t.threadUrl)), [favorites.threads]);
+  const selectedSavedThreads = showRecentOpenedOnly
+    ? recentOpenedThreads
+    : showRecentPostedOnly
+    ? recentPostedThreads
+    : favorites.threads;
   const threadItems = showCachedOnly
     ? cachedThreadList.map((ct, i) => ({
         id: i + 1,
@@ -1981,10 +2086,11 @@ export default function App() {
         lastPost: "-",
         threadUrl: ct.threadUrl,
       }))
-    : showFavoritesOnly
-    ? favorites.threads.map((ft, i) => {
+    : (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly)
+    ? selectedSavedThreads.map((ft, i) => {
         const id = i + 1;
-        const serverCount = favNewCounts.get(ft.threadUrl);
+        const normalizedThreadUrl = normalizeThreadUrl(ft.threadUrl);
+        const serverCount = favNewCounts.get(ft.threadUrl) ?? favNewCounts.get(normalizedThreadUrl);
         const fetched = fetchedThreads.find((t) => t.threadUrl === ft.threadUrl);
         const cached = tabCacheRef.current.get(ft.threadUrl);
         const cachedCount = cached ? cached.responses.length : 0;
@@ -2300,6 +2406,27 @@ export default function App() {
     setThreadMenu({ x: p.x, y: p.y, threadId });
     setResponseMenu(null);
   };
+  const hideThreadTitlePopup = () => {
+    if (threadTitleHoverTimerRef.current) {
+      clearTimeout(threadTitleHoverTimerRef.current);
+      threadTitleHoverTimerRef.current = null;
+    }
+    setThreadTitlePopup(null);
+  };
+  const onThreadTitleMouseEnter = (event: ReactMouseEvent<HTMLTableCellElement>, title: string) => {
+    if (paneLayoutMode !== "river") return;
+    hideThreadTitlePopup();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const popupWidth = Math.min(720, Math.max(320, Math.floor(window.innerWidth * 0.6)));
+    const p = clampMenuPosition(rect.left, rect.bottom + 2, popupWidth, 100);
+    threadTitleHoverTimerRef.current = setTimeout(() => {
+      setThreadTitlePopup({ x: p.x, y: p.y, title: decodeHtmlEntities(title) });
+      threadTitleHoverTimerRef.current = null;
+    }, 200);
+  };
+  const onThreadTitleMouseLeave = () => {
+    hideThreadTitlePopup();
+  };
 
   const onResponseNoClick = (e: ReactMouseEvent, responseId: number) => {
     e.stopPropagation();
@@ -2544,6 +2671,7 @@ export default function App() {
     setBoardPanePx(DEFAULT_BOARD_PANE_PX);
     setThreadPanePx(DEFAULT_THREAD_PANE_PX);
     setResponseTopRatio(DEFAULT_RESPONSE_TOP_RATIO);
+    setPaneLayoutMode("classic");
     setThreadColWidths({ ...DEFAULT_COL_WIDTHS });
     setBoardsFontSize(12);
     setThreadsFontSize(12);
@@ -2582,6 +2710,17 @@ export default function App() {
 
   const beginResponseRowResize = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
+    if (paneLayoutMode === "river") {
+      resizeDragRef.current = {
+        mode: "thread-response",
+        startX: event.clientX,
+        startBoardPx: boardPanePx,
+        startThreadPx: threadPanePx,
+      };
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+      return;
+    }
     const layoutHeight = responseLayoutRef.current?.clientHeight ?? 360;
     resizeDragRef.current = {
       mode: "response-rows",
@@ -2761,6 +2900,19 @@ export default function App() {
   }, [selectedThread, selectedResponse, visibleThreadItems, responseItems, activeTabIndex, threadTabs, responseReloadMenuOpen]);
 
   useEffect(() => {
+    if (paneLayoutMode !== "river") setThreadTitlePopup(null);
+  }, [paneLayoutMode]);
+
+  useEffect(() => {
+    return () => {
+      if (threadTitleHoverTimerRef.current) {
+        clearTimeout(threadTitleHoverTimerRef.current);
+        threadTitleHoverTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const applyPrefs = (raw: string | null) => {
       if (!raw) return;
       try {
@@ -2768,6 +2920,7 @@ export default function App() {
           boardPanePx?: number;
           threadPanePx?: number;
           responseTopRatio?: number;
+          paneLayoutMode?: PaneLayoutMode;
           fontSize?: number;
           boardsFontSize?: number;
           threadsFontSize?: number;
@@ -2798,6 +2951,7 @@ export default function App() {
           setThreadPanePx(nextThread);
           setResponseTopRatio(parsed.responseTopRatio);
         }
+        if (parsed.paneLayoutMode === "classic" || parsed.paneLayoutMode === "river") setPaneLayoutMode(parsed.paneLayoutMode);
         const fallbackFs = typeof parsed.fontSize === "number" ? parsed.fontSize : 12;
         setBoardsFontSize(typeof parsed.boardsFontSize === "number" ? parsed.boardsFontSize : fallbackFs);
         setThreadsFontSize(typeof parsed.threadsFontSize === "number" ? parsed.threadsFontSize : fallbackFs);
@@ -2857,6 +3011,32 @@ export default function App() {
         const parsed = JSON.parse(sh) as { thread?: string[]; response?: string[] };
         if (Array.isArray(parsed.thread)) setThreadSearchHistory(parsed.thread);
         if (Array.isArray(parsed.response)) setResponseSearchHistory(parsed.response);
+      }
+    } catch { /* ignore */ }
+    try {
+      const raw = localStorage.getItem(RECENT_OPENED_THREADS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as RecentThread[];
+        if (Array.isArray(parsed)) {
+          setRecentOpenedThreads(
+            parsed
+              .filter((t): t is RecentThread => Boolean(t && typeof t.threadUrl === "string" && typeof t.title === "string" && typeof t.boardUrl === "string" && typeof t.updatedAt === "number"))
+              .slice(0, MAX_RECENT_THREADS)
+          );
+        }
+      }
+    } catch { /* ignore */ }
+    try {
+      const raw = localStorage.getItem(RECENT_POSTED_THREADS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as RecentThread[];
+        if (Array.isArray(parsed)) {
+          setRecentPostedThreads(
+            parsed
+              .filter((t): t is RecentThread => Boolean(t && typeof t.threadUrl === "string" && typeof t.title === "string" && typeof t.boardUrl === "string" && typeof t.updatedAt === "number"))
+              .slice(0, MAX_RECENT_THREADS)
+          );
+        }
       }
     } catch { /* ignore */ }
     // Restore board categories cache
@@ -3064,26 +3244,42 @@ export default function App() {
 
   useEffect(() => {
     const ensurePaneBounds = () => {
-      const maxBoard = Math.max(
-        MIN_BOARD_PANE_PX,
-        window.innerWidth - MIN_RESPONSE_PANE_PX - SPLITTER_PX
-      );
-      const nextBoard = clamp(boardPanePx, MIN_BOARD_PANE_PX, maxBoard);
-      if (nextBoard !== boardPanePx) setBoardPanePx(nextBoard);
+      if (paneLayoutMode === "river") {
+        const maxBoard = Math.max(
+          MIN_BOARD_PANE_PX,
+          window.innerWidth - MIN_THREAD_PANE_PX - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+        );
+        const nextBoard = clamp(boardPanePx, MIN_BOARD_PANE_PX, maxBoard);
+        if (nextBoard !== boardPanePx) setBoardPanePx(nextBoard);
 
-      const layoutHeight = responseLayoutRef.current?.clientHeight ?? Math.max(520, window.innerHeight - 180);
-      const maxThread = Math.max(MIN_THREAD_PANE_PX, layoutHeight - MIN_RESPONSE_BODY_PX - SPLITTER_PX);
-      const nextThread = clamp(threadPanePx, MIN_THREAD_PANE_PX, maxThread);
-      if (nextThread !== threadPanePx) {
-        setThreadPanePx(nextThread);
-        setResponseTopRatio((nextThread / Math.max(layoutHeight, 1)) * 100);
+        const maxThread = Math.max(
+          MIN_THREAD_PANE_PX,
+          window.innerWidth - nextBoard - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+        );
+        const nextThread = clamp(threadPanePx, MIN_THREAD_PANE_PX, maxThread);
+        if (nextThread !== threadPanePx) setThreadPanePx(nextThread);
+      } else {
+        const maxBoard = Math.max(
+          MIN_BOARD_PANE_PX,
+          window.innerWidth - MIN_RESPONSE_PANE_PX - SPLITTER_PX
+        );
+        const nextBoard = clamp(boardPanePx, MIN_BOARD_PANE_PX, maxBoard);
+        if (nextBoard !== boardPanePx) setBoardPanePx(nextBoard);
+
+        const layoutHeight = responseLayoutRef.current?.clientHeight ?? Math.max(520, window.innerHeight - 180);
+        const maxThread = Math.max(MIN_THREAD_PANE_PX, layoutHeight - MIN_RESPONSE_BODY_PX - SPLITTER_PX);
+        const nextThread = clamp(threadPanePx, MIN_THREAD_PANE_PX, maxThread);
+        if (nextThread !== threadPanePx) {
+          setThreadPanePx(nextThread);
+          setResponseTopRatio((nextThread / Math.max(layoutHeight, 1)) * 100);
+        }
       }
     };
 
     ensurePaneBounds();
     window.addEventListener("resize", ensurePaneBounds);
     return () => window.removeEventListener("resize", ensurePaneBounds);
-  }, [boardPanePx, threadPanePx]);
+  }, [boardPanePx, threadPanePx, paneLayoutMode]);
 
   useEffect(() => {
     const closeHoverPreview = () => {
@@ -3130,12 +3326,26 @@ export default function App() {
       }
       const deltaX = event.clientX - drag.startX;
       if (drag.mode === "board-thread") {
-        const maxBoard = Math.max(
-          MIN_BOARD_PANE_PX,
-          window.innerWidth - MIN_RESPONSE_PANE_PX - SPLITTER_PX
-        );
+        const maxBoard = paneLayoutMode === "river"
+          ? Math.max(
+            MIN_BOARD_PANE_PX,
+            window.innerWidth - drag.startThreadPx - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+          )
+          : Math.max(
+            MIN_BOARD_PANE_PX,
+            window.innerWidth - MIN_RESPONSE_PANE_PX - SPLITTER_PX
+          );
         const nextBoard = clamp(drag.startBoardPx + deltaX, MIN_BOARD_PANE_PX, maxBoard);
         setBoardPanePx(nextBoard);
+        return;
+      }
+      if (drag.mode === "thread-response" && paneLayoutMode === "river") {
+        const maxThread = Math.max(
+          MIN_THREAD_PANE_PX,
+          window.innerWidth - drag.startBoardPx - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+        );
+        const nextThread = clamp(drag.startThreadPx + deltaX, MIN_THREAD_PANE_PX, maxThread);
+        setThreadPanePx(nextThread);
       }
     };
 
@@ -3193,7 +3403,7 @@ export default function App() {
       window.removeEventListener("resize", onResize);
       clearTimeout(resizeTimer);
     };
-  }, []);
+  }, [paneLayoutMode]);
 
   // Mouse gesture detection
   useEffect(() => {
@@ -3341,6 +3551,7 @@ export default function App() {
       boardPanePx,
       threadPanePx,
       responseTopRatio,
+      paneLayoutMode,
       boardsFontSize,
       threadsFontSize,
       responsesFontSize,
@@ -3365,7 +3576,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -3548,6 +3759,20 @@ export default function App() {
       <div className="tool-bar">
         <button onClick={() => { void fetchMenu(); void fetchBoardCategories(); }} title="板更新"><ClipboardList size={14} /></button>
         <span className="tool-sep" />
+        <button
+          className={`title-action-btn ${paneLayoutMode === "river" ? "active-toggle" : ""}`}
+          onClick={() => {
+            setPaneLayoutMode((prev) => {
+              const next: PaneLayoutMode = prev === "classic" ? "river" : "classic";
+              setStatus(next === "river" ? "layout: river" : "layout: classic");
+              return next;
+            });
+          }}
+          title={paneLayoutMode === "river" ? "通常レイアウトに切替" : "川型レイアウトに切替"}
+          aria-label="レイアウト切替"
+        >
+          <Columns3 size={14} />
+        </button>
         <input className="address-input" value={locationInput} onChange={(e) => setLocationInput(e.target.value)} onKeyDown={onLocationInputKeyDown} onFocus={(e) => e.target.select()} />
         <button onClick={goFromLocationInput}>移動</button>
         <span className="tool-sep" />
@@ -3634,6 +3859,8 @@ export default function App() {
                   }));
                   setShowCachedOnly(true);
                   setShowFavoritesOnly(false);
+                  setShowRecentOpenedOnly(false);
+                  setShowRecentPostedOnly(false);
                 }).catch(() => {});
               }
             }
@@ -3647,6 +3874,8 @@ export default function App() {
             setShowFavoritesOnly((v) => !v);
             if (willEnable) {
               setShowCachedOnly(false);
+              setShowRecentOpenedOnly(false);
+              setShowRecentPostedOnly(false);
               void fetchFavNewCounts();
             } else {
               const url = threadUrl.trim();
@@ -3657,6 +3886,44 @@ export default function App() {
           }}
           title="お気に入りスレのみ表示"
         ><Star size={14} /></button>
+        <button
+          className={`title-action-btn ${showRecentOpenedOnly ? "active-toggle" : ""}`}
+          onClick={() => {
+            const willEnable = !showRecentOpenedOnly;
+            setShowRecentOpenedOnly((v) => !v);
+            if (willEnable) {
+              setShowCachedOnly(false);
+              setShowFavoritesOnly(false);
+              setShowRecentPostedOnly(false);
+              void fetchSavedThreadCounts(recentOpenedThreads, "recent-opened");
+            } else {
+              const url = threadUrl.trim();
+              if (url && fetchedThreads.length > 0) {
+                void loadReadStatusForBoard(url, fetchedThreads);
+              }
+            }
+          }}
+          title={`最近開いたスレのみ表示 (${recentOpenedThreads.length}/${MAX_RECENT_THREADS})`}
+        ><History size={14} /></button>
+        <button
+          className={`title-action-btn ${showRecentPostedOnly ? "active-toggle" : ""}`}
+          onClick={() => {
+            const willEnable = !showRecentPostedOnly;
+            setShowRecentPostedOnly((v) => !v);
+            if (willEnable) {
+              setShowCachedOnly(false);
+              setShowFavoritesOnly(false);
+              setShowRecentOpenedOnly(false);
+              void fetchSavedThreadCounts(recentPostedThreads, "recent-posted");
+            } else {
+              const url = threadUrl.trim();
+              if (url && fetchedThreads.length > 0) {
+                void loadReadStatusForBoard(url, fetchedThreads);
+              }
+            }
+          }}
+          title={`最近書き込んだスレのみ表示 (${recentPostedThreads.length}/${MAX_RECENT_THREADS})`}
+        ><Pencil size={14} /></button>
         <button
           className={`title-action-btn ${threadNgOpen ? "active-toggle" : ""}`}
           onClick={() => setThreadNgOpen(!threadNgOpen)}
@@ -3884,8 +4151,10 @@ export default function App() {
         />
         <div
           ref={responseLayoutRef}
-          className="right-pane"
-          style={{ gridTemplateRows: `${threadPanePx}px ${SPLITTER_PX}px 1fr` }}
+          className={`right-pane ${paneLayoutMode === "river" ? "right-pane-river" : ""}`}
+          style={paneLayoutMode === "river"
+            ? { gridTemplateColumns: `${threadPanePx}px ${SPLITTER_PX}px 1fr` }
+            : { gridTemplateRows: `${threadPanePx}px ${SPLITTER_PX}px 1fr` }}
         >
         <section className="pane threads" onMouseDown={() => setFocusedPane("threads")} style={{ '--fs-delta': `${threadsFontSize - 12}px` } as React.CSSProperties}>
           {threadNgOpen && (
@@ -3917,7 +4186,7 @@ export default function App() {
               )}
             </div>
           )}
-          <div className="threads-table-wrap" ref={threadListScrollRef}>
+          <div className="threads-table-wrap" ref={threadListScrollRef} onScroll={hideThreadTitlePopup}>
           <table>
             <thead>
               <tr>
@@ -3949,8 +4218,9 @@ export default function App() {
             </thead>
             <tbody ref={threadTbodyRef}>
               {visibleThreadItems.map((t) => {
+                const isSavedMode = showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly;
                 const isUnread = !threadReadMap[t.id];
-                const hasUnread = t.got > 0 && t.res - t.got > 0;
+                const hasUnread = isSavedMode ? (t.res >= 0 && t.res - t.got > 0) : (t.got > 0 && t.res - t.got > 0);
                 return (
                   <tr
                     key={t.id}
@@ -3967,10 +4237,9 @@ export default function App() {
                           void fetchResponsesFromCurrent(t.threadUrl, { keepSelection: true });
                         }
                         // persist read status
-                        if (showFavoritesOnly) {
+                        if (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) {
                           const boardUrl = getBoardUrlFromThreadUrl(t.threadUrl);
-                          const parts = t.threadUrl.replace(/\/$/, "").split("/");
-                          const threadKey = parts[parts.length - 1] ?? "";
+                          const threadKey = getThreadKeyFromThreadUrl(t.threadUrl);
                           if (threadKey && t.res > 0) {
                             void persistReadStatus(boardUrl, threadKey, t.res);
                           }
@@ -3994,16 +4263,18 @@ export default function App() {
                     }}
                     onContextMenu={(e) => onThreadContextMenu(e, t.id)}
                   >
-                    <td className="thread-fetched-cell">{showFavoritesOnly ? (hasUnread ? "\u25CF" : "") : (hasUnread || threadReadMap[t.id] ? "\u25CF" : "")}</td>
+                    <td className="thread-fetched-cell">{(showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) ? (hasUnread ? "\u25CF" : "") : (hasUnread || threadReadMap[t.id] ? "\u25CF" : "")}</td>
                     <td>{t.id}</td>
                     <td
                       className="thread-title-cell"
+                      onMouseEnter={(e) => onThreadTitleMouseEnter(e, t.title)}
+                      onMouseLeave={onThreadTitleMouseLeave}
                       dangerouslySetInnerHTML={renderHighlightedPlainText(t.title, threadSearchQuery)}
                     />
                     <td>{t.res >= 0 ? t.res : "-"}</td>
-                    <td>{t.got > 0 ? t.got : "-"}</td>
-                    <td className={`new-count ${t.got > 0 && t.res > 0 && t.res - t.got > 0 ? "has-new" : ""}`}>
-                      {t.got > 0 && t.res > 0 ? Math.max(0, t.res - t.got) : "-"}
+                    <td>{isSavedMode ? (t.got >= 0 ? t.got : "-") : (t.got > 0 ? t.got : "-")}</td>
+                    <td className={`new-count ${hasUnread ? "has-new" : ""}`}>
+                      {isSavedMode ? (t.res >= 0 ? Math.max(0, t.res - t.got) : "-") : (t.got > 0 && t.res > 0 ? Math.max(0, t.res - t.got) : "-")}
                     </td>
                     <td className="last-fetch-cell">{threadFetchTimesRef.current[t.threadUrl] ?? "-"}</td>
                     <td className="speed-cell">
@@ -4021,10 +4292,10 @@ export default function App() {
           </div>
         </section>
         <div
-          className="row-splitter"
+          className={`row-splitter ${paneLayoutMode === "river" ? "row-splitter-river" : ""}`}
           role="separator"
-          aria-orientation="horizontal"
-          aria-label="Resize threads and responses"
+          aria-orientation={paneLayoutMode === "river" ? "vertical" : "horizontal"}
+          aria-label={paneLayoutMode === "river" ? "Resize threads pane" : "Resize threads and responses"}
           onMouseDown={beginResponseRowResize}
           onClick={(e) => e.stopPropagation()}
         />
@@ -4685,6 +4956,11 @@ export default function App() {
             ))}
           </div>
         </section>
+      )}
+      {paneLayoutMode === "river" && threadTitlePopup && (
+        <div className="thread-title-hover-popup" style={{ left: threadTitlePopup.x, top: threadTitlePopup.y }}>
+          {threadTitlePopup.title}
+        </div>
       )}
       {threadMenu && (
         <div className="thread-menu" style={{ left: threadMenu.x, top: threadMenu.y }} onClick={(e) => e.stopPropagation()}>
