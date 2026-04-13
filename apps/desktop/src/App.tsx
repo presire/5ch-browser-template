@@ -692,6 +692,7 @@ export default function App() {
   const [threadTitlePopup, setThreadTitlePopup] = useState<{ x: number; y: number; title: string } | null>(null);
   const threadTitleHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [responseReloadMenuOpen, setResponseReloadMenuOpen] = useState(false);
+  const [threadFilterMenuOpen, setThreadFilterMenuOpen] = useState(false);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [gestureListOpen, setGestureListOpen] = useState(false);
@@ -2787,6 +2788,7 @@ export default function App() {
         if (shortcutsOpen) { setShortcutsOpen(false); return; }
         if (gestureListOpen) { setGestureListOpen(false); return; }
         if (responseReloadMenuOpen) { setResponseReloadMenuOpen(false); return; }
+        if (threadFilterMenuOpen) { setThreadFilterMenuOpen(false); return; }
         if (openMenu) { setOpenMenu(null); return; }
       }
       const isRefreshShortcut = e.key === "F5"
@@ -2897,7 +2899,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedThread, selectedResponse, visibleThreadItems, responseItems, activeTabIndex, threadTabs, responseReloadMenuOpen]);
+  }, [selectedThread, selectedResponse, visibleThreadItems, responseItems, activeTabIndex, threadTabs, responseReloadMenuOpen, threadFilterMenuOpen]);
 
   useEffect(() => {
     if (paneLayoutMode !== "river") setThreadTitlePopup(null);
@@ -3669,6 +3671,7 @@ export default function App() {
         setSearchHistoryDropdown(null);
         setSearchHistoryMenu(null);
         setResponseReloadMenuOpen(false);
+        setThreadFilterMenuOpen(false);
       }}
     >
       {mouseGestureEnabled && <canvas ref={gestureCanvasRef} className="gesture-trail" />}
@@ -3826,104 +3829,101 @@ export default function App() {
         {threadSearchQuery && <button className="title-action-btn" onClick={() => setThreadSearchQuery("")} title="検索クリア"><X size={14} /></button>}
         <button className="title-action-btn" onClick={() => fetchThreadListFromCurrent()} title="スレ一覧を更新"><RefreshCw size={14} /></button>
         <button className="title-action-btn" onClick={() => setShowNewThreadDialog(true)} title="スレ立て"><FilePenLine size={14} /></button>
-        <button
-          className={`title-action-btn ${showCachedOnly ? "active-toggle" : ""}`}
-          onClick={() => {
-            if (showCachedOnly) {
-              setShowCachedOnly(false);
-              setCachedThreadList([]);
-              return;
-            } else {
-              if (isTauriRuntime()) {
-                invoke<[string, string, number][]>("load_all_cached_threads").then((list) => {
-                  const extractBoardName = (url: string): string => {
-                    try {
-                      const parts = new URL(url).pathname.split("/").filter(Boolean);
-                      if (parts.length >= 3 && parts[0] === "test" && parts[1] === "read.cgi") return parts[2];
-                      return parts[0] || "";
-                    } catch { return ""; }
-                  };
-                  const currentBoard = extractBoardName(threadUrl);
-                  const activeUrls = new Set(fetchedThreads.map((t) => t.threadUrl));
-                  const datOchiList = list
-                    .filter(([url]) => extractBoardName(url) === currentBoard)
-                    .filter(([url]) => !activeUrls.has(url));
-                  setCachedThreadList(datOchiList.map(([threadUrl, title, count]) => {
-                    const displayTitle = title && title.trim() !== "" ? title : (() => {
+        <div className="title-split-wrap" onClick={(e) => e.stopPropagation()}>
+          <button
+            className={`title-action-btn title-split-main ${(showCachedOnly || showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) ? "active-toggle" : ""}`}
+            onClick={() => {
+              if (showCachedOnly) { setShowCachedOnly(false); setCachedThreadList([]); }
+              else if (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) {
+                setShowFavoritesOnly(false); setShowRecentOpenedOnly(false); setShowRecentPostedOnly(false);
+                const url = threadUrl.trim();
+                if (url && fetchedThreads.length > 0) void loadReadStatusForBoard(url, fetchedThreads);
+              } else {
+                setThreadFilterMenuOpen((v) => !v);
+              }
+            }}
+            title={showCachedOnly ? "dat落ちキャッシュ表示中 (クリックで解除)" : showFavoritesOnly ? "お気に入りスレ表示中 (クリックで解除)" : showRecentOpenedOnly ? `最近開いたスレ表示中 (${recentOpenedThreads.length}/${MAX_RECENT_THREADS}, クリックで解除)` : showRecentPostedOnly ? `最近書き込んだスレ表示中 (${recentPostedThreads.length}/${MAX_RECENT_THREADS}, クリックで解除)` : "スレ一覧フィルタ"}
+          >{showCachedOnly ? <Save size={14} /> : showFavoritesOnly ? <Star size={14} /> : showRecentOpenedOnly ? <History size={14} /> : showRecentPostedOnly ? <Pencil size={14} /> : <ClipboardList size={14} />}</button>
+          <button
+            className="title-action-btn title-split-toggle"
+            onClick={() => setThreadFilterMenuOpen((v) => !v)}
+            title="スレ一覧フィルタ"
+            aria-expanded={threadFilterMenuOpen}
+          ><ChevronDown size={12} /></button>
+          {threadFilterMenuOpen && (
+            <div className="title-split-menu">
+              <button onClick={() => {
+                setThreadFilterMenuOpen(false);
+                if (showCachedOnly) { setShowCachedOnly(false); setCachedThreadList([]); return; }
+                if (isTauriRuntime()) {
+                  invoke<[string, string, number][]>("load_all_cached_threads").then((list) => {
+                    const extractBoardName = (url: string): string => {
                       try {
-                        const parts = new URL(threadUrl).pathname.split("/").filter(Boolean);
-                        return parts[parts.length - 1] || threadUrl;
-                      } catch { return threadUrl; }
-                    })();
-                    return { threadUrl, title: displayTitle, resCount: count };
-                  }));
-                  setShowCachedOnly(true);
-                  setShowFavoritesOnly(false);
-                  setShowRecentOpenedOnly(false);
-                  setShowRecentPostedOnly(false);
-                }).catch(() => {});
-              }
-            }
-          }}
-          title="dat落ちキャッシュ表示"
-        ><Save size={14} /></button>
-        <button
-          className={`title-action-btn ${showFavoritesOnly ? "active-toggle" : ""}`}
-          onClick={() => {
-            const willEnable = !showFavoritesOnly;
-            setShowFavoritesOnly((v) => !v);
-            if (willEnable) {
-              setShowCachedOnly(false);
-              setShowRecentOpenedOnly(false);
-              setShowRecentPostedOnly(false);
-              void fetchFavNewCounts();
-            } else {
-              const url = threadUrl.trim();
-              if (url && fetchedThreads.length > 0) {
-                void loadReadStatusForBoard(url, fetchedThreads);
-              }
-            }
-          }}
-          title="お気に入りスレのみ表示"
-        ><Star size={14} /></button>
-        <button
-          className={`title-action-btn ${showRecentOpenedOnly ? "active-toggle" : ""}`}
-          onClick={() => {
-            const willEnable = !showRecentOpenedOnly;
-            setShowRecentOpenedOnly((v) => !v);
-            if (willEnable) {
-              setShowCachedOnly(false);
-              setShowFavoritesOnly(false);
-              setShowRecentPostedOnly(false);
-              void fetchSavedThreadCounts(recentOpenedThreads, "recent-opened");
-            } else {
-              const url = threadUrl.trim();
-              if (url && fetchedThreads.length > 0) {
-                void loadReadStatusForBoard(url, fetchedThreads);
-              }
-            }
-          }}
-          title={`最近開いたスレのみ表示 (${recentOpenedThreads.length}/${MAX_RECENT_THREADS})`}
-        ><History size={14} /></button>
-        <button
-          className={`title-action-btn ${showRecentPostedOnly ? "active-toggle" : ""}`}
-          onClick={() => {
-            const willEnable = !showRecentPostedOnly;
-            setShowRecentPostedOnly((v) => !v);
-            if (willEnable) {
-              setShowCachedOnly(false);
-              setShowFavoritesOnly(false);
-              setShowRecentOpenedOnly(false);
-              void fetchSavedThreadCounts(recentPostedThreads, "recent-posted");
-            } else {
-              const url = threadUrl.trim();
-              if (url && fetchedThreads.length > 0) {
-                void loadReadStatusForBoard(url, fetchedThreads);
-              }
-            }
-          }}
-          title={`最近書き込んだスレのみ表示 (${recentPostedThreads.length}/${MAX_RECENT_THREADS})`}
-        ><Pencil size={14} /></button>
+                        const parts = new URL(url).pathname.split("/").filter(Boolean);
+                        if (parts.length >= 3 && parts[0] === "test" && parts[1] === "read.cgi") return parts[2];
+                        return parts[0] || "";
+                      } catch { return ""; }
+                    };
+                    const currentBoard = extractBoardName(threadUrl);
+                    const activeUrls = new Set(fetchedThreads.map((t) => t.threadUrl));
+                    const datOchiList = list
+                      .filter(([url]) => extractBoardName(url) === currentBoard)
+                      .filter(([url]) => !activeUrls.has(url));
+                    setCachedThreadList(datOchiList.map(([threadUrl, title, count]) => {
+                      const displayTitle = title && title.trim() !== "" ? title : (() => {
+                        try {
+                          const parts = new URL(threadUrl).pathname.split("/").filter(Boolean);
+                          return parts[parts.length - 1] || threadUrl;
+                        } catch { return threadUrl; }
+                      })();
+                      return { threadUrl, title: displayTitle, resCount: count };
+                    }));
+                    setShowCachedOnly(true);
+                    setShowFavoritesOnly(false);
+                    setShowRecentOpenedOnly(false);
+                    setShowRecentPostedOnly(false);
+                  }).catch(() => {});
+                }
+              }}>{showCachedOnly ? "\u2713 " : ""}dat落ちキャッシュ</button>
+              <button onClick={() => {
+                setThreadFilterMenuOpen(false);
+                const willEnable = !showFavoritesOnly;
+                setShowFavoritesOnly((v) => !v);
+                if (willEnable) {
+                  setShowCachedOnly(false); setShowRecentOpenedOnly(false); setShowRecentPostedOnly(false);
+                  void fetchFavNewCounts();
+                } else {
+                  const url = threadUrl.trim();
+                  if (url && fetchedThreads.length > 0) void loadReadStatusForBoard(url, fetchedThreads);
+                }
+              }}>{showFavoritesOnly ? "\u2713 " : ""}お気に入りスレ</button>
+              <button onClick={() => {
+                setThreadFilterMenuOpen(false);
+                const willEnable = !showRecentOpenedOnly;
+                setShowRecentOpenedOnly((v) => !v);
+                if (willEnable) {
+                  setShowCachedOnly(false); setShowFavoritesOnly(false); setShowRecentPostedOnly(false);
+                  void fetchSavedThreadCounts(recentOpenedThreads, "recent-opened");
+                } else {
+                  const url = threadUrl.trim();
+                  if (url && fetchedThreads.length > 0) void loadReadStatusForBoard(url, fetchedThreads);
+                }
+              }}>{showRecentOpenedOnly ? "\u2713 " : ""}最近開いたスレ ({recentOpenedThreads.length})</button>
+              <button onClick={() => {
+                setThreadFilterMenuOpen(false);
+                const willEnable = !showRecentPostedOnly;
+                setShowRecentPostedOnly((v) => !v);
+                if (willEnable) {
+                  setShowCachedOnly(false); setShowFavoritesOnly(false); setShowRecentOpenedOnly(false);
+                  void fetchSavedThreadCounts(recentPostedThreads, "recent-posted");
+                } else {
+                  const url = threadUrl.trim();
+                  if (url && fetchedThreads.length > 0) void loadReadStatusForBoard(url, fetchedThreads);
+                }
+              }}>{showRecentPostedOnly ? "\u2713 " : ""}最近書き込んだスレ ({recentPostedThreads.length})</button>
+            </div>
+          )}
+        </div>
         <button
           className={`title-action-btn ${threadNgOpen ? "active-toggle" : ""}`}
           onClick={() => setThreadNgOpen(!threadNgOpen)}
