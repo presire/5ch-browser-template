@@ -179,7 +179,7 @@ echo "  https://github.com/kiyohken2000/5ch-browser-template/releases/tag/${TAG}
 echo ""
 echo "[9/9] Cloudflare Pages deploy"
 
-(cd "$LANDING_DIR" && npx wrangler pages deploy public --project-name=ember-5ch 2>&1 | tail -2)
+(cd "$LANDING_DIR" && npm run build 2>&1 | tail -1 && npx wrangler pages deploy dist --project-name=ember-5ch --branch main --commit-dirty=true 2>&1 | tail -2)
 
 echo ""
 echo "============================================"
