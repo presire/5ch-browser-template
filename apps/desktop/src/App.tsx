@@ -252,6 +252,17 @@ const getThreadKeyFromThreadUrl = (url: string): string => {
   }
 };
 
+const threadAgeColor = (createdAt: number): string | undefined => {
+  const h = (Date.now() - createdAt) / 3600000;
+  if (h < 1) return "#e53935";
+  if (h < 3) return "#f4511e";
+  if (h < 6) return "#fb8c00";
+  if (h < 12) return "#c0ca33";
+  if (h < 24) return "#43a047";
+  if (h < 72) return "#00897b";
+  return undefined;
+};
+
 const getAnchorIds = (el: HTMLElement): number[] => {
   const anchors = el.dataset.anchors;
   if (anchors) return anchors.split(",").map(Number).filter((n) => n > 0);
@@ -642,6 +653,7 @@ export default function App() {
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(60);
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [mouseGestureEnabled, setMouseGestureEnabled] = useState(false);
+  const [threadAgeColorEnabled, setThreadAgeColorEnabled] = useState(false);
   const [imageGalleryOpen, setImageGalleryOpen] = useState(false);
   const gestureRef = useRef<{
     active: boolean;
@@ -2069,8 +2081,8 @@ export default function App() {
   const composeMailValue = composeSage ? "sage" : composeMail;
   const boardItems = ["お気に入り", "ニュース", "ソフトウェア", "ネットワーク", "NGT (テスト)"];
   const fallbackThreadItems = [
-    { id: 1, title: "プローブスレッド", res: 999, got: 24, speed: 2.5, lastLoad: "14:42", lastPost: "14:44", threadUrl: "https://mao.5ch.io/test/read.cgi/ngt/1/"},
-    { id: 2, title: "認証テスト", res: 120, got: 8, speed: 0.8, lastLoad: "13:08", lastPost: "13:09", threadUrl: "https://mao.5ch.io/test/read.cgi/ngt/2/" },
+    { id: 1, title: "プローブスレッド", res: 999, got: 24, speed: 2.5, lastLoad: "14:42", lastPost: "14:44", threadUrl: "https://mao.5ch.io/test/read.cgi/ngt/1/", createdAt: 0},
+    { id: 2, title: "認証テスト", res: 120, got: 8, speed: 0.8, lastLoad: "13:08", lastPost: "13:09", threadUrl: "https://mao.5ch.io/test/read.cgi/ngt/2/", createdAt: 0 },
   ];
   const favThreadUrls = useMemo(() => new Set(favorites.threads.map((t) => t.threadUrl)), [favorites.threads]);
   const selectedSavedThreads = showRecentOpenedOnly
@@ -2079,16 +2091,20 @@ export default function App() {
     ? recentPostedThreads
     : favorites.threads;
   const threadItems = showCachedOnly
-    ? cachedThreadList.map((ct, i) => ({
-        id: i + 1,
-        title: ct.title || "(タイトルなし)",
-        res: ct.resCount,
-        got: ct.resCount,
-        speed: 0,
-        lastLoad: "-",
-        lastPost: "-",
-        threadUrl: ct.threadUrl,
-      }))
+    ? cachedThreadList.map((ct, i) => {
+        const tk = getThreadKeyFromThreadUrl(ct.threadUrl);
+        return {
+          id: i + 1,
+          title: ct.title || "(タイトルなし)",
+          res: ct.resCount,
+          got: ct.resCount,
+          speed: 0,
+          lastLoad: "-",
+          lastPost: "-",
+          threadUrl: ct.threadUrl,
+          createdAt: tk ? Number(tk) * 1000 : 0,
+        };
+      })
     : (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly)
     ? selectedSavedThreads.map((ft, i) => {
         const id = i + 1;
@@ -2101,6 +2117,8 @@ export default function App() {
         const lastRead = threadLastReadCount[id] ?? 0;
         const got = lastRead > 0 ? lastRead : (cachedCount > 0 ? cachedCount : 0);
         const datOchi = favNewCountsFetched && serverCount === undefined;
+        const tk = getThreadKeyFromThreadUrl(ft.threadUrl);
+        const createdAt = tk ? Number(tk) * 1000 : 0;
         return {
           id,
           title: ft.title || "(タイトルなし)",
@@ -2111,6 +2129,7 @@ export default function App() {
           lastPost: "-",
           threadUrl: ft.threadUrl,
           datOchi,
+          createdAt,
         };
       })
     : (
@@ -2129,6 +2148,7 @@ export default function App() {
             lastLoad: lastFetchTime ?? "-",
             lastPost: "-",
             threadUrl: t.threadUrl,
+            createdAt: created,
           };
         })
       : fallbackThreadItems
@@ -2957,6 +2977,7 @@ export default function App() {
           autoRefreshInterval?: number;
           alwaysOnTop?: boolean;
           mouseGestureEnabled?: boolean;
+          threadAgeColorEnabled?: boolean;
         };
         if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
         if (typeof parsed.threadPanePx === "number") {
@@ -2993,6 +3014,7 @@ export default function App() {
         if (typeof parsed.autoRefreshInterval === "number") setAutoRefreshInterval(parsed.autoRefreshInterval);
         if (typeof parsed.alwaysOnTop === "boolean") setAlwaysOnTop(parsed.alwaysOnTop);
         if (typeof parsed.mouseGestureEnabled === "boolean") setMouseGestureEnabled(parsed.mouseGestureEnabled);
+        if (typeof parsed.threadAgeColorEnabled === "boolean") setThreadAgeColorEnabled(parsed.threadAgeColorEnabled);
       } catch { /* ignore */ }
     };
     // Try localStorage first, then file-based persistence
@@ -3589,12 +3611,13 @@ export default function App() {
       autoRefreshInterval,
       alwaysOnTop,
       mouseGestureEnabled,
+      threadAgeColorEnabled,
     });
     localStorage.setItem(LAYOUT_PREFS_KEY, payload);
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -4283,6 +4306,7 @@ export default function App() {
                     <td>{t.id}</td>
                     <td
                       className="thread-title-cell"
+                      style={threadAgeColorEnabled && !hasUnread && t.createdAt > 0 ? { color: threadAgeColor(t.createdAt) } : undefined}
                       onMouseEnter={(e) => onThreadTitleMouseEnter(e, t.title)}
                       onMouseLeave={onThreadTitleMouseLeave}
                       dangerouslySetInnerHTML={renderHighlightedPlainText(t.title, threadSearchQuery)}
@@ -5628,6 +5652,10 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={keepSortOnRefresh} onChange={(e) => setKeepSortOnRefresh(e.target.checked)} />
                   <span>スレ一覧の更新時にソートを維持</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={threadAgeColorEnabled} onChange={(e) => setThreadAgeColorEnabled(e.target.checked)} />
+                  <span>スレ一覧を経過時間で色分け</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={restoreSession} onChange={(e) => setRestoreSession(e.target.checked)} />
