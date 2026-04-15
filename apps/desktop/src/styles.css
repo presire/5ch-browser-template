@@ -88,6 +88,31 @@ body {
   margin: 2px 4px;
 }
 
+.menu-submenu-wrap {
+  position: relative;
+}
+.menu-submenu-trigger {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+}
+.menu-submenu {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: -3px;
+  min-width: 140px;
+  border: 1px solid #a0a0a0;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(20,20,20,0.2);
+  padding: 3px;
+  z-index: 81;
+}
+.menu-submenu-wrap:hover > .menu-submenu {
+  display: grid;
+  gap: 1px;
+}
+
 .tool-bar {
   border-bottom: 1px solid var(--line);
   background: #e8e8e8;
@@ -2579,6 +2604,11 @@ button.search-history-btn:hover {
 }
 .dark .menu-dropdown button:hover {
   background: #3c3c3c;
+}
+.dark .menu-submenu {
+  background: #2d2d30;
+  border-color: #555;
+  box-shadow: 2px 2px 6px rgba(0,0,0,0.4);
 }
 .dark .search-history-dropdown {
   background: #2d2d30;
