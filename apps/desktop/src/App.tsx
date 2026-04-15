@@ -13,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3,
+  Image, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -137,6 +137,8 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
   speed: 54,
 };
 const COL_RESIZE_HANDLE_PX = 5;
+type ThreadColKey = "fetched" | "title" | "res" | "read" | "unread" | "lastFetch" | "speed";
+const DEFAULT_COL_VISIBLE: Record<ThreadColKey, boolean> = { fetched: true, title: true, res: true, read: true, unread: true, lastFetch: true, speed: true };
 const COMPOSE_PREFS_KEY = "desktop.composePrefs.v1";
 const NAME_HISTORY_KEY = "desktop.nameHistory.v1";
 const BOOKMARK_KEY = "desktop.bookmarks.v1";
@@ -250,6 +252,14 @@ const getThreadKeyFromThreadUrl = (url: string): string => {
   } catch {
     return "";
   }
+};
+
+const threadAgeColor = (createdAt: number): string | undefined => {
+  const h = (Date.now() - createdAt) / 3600000;
+  if (h < 1) return "#e65100";
+  if (h < 6) return "#bf8c00";
+  if (h < 24) return "#a09000";
+  return undefined;
 };
 
 const getAnchorIds = (el: HTMLElement): number[] => {
@@ -642,6 +652,8 @@ export default function App() {
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(60);
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [mouseGestureEnabled, setMouseGestureEnabled] = useState(false);
+  const [threadAgeColorEnabled, setThreadAgeColorEnabled] = useState(false);
+  const [imageGalleryOpen, setImageGalleryOpen] = useState(false);
   const gestureRef = useRef<{
     active: boolean;
     startX: number;
@@ -715,13 +727,16 @@ export default function App() {
   const [backRefPopup, setBackRefPopup] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[] } | null>(null);
   const [watchoiMenu, setWatchoiMenu] = useState<{ x: number; y: number; watchoi: string } | null>(null);
   const [composePos, setComposePos] = useState<{ x: number; y: number } | null>(null);
+  const [composeSize, setComposeSize] = useState<{ w: number; h: number } | null>(null);
   const composeDragRef = useRef<{ startX: number; startY: number; startPosX: number; startPosY: number } | null>(null);
+  const composeResizeRef = useRef<{ startX: number; startY: number; startW: number; startH: number; startPosX: number; startPosY: number; edge: string } | null>(null);
   const [boardPanePx, setBoardPanePx] = useState(DEFAULT_BOARD_PANE_PX);
   const [threadPanePx, setThreadPanePx] = useState(DEFAULT_THREAD_PANE_PX);
   const [responseTopRatio, setResponseTopRatio] = useState(DEFAULT_RESPONSE_TOP_RATIO);
   const [paneLayoutMode, setPaneLayoutMode] = useState<PaneLayoutMode>("classic");
   const resizeDragRef = useRef<ResizeDragState | null>(null);
   const [threadColWidths, setThreadColWidths] = useState<Record<string, number>>({ ...DEFAULT_COL_WIDTHS });
+  const [threadColVisible, setThreadColVisible] = useState<Record<ThreadColKey, boolean>>({ ...DEFAULT_COL_VISIBLE });
   const layoutPrefsLoadedRef = useRef(false);
   const threadScrollPositions = useRef<Record<string, number>>({});
   const boardTreeRef = useRef<HTMLDivElement | null>(null);
@@ -2068,8 +2083,8 @@ export default function App() {
   const composeMailValue = composeSage ? "sage" : composeMail;
   const boardItems = ["お気に入り", "ニュース", "ソフトウェア", "ネットワーク", "NGT (テスト)"];
   const fallbackThreadItems = [
-    { id: 1, title: "プローブスレッド", res: 999, got: 24, speed: 2.5, lastLoad: "14:42", lastPost: "14:44", threadUrl: "https://mao.5ch.io/test/read.cgi/ngt/1/"},
-    { id: 2, title: "認証テスト", res: 120, got: 8, speed: 0.8, lastLoad: "13:08", lastPost: "13:09", threadUrl: "https://mao.5ch.io/test/read.cgi/ngt/2/" },
+    { id: 1, title: "プローブスレッド", res: 999, got: 24, speed: 2.5, lastLoad: "14:42", lastPost: "14:44", threadUrl: "https://mao.5ch.io/test/read.cgi/ngt/1/", createdAt: 0},
+    { id: 2, title: "認証テスト", res: 120, got: 8, speed: 0.8, lastLoad: "13:08", lastPost: "13:09", threadUrl: "https://mao.5ch.io/test/read.cgi/ngt/2/", createdAt: 0 },
   ];
   const favThreadUrls = useMemo(() => new Set(favorites.threads.map((t) => t.threadUrl)), [favorites.threads]);
   const selectedSavedThreads = showRecentOpenedOnly
@@ -2078,16 +2093,20 @@ export default function App() {
     ? recentPostedThreads
     : favorites.threads;
   const threadItems = showCachedOnly
-    ? cachedThreadList.map((ct, i) => ({
-        id: i + 1,
-        title: ct.title || "(タイトルなし)",
-        res: ct.resCount,
-        got: ct.resCount,
-        speed: 0,
-        lastLoad: "-",
-        lastPost: "-",
-        threadUrl: ct.threadUrl,
-      }))
+    ? cachedThreadList.map((ct, i) => {
+        const tk = getThreadKeyFromThreadUrl(ct.threadUrl);
+        return {
+          id: i + 1,
+          title: ct.title || "(タイトルなし)",
+          res: ct.resCount,
+          got: ct.resCount,
+          speed: 0,
+          lastLoad: "-",
+          lastPost: "-",
+          threadUrl: ct.threadUrl,
+          createdAt: tk ? Number(tk) * 1000 : 0,
+        };
+      })
     : (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly)
     ? selectedSavedThreads.map((ft, i) => {
         const id = i + 1;
@@ -2100,6 +2119,8 @@ export default function App() {
         const lastRead = threadLastReadCount[id] ?? 0;
         const got = lastRead > 0 ? lastRead : (cachedCount > 0 ? cachedCount : 0);
         const datOchi = favNewCountsFetched && serverCount === undefined;
+        const tk = getThreadKeyFromThreadUrl(ft.threadUrl);
+        const createdAt = tk ? Number(tk) * 1000 : 0;
         return {
           id,
           title: ft.title || "(タイトルなし)",
@@ -2110,6 +2131,7 @@ export default function App() {
           lastPost: "-",
           threadUrl: ft.threadUrl,
           datOchi,
+          createdAt,
         };
       })
     : (
@@ -2128,6 +2150,7 @@ export default function App() {
             lastLoad: lastFetchTime ?? "-",
             lastPost: "-",
             threadUrl: t.threadUrl,
+            createdAt: created,
           };
         })
       : fallbackThreadItems
@@ -2286,6 +2309,17 @@ export default function App() {
   });
   const activeResponse = visibleResponseItems.find((r) => r.id === selectedResponse) ?? visibleResponseItems[0];
   const selectedResponseLabel = activeResponse ? `#${activeResponse.id}` : "-";
+
+  // Collect images with their response numbers for the image gallery pane
+  const galleryImages = useMemo(() => {
+    const items: { url: string; responseNo: number }[] = [];
+    for (const r of fetchedResponses) {
+      for (const url of extractImageUrls(r.body || "")) {
+        items.push({ url, responseNo: r.responseNo });
+      }
+    }
+    return items;
+  }, [fetchedResponses]);
 
   // Build back-reference map: responseNo → list of responseNos that reference it
   const backRefMap = (() => {
@@ -2888,6 +2922,14 @@ export default function App() {
         }
         return;
       }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        setComposeOpen(true);
+        setComposePos(null);
+        setComposeBody("");
+        setComposeResult(null);
+        return;
+      }
       if (e.key.toLowerCase() === "r" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
         e.preventDefault();
         const sel = window.getSelection()?.toString().trim();
@@ -2945,6 +2987,9 @@ export default function App() {
           autoRefreshInterval?: number;
           alwaysOnTop?: boolean;
           mouseGestureEnabled?: boolean;
+          threadAgeColorEnabled?: boolean;
+          composeSize?: { w: number; h: number };
+          threadColVisible?: Record<string, boolean>;
         };
         if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
         if (typeof parsed.threadPanePx === "number") {
@@ -2981,6 +3026,9 @@ export default function App() {
         if (typeof parsed.autoRefreshInterval === "number") setAutoRefreshInterval(parsed.autoRefreshInterval);
         if (typeof parsed.alwaysOnTop === "boolean") setAlwaysOnTop(parsed.alwaysOnTop);
         if (typeof parsed.mouseGestureEnabled === "boolean") setMouseGestureEnabled(parsed.mouseGestureEnabled);
+        if (typeof parsed.threadAgeColorEnabled === "boolean") setThreadAgeColorEnabled(parsed.threadAgeColorEnabled);
+        if (parsed.composeSize && typeof parsed.composeSize.w === "number" && typeof parsed.composeSize.h === "number") setComposeSize(parsed.composeSize);
+        if (parsed.threadColVisible && typeof parsed.threadColVisible === "object") setThreadColVisible((prev) => ({ ...prev, ...parsed.threadColVisible }));
       } catch { /* ignore */ }
     };
     // Try localStorage first, then file-based persistence
@@ -3308,6 +3356,31 @@ export default function App() {
         });
         return;
       }
+      const cresize = composeResizeRef.current;
+      if (cresize) {
+        const dx = event.clientX - cresize.startX;
+        const dy = event.clientY - cresize.startY;
+        const minW = 320;
+        const minH = 200;
+        const e = cresize.edge;
+        let newW = cresize.startW;
+        let newH = cresize.startH;
+        let newX = cresize.startPosX;
+        let newY = cresize.startPosY;
+        if (e.includes("r")) newW = Math.max(minW, cresize.startW + dx);
+        if (e.includes("l")) {
+          newW = Math.max(minW, cresize.startW - dx);
+          newX = cresize.startPosX + (cresize.startW - newW);
+        }
+        if (e.includes("b")) newH = Math.max(minH, cresize.startH + dy);
+        if (e.includes("t")) {
+          newH = Math.max(minH, cresize.startH - dy);
+          newY = cresize.startPosY + (cresize.startH - newH);
+        }
+        setComposeSize({ w: newW, h: newH });
+        setComposePos({ x: newX, y: newY });
+        return;
+      }
       const drag = resizeDragRef.current;
       if (!drag) return;
 
@@ -3357,6 +3430,12 @@ export default function App() {
     const onMouseUp = () => {
       if (composeDragRef.current) {
         composeDragRef.current = null;
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        return;
+      }
+      if (composeResizeRef.current) {
+        composeResizeRef.current = null;
         document.body.style.userSelect = "";
         document.body.style.cursor = "";
         return;
@@ -3577,12 +3656,15 @@ export default function App() {
       autoRefreshInterval,
       alwaysOnTop,
       mouseGestureEnabled,
+      threadAgeColorEnabled,
+      composeSize: composeSize ?? undefined,
+      threadColVisible,
     });
     localStorage.setItem(LAYOUT_PREFS_KEY, payload);
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -3714,6 +3796,20 @@ export default function App() {
             { text: alwaysOnTop ? "最前面表示を解除" : "最前面に固定", action: () => setAlwaysOnTop((v) => !v) },
             { text: "sep" },
             { text: mouseGestureEnabled ? "マウスジェスチャを無効化" : "マウスジェスチャを有効化", action: () => setMouseGestureEnabled((v) => !v) },
+            { text: "sep" },
+            { text: "カラム", submenu: ([
+              ["fetched", "!"],
+              ["title", "タイトル"],
+              ["res", "レス"],
+              ["read", "既読"],
+              ["unread", "新着"],
+              ["lastFetch", "最終取得"],
+              ["speed", "勢い"],
+            ] as [ThreadColKey, string][]).map(([key, label]) => ({
+              text: `${threadColVisible[key] ? "\u2713 " : "　"}${label}`,
+              action: () => setThreadColVisible((prev) => ({ ...prev, [key]: !prev[key] })),
+              keepOpen: true,
+            })) },
           ]},
           { label: "板", items: [
             { text: "板一覧を取得", action: () => fetchBoardCategories() },
@@ -3749,6 +3845,15 @@ export default function App() {
                 {items.map((item, i) =>
                   item.text === "sep" ? (
                     <div key={i} className="menu-sep" />
+                  ) : "submenu" in item && item.submenu ? (
+                    <div key={item.text} className="menu-submenu-wrap">
+                      <button className="menu-submenu-trigger">{item.text} ▶</button>
+                      <div className="menu-submenu">
+                        {(item.submenu as { text: string; action?: () => void; keepOpen?: boolean }[]).map((sub) => (
+                          <button key={sub.text} onClick={(e) => { e.stopPropagation(); sub.action?.(); if (!sub.keepOpen) setOpenMenu(null); }}>{sub.text}</button>
+                        ))}
+                      </div>
+                    </div>
                   ) : (
                     <button
                       key={item.text}
@@ -4194,30 +4299,30 @@ export default function App() {
           <table>
             <thead>
               <tr>
-                <th className="sortable-th col-resizable" style={{ width: threadColWidths.fetched + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX >= r.right - COL_RESIZE_HANDLE_PX) return; toggleThreadSort("fetched"); }} onMouseDown={(e) => beginColResize("fetched", "right", e)} onDoubleClick={(e) => resetColWidth("fetched", "right", e)} onMouseMove={(e) => colResizeCursor("right", e)} title="取得済みスレを上にソート">
+                {threadColVisible.fetched && <th className="sortable-th col-resizable" style={{ width: threadColWidths.fetched + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX >= r.right - COL_RESIZE_HANDLE_PX) return; toggleThreadSort("fetched"); }} onMouseDown={(e) => beginColResize("fetched", "right", e)} onDoubleClick={(e) => resetColWidth("fetched", "right", e)} onMouseMove={(e) => colResizeCursor("right", e)} title="取得済みスレを上にソート">
                   !{threadSortKey === "fetched" ? (threadSortAsc ? "\u25B2" : "\u25BC") : ""}
-                </th>
+                </th>}
                 <th className="sortable-th col-resizable" style={{ width: threadColWidths.id + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX >= r.right - COL_RESIZE_HANDLE_PX) return; toggleThreadSort("id"); }} onMouseDown={(e) => beginColResize("id", "right", e)} onDoubleClick={(e) => resetColWidth("id", "right", e)} onMouseMove={(e) => colResizeCursor("right", e)}>
                   番号{threadSortKey === "id" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
                 </th>
-                <th className="sortable-th" onClick={() => toggleThreadSort("title")}>
+                {threadColVisible.title && <th className="sortable-th" onClick={() => toggleThreadSort("title")}>
                   タイトル{threadSortKey === "title" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
-                </th>
-                <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.res + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("res"); }} onMouseDown={(e) => beginColResize("res", "left", e)} onDoubleClick={(e) => resetColWidth("res", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
+                </th>}
+                {threadColVisible.res && <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.res + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("res"); }} onMouseDown={(e) => beginColResize("res", "left", e)} onDoubleClick={(e) => resetColWidth("res", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
                   レス{threadSortKey === "res" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
-                </th>
-                <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.read + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("got"); }} onMouseDown={(e) => beginColResize("read", "left", e)} onDoubleClick={(e) => resetColWidth("read", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
+                </th>}
+                {threadColVisible.read && <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.read + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("got"); }} onMouseDown={(e) => beginColResize("read", "left", e)} onDoubleClick={(e) => resetColWidth("read", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
                   既読{threadSortKey === "got" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
-                </th>
-                <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.unread + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("new"); }} onMouseDown={(e) => beginColResize("unread", "left", e)} onDoubleClick={(e) => resetColWidth("unread", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
+                </th>}
+                {threadColVisible.unread && <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.unread + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("new"); }} onMouseDown={(e) => beginColResize("unread", "left", e)} onDoubleClick={(e) => resetColWidth("unread", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
                   新着{threadSortKey === "new" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
-                </th>
-                <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.lastFetch + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("lastFetch"); }} onMouseDown={(e) => beginColResize("lastFetch", "left", e)} onDoubleClick={(e) => resetColWidth("lastFetch", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
+                </th>}
+                {threadColVisible.lastFetch && <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.lastFetch + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("lastFetch"); }} onMouseDown={(e) => beginColResize("lastFetch", "left", e)} onDoubleClick={(e) => resetColWidth("lastFetch", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
                   最終取得{threadSortKey === "lastFetch" ? (threadSortAsc ? " ▲" : " ▼") : ""}
-                </th>
-                <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.speed + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("speed"); }} onMouseDown={(e) => beginColResize("speed", "left", e)} onDoubleClick={(e) => resetColWidth("speed", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
+                </th>}
+                {threadColVisible.speed && <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.speed + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("speed"); }} onMouseDown={(e) => beginColResize("speed", "left", e)} onDoubleClick={(e) => resetColWidth("speed", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
                   勢い{threadSortKey === "speed" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
-                </th>
+                </th>}
               </tr>
             </thead>
             <tbody ref={threadTbodyRef}>
@@ -4267,27 +4372,28 @@ export default function App() {
                     }}
                     onContextMenu={(e) => onThreadContextMenu(e, t.id)}
                   >
-                    <td className="thread-fetched-cell">{(showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) ? (hasUnread ? "\u25CF" : "") : (hasUnread || threadReadMap[t.id] ? "\u25CF" : "")}</td>
+                    {threadColVisible.fetched && <td className="thread-fetched-cell">{(showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) ? (hasUnread ? "\u25CF" : "") : (hasUnread || threadReadMap[t.id] ? "\u25CF" : "")}</td>}
                     <td>{t.id}</td>
-                    <td
+                    {threadColVisible.title && <td
                       className="thread-title-cell"
+                      style={threadAgeColorEnabled && !hasUnread && t.createdAt > 0 ? { color: threadAgeColor(t.createdAt) } : undefined}
                       onMouseEnter={(e) => onThreadTitleMouseEnter(e, t.title)}
                       onMouseLeave={onThreadTitleMouseLeave}
                       dangerouslySetInnerHTML={renderHighlightedPlainText(t.title, threadSearchQuery)}
-                    />
-                    <td>{t.res >= 0 ? t.res : "-"}</td>
-                    <td>{isSavedMode ? (t.got >= 0 ? t.got : "-") : (t.got > 0 ? t.got : "-")}</td>
-                    <td className={`new-count ${hasUnread ? "has-new" : ""}`}>
+                    />}
+                    {threadColVisible.res && <td>{t.res >= 0 ? t.res : "-"}</td>}
+                    {threadColVisible.read && <td>{isSavedMode ? (t.got >= 0 ? t.got : "-") : (t.got > 0 ? t.got : "-")}</td>}
+                    {threadColVisible.unread && <td className={`new-count ${hasUnread ? "has-new" : ""}`}>
                       {isSavedMode ? (t.res >= 0 ? Math.max(0, t.res - t.got) : "-") : (t.got > 0 && t.res > 0 ? Math.max(0, t.res - t.got) : "-")}
-                    </td>
-                    <td className="last-fetch-cell">{threadFetchTimesRef.current[t.threadUrl] ?? "-"}</td>
-                    <td className="speed-cell">
+                    </td>}
+                    {threadColVisible.lastFetch && <td className="last-fetch-cell">{threadFetchTimesRef.current[t.threadUrl] ?? "-"}</td>}
+                    {threadColVisible.speed && <td className="speed-cell">
                       <span className="speed-bar" style={{
                         width: `${Math.min(100, t.speed * 2)}%`,
                         background: t.speed >= 20 ? "rgba(200,40,40,0.25)" : t.speed >= 5 ? "rgba(200,120,40,0.2)" : "rgba(200,80,40,0.15)",
                       }} />
                       <span className="speed-val">{t.speed.toFixed(1)}</span>
-                    </td>
+                    </td>}
                   </tr>
                 );
               })}
@@ -4343,6 +4449,7 @@ export default function App() {
                   <Star size={14} fill={favorites.threads.some((f) => f.threadUrl === threadTabs[activeTabIndex].threadUrl) ? "currentColor" : "none"} />
                 </button>
                 <button className="title-action-btn" onClick={downloadAllThreadImages} title="画像を一括ダウンロード"><Download size={14} /></button>
+                <button className={`title-action-btn ${imageGalleryOpen ? "active-toggle" : ""}`} onClick={() => setImageGalleryOpen((v) => !v)} title="画像一覧"><Images size={14} /></button>
                 <button className="title-action-btn" onClick={() => setNgPanelOpen((v) => !v)} title="NGフィルタ"><EyeOff size={14} /></button>
               </span>
             </div>
@@ -4433,6 +4540,7 @@ export default function App() {
           <div
             className="response-layout"
           >
+            <div className="response-content-row">
             <div
               className="response-scroll"
               ref={responseScrollRef}
@@ -4645,6 +4753,60 @@ export default function App() {
                 );
               })}
             </div>
+            {imageGalleryOpen && (
+              <div className="image-gallery-pane">
+                <div className="image-gallery-header">
+                  <span>画像一覧 ({galleryImages.length})</span>
+                  <button className="title-action-btn" onClick={() => setImageGalleryOpen(false)} title="閉じる"><X size={12} /></button>
+                </div>
+                <div className="image-gallery-scroll">
+                  {galleryImages.length === 0 && (
+                    <div className="image-gallery-empty">画像なし</div>
+                  )}
+                  {galleryImages.map((img, i) => (
+                    <div key={`${img.responseNo}-${i}`} className="image-gallery-item">
+                      <div
+                        className="image-gallery-thumb-wrap"
+                        onMouseMove={(e) => {
+                          if (!e.ctrlKey && !hoverPreviewEnabled) return;
+                          showHoverPreview(img.url);
+                        }}
+                        onMouseOut={(e) => {
+                          const next = (e as React.MouseEvent).relatedTarget as HTMLElement | null;
+                          if (next?.closest(".hover-preview")) return;
+                          if (hoverPreviewShowTimerRef.current) { clearTimeout(hoverPreviewShowTimerRef.current); hoverPreviewShowTimerRef.current = null; }
+                          if (hoverPreviewHideTimerRef.current) clearTimeout(hoverPreviewHideTimerRef.current);
+                          hoverPreviewHideTimerRef.current = setTimeout(() => {
+                            hoverPreviewSrcRef.current = null;
+                            hoverPreviewHideTimerRef.current = null;
+                            if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
+                          }, 300);
+                        }}
+                        onClick={() => {
+                          if (isTauriRuntime()) {
+                            void invoke("open_external_url", { url: img.url }).catch(() => window.open(img.url, "_blank"));
+                          } else {
+                            window.open(img.url, "_blank");
+                          }
+                        }}
+                      >
+                        <img className="image-gallery-thumb" src={img.url} loading="lazy" alt="" />
+                      </div>
+                      <span
+                        className="image-gallery-resno"
+                        onClick={() => {
+                          setSelectedResponse(img.responseNo);
+                          setStatus(`>>${img.responseNo}`);
+                        }}
+                      >
+                        &gt;&gt;{img.responseNo}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            </div>
             <div className="response-nav-bar">
               <span className="nav-info">
                 着:{visibleResponseItems.length}{ngFilteredCount > 0 ? `(NG${ngFilteredCount})` : ""}
@@ -4759,7 +4921,10 @@ export default function App() {
           className="compose-window"
           role="dialog"
           aria-label="書き込み"
-          style={composePos ? { right: "auto", bottom: "auto", left: composePos.x, top: composePos.y } : undefined}
+          style={{
+            ...(composePos ? { right: "auto", bottom: "auto", left: composePos.x, top: composePos.y } : {}),
+            ...(composeSize ? { width: composeSize.w, height: composeSize.h } : {}),
+          }}
         >
           <header
             className="compose-header"
@@ -4782,6 +4947,7 @@ export default function App() {
             <span className="compose-target" title={threadUrl}>
               {selectedThreadItem ? selectedThreadItem.title : threadUrl}
             </span>
+            <button className="compose-header-icon" title="サイズをリセット" onClick={() => { setComposeSize(null); setComposePos(null); }}><RotateCcw size={14} /></button>
             <button onClick={() => { setComposeOpen(false); setComposeResult(null); setUploadPanelOpen(false); setUploadResults([]); }}>閉じる</button>
           </header>
           <div className="compose-grid">
@@ -4899,6 +5065,23 @@ export default function App() {
               {composeResult.ok ? "OK" : "NG"}: {composeResult.message}
             </div>
           )}
+          {["r", "b", "rb", "l", "t", "lt", "lb", "rt"].map((edge) => (
+            <div
+              key={edge}
+              className={`compose-resize compose-resize-${edge}`}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+                composeResizeRef.current = { startX: e.clientX, startY: e.clientY, startW: rect.width, startH: rect.height, startPosX: rect.left, startPosY: rect.top, edge };
+                if (!composePos) setComposePos({ x: rect.left, y: rect.top });
+                if (!composeSize) setComposeSize({ w: rect.width, h: rect.height });
+                document.body.style.userSelect = "none";
+                const cursors: Record<string, string> = { r: "ew-resize", l: "ew-resize", t: "ns-resize", b: "ns-resize", rb: "nwse-resize", lt: "nwse-resize", rt: "nesw-resize", lb: "nesw-resize" };
+                document.body.style.cursor = cursors[edge] ?? "nwse-resize";
+              }}
+            />
+          ))}
         </section>
       )}
       {ngPanelOpen && (
@@ -5458,6 +5641,7 @@ export default function App() {
                 ["Ctrl+Shift+↑/↓", "レス選択の上下移動"],
                 ["Ctrl+Alt+←/→", "スレペイン幅の調整"],
                 ["Ctrl+Alt+↑/↓", "レス分割比の調整"],
+                ["Ctrl+E", "書き込みウィンドウを開く"],
                 ["R", "選択レスを引用して書き込み"],
                 ["Escape", "ライトボックス/ダイアログを閉じる"],
                 ["ダブルクリック (レス行)", "引用して書き込み"],
@@ -5560,6 +5744,10 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={keepSortOnRefresh} onChange={(e) => setKeepSortOnRefresh(e.target.checked)} />
                   <span>スレ一覧の更新時にソートを維持</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={threadAgeColorEnabled} onChange={(e) => setThreadAgeColorEnabled(e.target.checked)} />
+                  <span>スレ一覧を経過時間で色分け</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={restoreSession} onChange={(e) => setRestoreSession(e.target.checked)} />
