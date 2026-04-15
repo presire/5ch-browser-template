@@ -1,0 +1,151 @@
+name: Sync Upstream and Build Win10
+
+# 毎日 朝6時(JST) = UTC 21:00 に実行 + 手動実行ボタン
+on:
+  schedule:
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_REPO: kiyohken2000/5ch-browser-template
+  FEAT_BRANCH: feat/windows-ci-support
+
+jobs:
+  sync-and-build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout feat branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FEAT_BRANCH }}
+          fetch-depth: 0
+
+      - name: Configure git
+        shell: bash
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream main
+        shell: bash
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream main
+          git fetch origin main
+
+      - name: Detect upstream changes
+        id: check
+        shell: bash
+        run: |
+          LOCAL=$(git rev-parse origin/main)
+          UPSTREAM=$(git rev-parse upstream/main)
+          echo "local=$LOCAL"
+          echo "upstream=$UPSTREAM"
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No upstream changes."
+          else
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync main from upstream
+        if: steps.check.outputs.changed == 'true'
+        shell: bash
+        run: |
+          git checkout main
+          git merge --ff-only upstream/main
+          git push origin main
+
+      - name: Merge main into feat branch
+        if: steps.check.outputs.changed == 'true'
+        shell: bash
+        run: |
+          git checkout "${FEAT_BRANCH}"
+          git merge --no-ff main -m "chore: sync upstream main into ${FEAT_BRANCH}"
+          git push origin "${FEAT_BRANCH}"
+
+      - name: Read upstream version
+        if: steps.check.outputs.changed == 'true'
+        id: ver
+        shell: bash
+        run: |
+          VERSION=$(jq -r '.version' apps/desktop/src-tauri/tauri.conf.json)
+          TAG="v${VERSION}-win10"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "Tag will be: $TAG"
+
+      - name: Check tag existence
+        if: steps.check.outputs.changed == 'true'
+        id: tagcheck
+        shell: bash
+        run: |
+          git fetch origin --tags
+          if git rev-parse "refs/tags/${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag already exists, skipping build."
+            echo "exists=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---------- ここから Win10 exe ビルド ----------
+      - name: Setup Rust
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install desktop deps
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Build NSIS installer (exe only)
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        working-directory: apps/desktop
+        shell: pwsh
+        run: |
+          $tmpConfig = New-TemporaryFile
+          @"
+          {
+            "bundle": {
+              "icon": ["icons/icon.png", "icons/icon.ico"],
+              "targets": ["nsis"]
+            }
+          }
+          "@ | Set-Content -Path $tmpConfig
+          npm run tauri:build -- --config "$tmpConfig"
+          Remove-Item $tmpConfig
+
+      - name: Collect exe artifact
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path out -Force
+          $nsis = Get-ChildItem -Path target/release/bundle/nsis/*.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $nsis) { throw "NSIS exe not found" }
+          Copy-Item $nsis.FullName -Destination out/ember-windows-10+-x64-setup.exe
+
+      - name: Push tag
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        shell: bash
+        run: |
+          git tag -a "${{ steps.ver.outputs.tag }}" -m "Win10 build for v${{ steps.ver.outputs.version }}"
+          git push origin "${{ steps.ver.outputs.tag }}"
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body: |
+            Windows 10 向けビルド (upstream v${{ steps.ver.outputs.version }} 同期)
+          files: out/ember-windows-10+-x64-setup.exe
