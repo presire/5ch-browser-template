@@ -620,6 +620,8 @@ li.fav-drag-over {
 }
 .image-gallery-resno {
   display: block;
+  width: fit-content;
+  margin: 0 auto;
   font-size: 11px;
   color: #0066cc;
   cursor: pointer;
