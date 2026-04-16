@@ -84,3 +84,18 @@ jobs:
         run: |
           git fetch upstream --tags
           git push origin --tags
+
+      - name: Create and push win10 tag
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          VERSION=$(jq -r '.version' apps/desktop/src-tauri/tauri.conf.json)
+          TAG="v${VERSION}-win10"
+
+          git fetch origin --tags
+          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo ":: Tag ${TAG} already exists — skipping."
+          else
+            git tag -a "${TAG}" -m "Win10 build for v${VERSION}"
+            git push origin "${TAG}"
+            echo ":: Pushed tag ${TAG}"
+          fi

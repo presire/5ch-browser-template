@@ -3,8 +3,12 @@ name: Release (Windows)
 on:
   push:
     tags:
-      - "v*"
+      - "v*-win10"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Target tag (e.g. v0.0.98-win10)"
+        required: true
 
 jobs:
   build-windows-x64:
@@ -67,5 +71,6 @@ jobs:
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
             artifacts/windows-x64/*
