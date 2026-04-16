@@ -79,22 +79,8 @@ jobs:
           git merge --no-ff main -m "chore: sync upstream main into ${FEAT_BRANCH}"
           git push origin "${FEAT_BRANCH}"
 
-      - name: Determine version and push tag
+      - name: Sync upstream tags
         if: steps.check.outputs.changed == 'true'
-        id: tag
         run: |
-          VERSION=$(jq -r '.version' apps/desktop/src-tauri/tauri.conf.json)
-          TAG="v${VERSION}-win10"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-
-          git fetch origin --tags
-          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo ":: Tag ${TAG} already exists — skipping."
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-          else
-            git tag -a "${TAG}" -m "Win10 build for v${VERSION}"
-            git push origin "${TAG}"
-            echo ":: Pushed tag ${TAG}"
-            echo "pushed=true" >> "$GITHUB_OUTPUT"
-          fi
+          git fetch upstream --tags
+          git push origin --tags
