@@ -254,6 +254,36 @@ const getThreadKeyFromThreadUrl = (url: string): string => {
   }
 };
 
+const normalizeThreadTitleForSearch = (title: string): string => {
+  let t = (title || "").trim();
+  t = t.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  t = t.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  for (let i = 0; i < 3; i++) {
+    const before = t;
+    t = t
+      .replace(/\s*[【\[(](?:part|パート)\s*\d+\s*[)\]】]\s*$/i, "")
+      .replace(/\s*(?:part|パート)\s*\.?\s*\d+\s*$/i, "")
+      .replace(/\s*その\s*\d+\s*$/i, "")
+      .replace(/\s*vol\s*\.?\s*\d+\s*$/i, "")
+      .replace(/\s*no\.?\s*\d+\s*$/i, "")
+      .replace(/\s*[★☆#＃]\s*\d+\s*$/, "")
+      .replace(/\s*\(\s*\d+\s*\)\s*$/, "")
+      .replace(/\s*\d+\s*スレ目\s*$/, "")
+      .replace(/\s*第\s*\d+\s*スレ\s*$/, "")
+      .replace(/\s+\d+\s*$/, "")
+      .trim();
+    if (t === before) break;
+  }
+  return t.replace(/\s+/g, " ").toLowerCase();
+};
+
+const commonPrefixLength = (a: string, b: string): number => {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a.charCodeAt(i) === b.charCodeAt(i)) i++;
+  return i;
+};
+
 const threadAgeColor = (createdAt: number): string | undefined => {
   const h = (Date.now() - createdAt) / 3600000;
   if (h < 1) return "#e65100";
@@ -629,6 +659,10 @@ export default function App() {
   const [thumbSize, setThumbSize] = useState(200);
   const [thumbMaskEnabled, setThumbMaskEnabled] = useState(false);
   const [responseBodyBottomPad, setResponseBodyBottomPad] = useState(false);
+  const [titleClickRefresh, setTitleClickRefresh] = useState(false);
+  const [nextThreadCandidates, setNextThreadCandidates] = useState<{ threadUrl: string; title: string; responseCount: number; threadKey: string; score: number }[]>([]);
+  const [nextThreadSearching, setNextThreadSearching] = useState(false);
+  const [nextThreadSearched, setNextThreadSearched] = useState(false);
   const [restoreSession, setRestoreSession] = useState(false);
   const restoreSessionRef = useRef(false);
   const hoverPreviewEnabledRef = useRef(hoverPreviewEnabled);
@@ -1494,6 +1528,69 @@ export default function App() {
     }
   };
 
+  const searchNextThread = async () => {
+    if (activeTabIndex < 0 || activeTabIndex >= threadTabs.length) return;
+    const tab = threadTabs[activeTabIndex];
+    if (!isTauriRuntime()) {
+      setStatus("next thread search unavailable in web preview");
+      return;
+    }
+    const currentUrl = tab.threadUrl;
+    const currentTitle = tab.title;
+    const currentKey = getThreadKeyFromThreadUrl(currentUrl);
+    const boardUrl = getBoardUrlFromThreadUrl(currentUrl);
+    const normalized = normalizeThreadTitleForSearch(currentTitle);
+    setNextThreadSearching(true);
+    setNextThreadSearched(false);
+    try {
+      const rows = await invoke<ThreadListItem[]>("fetch_thread_list", {
+        threadUrl: boardUrl,
+        limit: null,
+      });
+      const currentCreated = Number(currentKey) || 0;
+      const candidates: { threadUrl: string; title: string; responseCount: number; threadKey: string; score: number }[] = [];
+      for (const row of rows) {
+        if (row.threadKey === currentKey) continue;
+        const rowCreated = Number(row.threadKey) || 0;
+        if (rowCreated <= currentCreated) continue;
+        const rowNorm = normalizeThreadTitleForSearch(row.title);
+        if (!rowNorm || !normalized) continue;
+        let score = 0;
+        if (rowNorm === normalized) score = 1000;
+        else if (rowNorm.includes(normalized)) score = 700;
+        else if (normalized.includes(rowNorm)) score = 600;
+        else {
+          const common = commonPrefixLength(rowNorm, normalized);
+          const threshold = Math.max(6, Math.floor(normalized.length * 0.6));
+          if (common >= threshold) score = 400 + common;
+        }
+        if (score > 0) {
+          candidates.push({
+            threadUrl: row.threadUrl,
+            title: row.title,
+            responseCount: row.responseCount,
+            threadKey: row.threadKey,
+            score,
+          });
+        }
+      }
+      candidates.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return Number(b.threadKey) - Number(a.threadKey);
+      });
+      setNextThreadCandidates(candidates.slice(0, 10));
+      setNextThreadSearched(true);
+      setStatus(`next thread search: ${candidates.length} candidates`);
+    } catch (error) {
+      console.warn("next thread search failed:", error);
+      setNextThreadCandidates([]);
+      setNextThreadSearched(true);
+      setStatus(`next thread search error: ${String(error)}`);
+    } finally {
+      setNextThreadSearching(false);
+    }
+  };
+
   const refreshThreadListSilently = async () => {
     const url = threadUrl.trim();
     if (!url || !isTauriRuntime()) return;
@@ -2262,6 +2359,11 @@ export default function App() {
   })();
 
   const activeThreadUrl = activeTabIndex >= 0 && activeTabIndex < threadTabs.length ? threadTabs[activeTabIndex].threadUrl : threadUrl.trim();
+  useEffect(() => {
+    setNextThreadCandidates([]);
+    setNextThreadSearched(false);
+    setNextThreadSearching(false);
+  }, [activeThreadUrl]);
   const myPostNos = useMemo(() => new Set(myPosts[activeThreadUrl] ?? []), [myPosts, activeThreadUrl]);
   const replyToMeNos = useMemo(() => {
     if (myPostNos.size === 0) return new Set<number>();
@@ -2999,6 +3101,7 @@ export default function App() {
           composeSize?: { w: number; h: number };
           threadColVisible?: Record<string, boolean>;
           responseBodyBottomPad?: boolean;
+          titleClickRefresh?: boolean;
         };
         if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
         if (typeof parsed.threadPanePx === "number") {
@@ -3039,6 +3142,7 @@ export default function App() {
         if (parsed.composeSize && typeof parsed.composeSize.w === "number" && typeof parsed.composeSize.h === "number") setComposeSize(parsed.composeSize);
         if (parsed.threadColVisible && typeof parsed.threadColVisible === "object") setThreadColVisible((prev) => ({ ...prev, ...parsed.threadColVisible }));
         if (typeof parsed.responseBodyBottomPad === "boolean") setResponseBodyBottomPad(parsed.responseBodyBottomPad);
+        if (typeof parsed.titleClickRefresh === "boolean") setTitleClickRefresh(parsed.titleClickRefresh);
       } catch { /* ignore */ }
     };
     // Try localStorage first, then file-based persistence
@@ -3670,12 +3774,13 @@ export default function App() {
       composeSize: composeSize ?? undefined,
       threadColVisible,
       responseBodyBottomPad,
+      titleClickRefresh,
     });
     localStorage.setItem(LAYOUT_PREFS_KEY, payload);
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, responseBodyBottomPad]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, responseBodyBottomPad, titleClickRefresh]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -4132,9 +4237,6 @@ export default function App() {
                 お気に入り ({favorites.threads.length})
               </button>
             </div>
-            {boardPaneTab === "boards" && (
-              <button className="boards-fetch" onClick={fetchBoardCategories}>取得</button>
-            )}
           </div>
           {boardPaneTab === "boards" && (
             <input
@@ -4424,8 +4526,25 @@ export default function App() {
           {activeTabIndex >= 0 && activeTabIndex < threadTabs.length && (
             <div className="thread-title-bar">
               <span className="thread-title-text" title={threadTabs[activeTabIndex].title}>
-                {threadTabs[activeTabIndex].title}
-                {" "}[{fetchedResponses.length}]
+                {titleClickRefresh ? (
+                  <span
+                    className="thread-title-clickable"
+                    title={`クリックでスレ一覧を更新: ${getBoardUrlFromThreadUrl(threadTabs[activeTabIndex].threadUrl)}`}
+                    onClick={() => {
+                      const boardUrl = getBoardUrlFromThreadUrl(threadTabs[activeTabIndex].threadUrl);
+                      setSelectedBoard(boardUrl.split("/").filter(Boolean).pop() || "");
+                      lastBoardUrlRef.current = boardUrl;
+                      setLocationInput(boardUrl);
+                      setThreadUrl(boardUrl);
+                      void fetchThreadListFromCurrent(boardUrl);
+                    }}
+                  >
+                    {threadTabs[activeTabIndex].title}
+                    {" "}[{fetchedResponses.length}]
+                  </span>
+                ) : (
+                  <>{threadTabs[activeTabIndex].title}{" "}[{fetchedResponses.length}]</>
+                )}
               </span>
               <span className="thread-title-actions">
                 <div className="title-split-wrap" onClick={(e) => e.stopPropagation()}>
@@ -4763,6 +4882,41 @@ export default function App() {
                   </Fragment>
                 );
               })}
+              {fetchedResponses.length >= 950 && !responsesLoading && (
+                <div className="next-thread-banner">
+                  <div className="next-thread-banner-header">
+                    <span className="next-thread-banner-title">
+                      {fetchedResponses.length >= 1000 ? "このスレは埋まりました" : "このスレはまもなく埋まります"}
+                    </span>
+                    <button
+                      type="button"
+                      className="next-thread-search-btn"
+                      disabled={nextThreadSearching}
+                      onClick={() => void searchNextThread()}
+                    >
+                      {nextThreadSearching ? "検索中..." : (nextThreadSearched ? "再検索" : "次スレを検索")}
+                    </button>
+                  </div>
+                  {nextThreadSearched && !nextThreadSearching && nextThreadCandidates.length === 0 && (
+                    <div className="next-thread-empty">次スレ候補が見つかりませんでした</div>
+                  )}
+                  {nextThreadCandidates.length > 0 && (
+                    <div className="next-thread-list">
+                      {nextThreadCandidates.map((c) => (
+                        <div
+                          key={c.threadKey}
+                          className="next-thread-item"
+                          title={c.threadUrl}
+                          onClick={() => openThreadInTab(c.threadUrl, c.title)}
+                        >
+                          <span className="next-thread-item-title">{c.title}</span>
+                          <span className="next-thread-item-meta">[{c.responseCount}]</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             {imageGalleryOpen && (
               <div className="image-gallery-pane">
@@ -5776,6 +5930,10 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={responseBodyBottomPad} onChange={(e) => setResponseBodyBottomPad(e.target.checked)} />
                   <span>レス本文の末尾に空行を追加</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={titleClickRefresh} onChange={(e) => setTitleClickRefresh(e.target.checked)} />
+                  <span>スレタイクリックでスレ一覧を更新</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={restoreSession} onChange={(e) => setRestoreSession(e.target.checked)} />
