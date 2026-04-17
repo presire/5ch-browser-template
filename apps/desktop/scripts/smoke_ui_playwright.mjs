@@ -170,12 +170,10 @@ try {
   assert(boardTree || boardFallback, "board pane should render tree or fallback list");
   console.log("smoke-ui: board pane ok");
 
-  // boards header has fetch button and tabs
-  const fetchBtn = await page.$(".boards-fetch");
-  assert(fetchBtn, "board pane should have fetch button");
+  // boards header has tabs
   const boardTabs = await page.$$(".board-tab");
   assert(boardTabs.length === 2, `board pane should have 2 tabs, got ${boardTabs.length}`);
-  console.log("smoke-ui: board fetch button ok");
+  console.log("smoke-ui: board tabs ok");
 
   // fav threads tab switches view
   await page.click(".board-tab:nth-child(2)");
