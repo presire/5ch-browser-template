@@ -814,44 +814,79 @@ h1 {
   .card { padding: 22px; }
 }
 
-/* Prefer light mode */
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f6f5f1;
-    --bg-elev: #ffffff;
-    --ink: #0c1218;
-    --ink-sub: #4a5763;
-    --ink-mute: #788390;
-    --line: rgba(15, 25, 35, 0.09);
-    --line-strong: rgba(15, 25, 35, 0.16);
-    --panel: rgba(255, 255, 255, 0.7);
-    --panel-strong: rgba(255, 255, 255, 0.9);
-    --brand-ink: #fffcf7;
-  }
-  .bg-aurora::before { opacity: 0.4; }
-  .bg-aurora::after  { opacity: 0.35; }
-  .site-nav { background: rgba(246, 245, 241, 0.75); }
-  .card {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7));
-  }
-  .feature-big {
-    background:
-      radial-gradient(800px 300px at 0% 0%, rgba(255, 106, 61, 0.08), transparent 60%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7));
-  }
-  .toggle-set { background: rgba(15, 25, 35, 0.04); }
-  .install-steps code, .card code {
-    background: rgba(15, 25, 35, 0.06);
-    color: var(--ink);
-  }
-  .cmd-block { background: #12151d; border-color: transparent; }
-  .card .cmd-block code,
-  .cmd-block code {
-    background: transparent;
-    color: #e6e9f2;
-    border: 0;
-  }
-  .cmd-copy { background: rgba(255, 255, 255, 0.1); color: #e6e9f2; border-color: rgba(255, 255, 255, 0.2); }
-  .download-meta { background: rgba(15, 25, 35, 0.02); }
-  .asset-list li:hover { background: rgba(15, 25, 35, 0.02); }
+/* Light mode (explicit via data-theme) */
+:root[data-theme="light"] {
+  --bg: #f6f5f1;
+  --bg-elev: #ffffff;
+  --ink: #0c1218;
+  --ink-sub: #4a5763;
+  --ink-mute: #788390;
+  --line: rgba(15, 25, 35, 0.09);
+  --line-strong: rgba(15, 25, 35, 0.16);
+  --panel: rgba(255, 255, 255, 0.7);
+  --panel-strong: rgba(255, 255, 255, 0.9);
+  --brand-ink: #fffcf7;
+}
+:root[data-theme="light"] .bg-aurora::before { opacity: 0.4; }
+:root[data-theme="light"] .bg-aurora::after  { opacity: 0.35; }
+:root[data-theme="light"] .site-nav { background: rgba(246, 245, 241, 0.75); }
+:root[data-theme="light"] .card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7));
+}
+:root[data-theme="light"] .feature-big {
+  background:
+    radial-gradient(800px 300px at 0% 0%, rgba(255, 106, 61, 0.08), transparent 60%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7));
+}
+:root[data-theme="light"] .toggle-set { background: rgba(15, 25, 35, 0.04); }
+:root[data-theme="light"] .install-steps code,
+:root[data-theme="light"] .card code {
+  background: rgba(15, 25, 35, 0.06);
+  color: var(--ink);
+}
+:root[data-theme="light"] .cmd-block { background: #12151d; border-color: transparent; }
+:root[data-theme="light"] .card .cmd-block code,
+:root[data-theme="light"] .cmd-block code {
+  background: transparent;
+  color: #e6e9f2;
+  border: 0;
+}
+:root[data-theme="light"] .cmd-copy {
+  background: rgba(255, 255, 255, 0.1);
+  color: #e6e9f2;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+:root[data-theme="light"] .download-meta { background: rgba(15, 25, 35, 0.02); }
+:root[data-theme="light"] .asset-list li:hover { background: rgba(15, 25, 35, 0.02); }
+
+/* Theme toggle in nav */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel-strong);
+  color: var(--ink-sub);
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+.theme-toggle:hover {
+  color: var(--ink);
+  border-color: rgba(255, 255, 255, 0.22);
+  transform: translateY(-1px);
+}
+:root[data-theme="light"] .theme-toggle:hover {
+  border-color: rgba(15, 25, 35, 0.28);
+}
+
+/* Hero shot-mini as button */
+.shot-mini.shot-button {
+  display: block;
+  padding: 0;
+  text-align: left;
+  cursor: zoom-in;
 }

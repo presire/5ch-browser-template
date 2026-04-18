@@ -42,6 +42,18 @@ type ZoomImage = {
 type PlatformKey = "windows" | "mac";
 type ThemeKey = "light" | "dark";
 
+const THEME_STORAGE_KEY = "ember.landing.theme";
+
+function readInitialColorScheme(): ThemeKey {
+  if (typeof document === "undefined") return "dark";
+  const current = document.documentElement.dataset.theme;
+  if (current === "light" || current === "dark") return current;
+  if (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: light)").matches) {
+    return "light";
+  }
+  return "dark";
+}
+
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   const kb = size / 1024;
@@ -71,6 +83,7 @@ export default function App() {
   const [zoomedImage, setZoomedImage] = useState<ZoomImage | null>(null);
   const [platform, setPlatform] = useState<PlatformKey>("windows");
   const [theme, setTheme] = useState<ThemeKey>("light");
+  const [colorScheme, setColorScheme] = useState<ThemeKey>(() => readInitialColorScheme());
   const windowsAsset = meta?.platforms["windows-x64"] ?? null;
   const macAsset = meta?.platforms["macos-arm64"] ?? null;
   const primaryDownloadUrl = meta?.download_page_url || REPO_RELEASES_URL;
@@ -88,6 +101,15 @@ export default function App() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = colorScheme;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, colorScheme);
+    } catch (e) {
+      console.warn("theme persist failed", e);
+    }
+  }, [colorScheme]);
 
   useEffect(() => {
     if (!zoomedImage) return;
@@ -124,6 +146,15 @@ export default function App() {
             <a href="#install">インストール</a>
             <a href="#download">ダウンロード</a>
             <a href={GITHUB_URL} target="_blank" rel="noreferrer">GitHub</a>
+            <button
+              type="button"
+              className="theme-toggle"
+              onClick={() => setColorScheme(colorScheme === "light" ? "dark" : "light")}
+              aria-label={colorScheme === "light" ? "ダークモードに切り替え" : "ライトモードに切り替え"}
+              title={colorScheme === "light" ? "ダークモードに切り替え" : "ライトモードに切り替え"}
+            >
+              {colorScheme === "light" ? <MoonIcon /> : <SunIcon />}
+            </button>
           </nav>
         </div>
       </header>
@@ -176,9 +207,14 @@ export default function App() {
                   <img src={emberWindowsLight} alt="Ember メイン画面" />
                 </button>
               </div>
-              <div className="shot-mini floating-slow">
+              <button
+                type="button"
+                className="shot-mini shot-button floating-slow"
+                onClick={() => openZoom(emberMacDark, "Ember macOS ダーク")}
+                aria-label="スクリーンショットを拡大"
+              >
                 <img src={emberMacDark} alt="Ember macOS ダーク" />
-              </div>
+              </button>
             </div>
           </div>
         </section>
@@ -202,7 +238,6 @@ export default function App() {
             <div className="feature-big-text">
               <h3>ライト / ダーク、どちらも美しく。</h3>
               <p>
-                OSの外観設定に合わせて自動切替。
                 WindowsでもmacOSでも、手触りの良いネイティブな見た目を維持します。
               </p>
               <div className="toggle-group">
@@ -282,7 +317,7 @@ export default function App() {
               <h3>画像プレビュー</h3>
               <p>
                 スレ内の画像をサイドペインに一覧表示。
-                タップで拡大、アンカーからのジャンプもスムーズ。
+                ホバーで拡大、アンカーからのジャンプもスムーズ。
               </p>
               <button
                 type="button"
