@@ -3051,6 +3051,11 @@ export default function App() {
         } else {
           appendComposeQuote(`>>${selectedResponse}`);
         }
+        return;
+      }
+      if (e.key.toLowerCase() === "a" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        setAutoScrollEnabled((v) => !v);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -5906,6 +5911,7 @@ export default function App() {
                 ["Ctrl+Alt+↑/↓", "レス分割比の調整"],
                 ["Ctrl+E", "書き込みウィンドウを開く"],
                 ["R", "選択レスを引用して書き込み"],
+                ["A", "オートスクロールのオン/オフ"],
                 ["Escape", "ライトボックス/ダイアログを閉じる"],
                 ["ダブルクリック (レス行)", "引用して書き込み"],
                 ["中クリック (タブ)", "タブを閉じる"],
