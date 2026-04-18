@@ -13,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw,
+  Image, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -660,6 +660,8 @@ export default function App() {
   const [thumbMaskEnabled, setThumbMaskEnabled] = useState(false);
   const [responseBodyBottomPad, setResponseBodyBottomPad] = useState(false);
   const [titleClickRefresh, setTitleClickRefresh] = useState(false);
+  const [autoScrollEnabled, setAutoScrollEnabled] = useState(false);
+  const [autoScrollSpeed, setAutoScrollSpeed] = useState(40);
   const [nextThreadCandidates, setNextThreadCandidates] = useState<{ threadUrl: string; title: string; responseCount: number; threadKey: string; score: number }[]>([]);
   const [nextThreadSearching, setNextThreadSearching] = useState(false);
   const [nextThreadSearched, setNextThreadSearched] = useState(false);
@@ -668,6 +670,7 @@ export default function App() {
   const hoverPreviewEnabledRef = useRef(hoverPreviewEnabled);
   hoverPreviewEnabledRef.current = hoverPreviewEnabled;
   const [boardPaneTab, setBoardPaneTab] = useState<"boards" | "fav-threads">("boards");
+  const [favRecentExpanded, setFavRecentExpanded] = useState(false);
   const [showCachedOnly, setShowCachedOnly] = useState(false);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [showRecentOpenedOnly, setShowRecentOpenedOnly] = useState(false);
@@ -3102,6 +3105,7 @@ export default function App() {
           threadColVisible?: Record<string, boolean>;
           responseBodyBottomPad?: boolean;
           titleClickRefresh?: boolean;
+          autoScrollSpeed?: number;
         };
         if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
         if (typeof parsed.threadPanePx === "number") {
@@ -3143,6 +3147,7 @@ export default function App() {
         if (parsed.threadColVisible && typeof parsed.threadColVisible === "object") setThreadColVisible((prev) => ({ ...prev, ...parsed.threadColVisible }));
         if (typeof parsed.responseBodyBottomPad === "boolean") setResponseBodyBottomPad(parsed.responseBodyBottomPad);
         if (typeof parsed.titleClickRefresh === "boolean") setTitleClickRefresh(parsed.titleClickRefresh);
+        if (typeof parsed.autoScrollSpeed === "number" && parsed.autoScrollSpeed > 0) setAutoScrollSpeed(parsed.autoScrollSpeed);
       } catch { /* ignore */ }
     };
     // Try localStorage first, then file-based persistence
@@ -3775,12 +3780,13 @@ export default function App() {
       threadColVisible,
       responseBodyBottomPad,
       titleClickRefresh,
+      autoScrollSpeed,
     });
     localStorage.setItem(LAYOUT_PREFS_KEY, payload);
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, responseBodyBottomPad, titleClickRefresh]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -3854,6 +3860,35 @@ export default function App() {
     }, autoRefreshInterval * 1000);
     return () => clearInterval(id);
   }, [autoRefreshEnabled, autoRefreshInterval, threadUrl]);
+
+  useEffect(() => {
+    if (!autoScrollEnabled) return;
+    const container = responseScrollRef.current;
+    if (!container) return;
+    let rafId = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = now - last;
+      last = now;
+      const step = (autoScrollSpeed * dt) / 1000;
+      const target = container.scrollTop + step;
+      const max = container.scrollHeight - container.clientHeight;
+      if (target >= max) {
+        container.scrollTop = max;
+        setAutoScrollEnabled(false);
+        return;
+      }
+      container.scrollTop = target;
+      rafId = requestAnimationFrame(tick);
+    };
+    const onWheel = () => setAutoScrollEnabled(false);
+    container.addEventListener("wheel", onWheel, { passive: true });
+    rafId = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(rafId);
+      container.removeEventListener("wheel", onWheel);
+    };
+  }, [autoScrollEnabled, autoScrollSpeed, activeTabIndex]);
 
   return (
     <div
@@ -4360,6 +4395,49 @@ export default function App() {
                   ))}
                 </ul>
               )}
+              <div className="board-category">
+                <button
+                  className="category-toggle"
+                  onClick={() => setFavRecentExpanded((v) => !v)}
+                >
+                  <span className="category-arrow">{favRecentExpanded ? "\u25BC" : "\u25B6"}</span>
+                  最近読んだスレ ({recentOpenedThreads.length})
+                </button>
+                {favRecentExpanded && (
+                  recentOpenedThreads.length === 0 ? (
+                    <span className="ng-empty">(なし)</span>
+                  ) : (
+                    <ul className="category-boards">
+                      {recentOpenedThreads.filter((rt) => !favSearchQuery.trim() || rt.title.toLowerCase().includes(favSearchQuery.trim().toLowerCase())).map((rt) => {
+                        const isFav = favorites.threads.some((t) => t.threadUrl === rt.threadUrl);
+                        return (
+                          <li key={rt.threadUrl}>
+                            <button
+                              className="board-item"
+                              onClick={() => {
+                                openThreadInTab(rt.threadUrl, rt.title);
+                                setStatus(`loading recent thread: ${rt.title}`);
+                              }}
+                              title={rt.threadUrl}
+                            >
+                              <span
+                                className={`fav-star ${isFav ? "active" : ""}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleFavoriteThread({ threadUrl: rt.threadUrl, title: rt.title });
+                                }}
+                              >
+                                <Star size={12} fill={isFav ? "currentColor" : "none"} />
+                              </span>
+                              {rt.title}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )
+                )}
+              </div>
             </div>
           )}
         </section>
@@ -4391,7 +4469,7 @@ export default function App() {
                       setThreadNgInput("");
                     }
                   }}
-                  placeholder="NGワード (例: BE:12345)"
+                  placeholder="NGワード (例: BE:12345, /正規表現/も可)"
                   style={{ flex: 1 }}
                 />
                 <button onClick={() => { addNgEntry("thread_words", threadNgInput); setThreadNgInput(""); }}>追加</button>
@@ -4580,6 +4658,13 @@ export default function App() {
                 </button>
                 <button className="title-action-btn" onClick={downloadAllThreadImages} title="画像を一括ダウンロード"><Download size={14} /></button>
                 <button className={`title-action-btn ${imageGalleryOpen ? "active-toggle" : ""}`} onClick={() => setImageGalleryOpen((v) => !v)} title="画像一覧"><Images size={14} /></button>
+                <button
+                  className={`title-action-btn ${autoScrollEnabled ? "active-toggle" : ""}`}
+                  onClick={() => setAutoScrollEnabled((v) => !v)}
+                  title={autoScrollEnabled ? `オートスクロール停止 (${autoScrollSpeed}px/s)` : `オートスクロール開始 (${autoScrollSpeed}px/s)`}
+                >
+                  {autoScrollEnabled ? <Pause size={14} /> : <Play size={14} />}
+                </button>
                 <button className="title-action-btn" onClick={() => setNgPanelOpen((v) => !v)} title="NGフィルタ"><EyeOff size={14} /></button>
               </span>
             </div>
@@ -5286,7 +5371,7 @@ export default function App() {
                   setNgInput("");
                 }
               }}
-              placeholder={ngInputType === "words" ? "NGワードを入力" : ngInputType === "ids" ? "NG IDを入力" : "NG名前を入力"}
+              placeholder={ngInputType === "words" ? "NGワード (/正規表現/も可)" : ngInputType === "ids" ? "NG IDを入力" : "NG名前 (/正規表現/も可)"}
             />
             <select value={ngAddMode} onChange={(e) => setNgAddMode(e.target.value as "hide" | "hide-images")} className="ng-mode-select">
               <option value="hide">非表示</option>
@@ -5906,6 +5991,10 @@ export default function App() {
                 <label className="settings-row">
                   <span>自動更新間隔 (秒)</span>
                   <input type="number" value={autoRefreshInterval} min={10} max={600} onChange={(e) => setAutoRefreshInterval(Number(e.target.value))} />
+                </label>
+                <label className="settings-row">
+                  <span>オートスクロール速度 (px/秒)</span>
+                  <input type="number" value={autoScrollSpeed} min={5} max={500} onChange={(e) => setAutoScrollSpeed(Math.max(5, Math.min(500, Number(e.target.value) || 40)))} />
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={alwaysOnTop} onChange={(e) => setAlwaysOnTop(e.target.checked)} />
