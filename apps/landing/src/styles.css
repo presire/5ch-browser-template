@@ -370,6 +370,7 @@ h1 {
   line-height: 1.15;
   letter-spacing: -0.02em;
   font-weight: 800;
+  color: var(--ink);
 }
 .kicker {
   margin: 0;
@@ -553,6 +554,15 @@ h1 {
   color: var(--brand-2);
   font-weight: 700;
 }
+.install-steps a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(122, 169, 255, 0.35);
+  transition: border-bottom-color 150ms ease;
+}
+.install-steps a:hover {
+  border-bottom-color: var(--accent);
+}
 .install-steps code,
 .card code {
   background: rgba(255, 255, 255, 0.08);
@@ -696,6 +706,16 @@ h1 {
 .support-card h3 {
   margin: 0 0 6px;
   font-size: 1.3rem;
+  color: var(--ink);
+}
+.support-card .lead a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(122, 169, 255, 0.35);
+  transition: border-bottom-color 150ms ease;
+}
+.support-card .lead a:hover {
+  border-bottom-color: var(--accent);
 }
 .bmc-link {
   display: inline-block;
