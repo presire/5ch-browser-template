@@ -193,11 +193,6 @@ export default function App() {
 
             <div className="hero-visual">
               <div className="shot-frame floating">
-                <div className="shot-chrome">
-                  <span className="dot dot-r" />
-                  <span className="dot dot-y" />
-                  <span className="dot dot-g" />
-                </div>
                 <button
                   type="button"
                   className="shot-button"
