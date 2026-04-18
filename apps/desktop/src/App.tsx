@@ -3051,6 +3051,11 @@ export default function App() {
         } else {
           appendComposeQuote(`>>${selectedResponse}`);
         }
+        return;
+      }
+      if (e.key.toLowerCase() === "a" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        setAutoScrollEnabled((v) => !v);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -3479,8 +3484,8 @@ export default function App() {
       if (cresize) {
         const dx = event.clientX - cresize.startX;
         const dy = event.clientY - cresize.startY;
-        const minW = 320;
-        const minH = 200;
+        const minW = 420;
+        const minH = 240;
         const e = cresize.edge;
         let newW = cresize.startW;
         let newH = cresize.startH;
@@ -5239,16 +5244,13 @@ export default function App() {
             autoFocus
             style={{ fontSize: `${composeFontSize}px` }}
           />
-          <div className="compose-meta">
-            <span>{composeBody.length}文字</span>
-            <span>{composeBody.split("\n").length}行</span>
-          </div>
           {composePreview && (
             <div className="compose-preview" dangerouslySetInnerHTML={renderResponseBody(composeBody || "(空)")} />
           )}
           <div className="compose-actions">
+            <span className="compose-meta">{composeBody.length}文字 / {composeBody.split("\n").length}行</span>
             <button onClick={probePostFlowTraceFromCompose} disabled={composeSubmitting}>{composeSubmitting ? "送信中..." : `送信 (${composeSubmitKey === "shift" ? "Shift" : "Ctrl"}+Enter)`}</button>
-            <button onClick={() => setUploadPanelOpen((v) => { if (v) setUploadResults([]); return !v; })} title="画像アップロード" style={{ marginLeft: 4 }}><Upload size={14} /></button>
+            <button onClick={() => setUploadPanelOpen((v) => { if (v) setUploadResults([]); return !v; })} title="画像アップロード"><Upload size={14} /></button>
             <button onClick={async () => {
               setComposeResult({ ok: false, message: "診断中..." });
               try {
@@ -5257,7 +5259,7 @@ export default function App() {
               } catch (e) {
                 setComposeResult({ ok: false, message: `診断エラー: ${String(e)}` });
               }
-            }} style={{ marginLeft: "auto", fontSize: "0.85em" }}>接続診断</button>
+            }} style={{ fontSize: "0.85em" }}>接続診断</button>
           </div>
           {uploadPanelOpen && (
             <div className="upload-panel">
@@ -5906,6 +5908,7 @@ export default function App() {
                 ["Ctrl+Alt+↑/↓", "レス分割比の調整"],
                 ["Ctrl+E", "書き込みウィンドウを開く"],
                 ["R", "選択レスを引用して書き込み"],
+                ["A", "オートスクロールのオン/オフ"],
                 ["Escape", "ライトボックス/ダイアログを閉じる"],
                 ["ダブルクリック (レス行)", "引用して書き込み"],
                 ["中クリック (タブ)", "タブを閉じる"],
