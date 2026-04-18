@@ -153,7 +153,19 @@
       "Bash(sed -i 's/\"version\": \"0.0.97\"/\"version\": \"0.0.98\"/' apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json)",
       "Bash(sed -i 's/^version = \"0.0.97\"/version = \"0.0.98\"/' apps/desktop/src-tauri/Cargo.toml)",
       "Bash(sed -i 's/\"version\": \"0.0.98\"/\"version\": \"0.0.99\"/' apps/desktop/package.json apps/desktop/src-tauri/tauri.conf.json)",
-      "Bash(sed -i 's/^version = \"0.0.98\"/version = \"0.0.99\"/' apps/desktop/src-tauri/Cargo.toml)"
+      "Bash(sed -i 's/^version = \"0.0.98\"/version = \"0.0.99\"/' apps/desktop/src-tauri/Cargo.toml)",
+      "Bash(cp C:/Users/all/develop/python/5ch-browser-template/_temp/images/ember-image-pane.jpeg C:/Users/all/develop/python/5ch-browser-template/apps/landing/src/assets/images/ember-image-pane.jpeg)",
+      "Bash(cp C:/Users/all/develop/python/5ch-browser-template/_temp/images/ember-mac-dark.jpg C:/Users/all/develop/python/5ch-browser-template/apps/landing/src/assets/images/ember-mac-dark.jpg)",
+      "Bash(cp C:/Users/all/develop/python/5ch-browser-template/_temp/images/ember-mac-light.jpg C:/Users/all/develop/python/5ch-browser-template/apps/landing/src/assets/images/ember-mac-light.jpg)",
+      "Bash(cp C:/Users/all/develop/python/5ch-browser-template/_temp/images/ember-windows-dark.jpg C:/Users/all/develop/python/5ch-browser-template/apps/landing/src/assets/images/ember-windows-dark.jpg)",
+      "Bash(cp C:/Users/all/develop/python/5ch-browser-template/_temp/images/ember-windows-light_1.jpg C:/Users/all/develop/python/5ch-browser-template/apps/landing/src/assets/images/ember-windows-light.jpg)",
+      "Bash(cp C:/Users/all/develop/python/5ch-browser-template/_temp/landing_screenshot.mjs C:/Users/all/develop/python/5ch-browser-template/apps/desktop/_landing_screenshot.mjs)",
+      "Bash(rm -f _landing_screenshot.mjs)",
+      "Bash(kill %1)",
+      "Bash(pkill -f \"vite preview\")",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //F //PID 2740)",
+      "Bash(taskkill //F //PID 16904)"
     ]
   }
 }
