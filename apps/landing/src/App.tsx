@@ -1,9 +1,14 @@
 import { useEffect, useState } from "react";
 import appIcon from "./assets/images/icon.png";
 import bmcButton from "./assets/images/bmc-button.png";
-import screenshot1 from "./assets/images/screen_shot_1.jpg";
-import screenshot2 from "./assets/images/screen_shot_2.jpg";
-import screenshot3 from "./assets/images/screen_shot_3.jpg";
+import emberWindowsLight from "./assets/images/ember-windows-light.jpg";
+import emberWindowsDark from "./assets/images/ember-windows-dark.jpg";
+import emberMacLight from "./assets/images/ember-mac-light.jpg";
+import emberMacDark from "./assets/images/ember-mac-dark.jpg";
+import emberImagePane from "./assets/images/ember-image-pane.jpeg";
+import emberRiberLayout1 from "./assets/images/ember-riber-layout-1.jpeg";
+import emberRiberLayout2 from "./assets/images/ember-riber-layout-2.jpeg";
+import emberWindowsImagePane from "./assets/images/ember-windows-image-pane.jpeg";
 
 const REPO_RELEASES_URL = "https://github.com/kiyohken2000/5ch-browser-template/releases";
 const GITHUB_URL = "https://github.com/kiyohken2000/5ch-browser-template";
@@ -34,6 +39,9 @@ type ZoomImage = {
   alt: string;
 };
 
+type PlatformKey = "windows" | "mac";
+type ThemeKey = "light" | "dark";
+
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   const kb = size / 1024;
@@ -52,10 +60,17 @@ function buildAssetUrl(downloadPageUrl: string, filename: string): string {
   return `${base}/releases/download/${tag}/${filename}`;
 }
 
+const themeShowcase: Record<PlatformKey, Record<ThemeKey, string>> = {
+  windows: { light: emberWindowsLight, dark: emberWindowsDark },
+  mac: { light: emberMacLight, dark: emberMacDark },
+};
+
 export default function App() {
   const [meta, setMeta] = useState<LatestJson | null>(null);
   const [metaStatus, setMetaStatus] = useState("loading...");
   const [zoomedImage, setZoomedImage] = useState<ZoomImage | null>(null);
+  const [platform, setPlatform] = useState<PlatformKey>("windows");
+  const [theme, setTheme] = useState<ThemeKey>("light");
   const windowsAsset = meta?.platforms["windows-x64"] ?? null;
   const macAsset = meta?.platforms["macos-arm64"] ?? null;
   const primaryDownloadUrl = meta?.download_page_url || REPO_RELEASES_URL;
@@ -91,191 +106,382 @@ export default function App() {
     setZoomedImage({ src, alt });
   };
 
+  const showcaseImage = themeShowcase[platform][theme];
+  const showcaseAlt = `Ember ${platform === "windows" ? "Windows" : "macOS"} (${theme === "light" ? "Light" : "Dark"})`;
+
   return (
     <>
-      <main className="page">
-        <section className="hero-block">
-          <div className="hero-copy">
-            <p className="kicker">Ember</p>
-            <h1>Live5chライクな専ブラを、現代技術で作り直す。</h1>
-            <p className="lead">
-              PC向け専ブラの選択肢が少なく、SikiはLive5chからの移行には向かない。
-              だったら現代の技術でLive5chを作り直す。
-              その課題感から始めたプロジェクトがEmberです。
-            </p>
-            <div className="actions">
-              <a className="btn primary" href={primaryDownloadUrl} target="_blank" rel="noreferrer">
-                最新版をダウンロード
-              </a>
-              <a className="btn" href={GITHUB_URL} target="_blank" rel="noreferrer">
-                GitHub
-              </a>
-              <a className="btn" href={X_URL} target="_blank" rel="noreferrer">
-                X
-              </a>
-              <a className="btn" href="/latest.json" target="_blank" rel="noreferrer">
-                latest.json を見る
+      <div className="bg-aurora" aria-hidden="true" />
+
+      <header className="site-nav">
+        <div className="nav-inner">
+          <a className="nav-brand" href="#top">
+            <img src={appIcon} alt="" className="nav-logo" />
+            <span>Ember</span>
+          </a>
+          <nav className="nav-links">
+            <a href="#features">機能</a>
+            <a href="#install">インストール</a>
+            <a href="#download">ダウンロード</a>
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer">GitHub</a>
+          </nav>
+        </div>
+      </header>
+
+      <main className="page" id="top">
+        <section className="hero">
+          <div className="hero-inner">
+            <div className="hero-copy">
+              <p className="pill">
+                <span className="pill-dot" />
+                v{meta?.version || "—"} · Windows / macOS / Linux
+              </p>
+              <h1>
+                5chを、<br />
+                <span className="gradient-text">現代の体験</span>で。
+              </h1>
+              <p className="lead">
+                Live5chの快適さを、今の技術スタックで作り直した専ブラ。
+                一覧性、速さ、視認性 ― Emberは5ch閲覧の当たり前を取り戻します。
+              </p>
+              <div className="actions">
+                <a className="btn primary" href={primaryDownloadUrl} target="_blank" rel="noreferrer">
+                  <DownloadIcon /> ダウンロード
+                </a>
+                <a className="btn ghost" href={GITHUB_URL} target="_blank" rel="noreferrer">
+                  <GithubIcon /> GitHub
+                </a>
+              </div>
+              <p className="hero-sub">
+                無料 · オープンソース · 広告なし
+              </p>
+              <a className="bmc-link hero-bmc" href={BMC_URL} target="_blank" rel="noreferrer" aria-label="Buy Me a Coffee">
+                <img src={bmcButton} alt="Buy Me a Coffee" />
               </a>
             </div>
-            <p className="lead" style={{ marginTop: 12 }}>
-              不具合報告・要望は <a href={ISSUES_URL} target="_blank" rel="noreferrer">GitHub Issues</a> へお願いします。
-            </p>
-            <a className="bmc-link" href={BMC_URL} target="_blank" rel="noreferrer">
-              <img src={bmcButton} alt="Buy Me a Coffee" />
-            </a>
-          </div>
-          <div className="hero-visual">
-            <img className="app-icon" src={appIcon} alt="5ch Browser icon" />
-            <button
-              type="button"
-              className="zoomable-shot shot-button"
-              onClick={() => openZoom(screenshot1, "板・スレ・本文を表示した画面")}
-              aria-label="スクリーンショットを拡大"
-            >
-              <img className="hero-shot" src={screenshot1} alt="板・スレ・本文を表示した画面" />
-            </button>
+
+            <div className="hero-visual">
+              <div className="shot-frame floating">
+                <div className="shot-chrome">
+                  <span className="dot dot-r" />
+                  <span className="dot dot-y" />
+                  <span className="dot dot-g" />
+                </div>
+                <button
+                  type="button"
+                  className="shot-button"
+                  onClick={() => openZoom(emberWindowsLight, "Ember メイン画面")}
+                  aria-label="スクリーンショットを拡大"
+                >
+                  <img src={emberWindowsLight} alt="Ember メイン画面" />
+                </button>
+              </div>
+              <div className="shot-mini floating-slow">
+                <img src={emberMacDark} alt="Ember macOS ダーク" />
+              </div>
+            </div>
           </div>
         </section>
 
-        <section className="feature-grid">
-          <article className="card feature">
-            <button
-              type="button"
-              className="zoomable-shot shot-button"
-              onClick={() => openZoom(screenshot2, "スレ一覧の検索とヘッダ表示")}
-              aria-label="スクリーンショットを拡大"
-            >
-              <img src={screenshot2} alt="スレ一覧の検索とヘッダ表示" />
-            </button>
-            <h2>一覧性の高い UI</h2>
-            <p>固定ヘッダと3ペイン設計で、情報量が多くても迷いません。</p>
-          </article>
-          <article className="card feature">
-            <button
-              type="button"
-              className="zoomable-shot shot-button"
-              onClick={() => openZoom(screenshot3, "本文中のリンクと画像プレビュー")}
-              aria-label="スクリーンショットを拡大"
-            >
-              <img src={screenshot3} alt="本文中のリンクと画像プレビュー" />
-            </button>
-            <h2>読みやすい本文表示</h2>
-            <p>アンカーや画像リンクの操作を強化し、レス追跡を速くします。</p>
-          </article>
-        </section>
-
-        <section className="card install-panel">
-          <h2>インストール方法</h2>
-          <div className="install-platform">
-            <h3>Windows版</h3>
-            <ol className="install-steps">
-              <li>「最新版をダウンロード」から `ember-win-x64.zip` を取得します。</li>
-              <li>ZIPを展開し、`ember.exe` を実行します。</li>
-              <li>初回起動後、板一覧を取得して利用開始します。</li>
-            </ol>
-            <p className="lead" style={{ marginTop: 8 }}>
-              更新時はアプリ終了後、`ember.exe` を新しいものに上書きしてください。
-            </p>
-          </div>
-          <div className="install-platform">
-            <h3>Mac版</h3>
-            <ol className="install-steps">
-              <li>「最新版をダウンロード」から `ember-mac-arm64.zip` を取得します。</li>
-              <li>ZIPを展開し、`Ember_0.0.1_aarch64.dmg` を開きます。</li>
-              <li>アプリをApplicationsへ移動して起動します。</li>
-            </ol>
-            <p className="lead" style={{ marginTop: 8 }}>
-              更新時は新しいDMGを開き、`Ember.app` を Applications に上書きしてください。
-            </p>
-            <p className="lead" style={{ marginTop: 8 }}>
-              「壊れているため開けません」と表示される場合は、ターミナルで以下のコマンドを実行してから再度起動してください。
-            </p>
-            <div className="cmd-block">
-              <code>xattr -dr com.apple.quarantine /Applications/Ember.app</code>
-              <button className="cmd-copy" onClick={(e) => {
-                void navigator.clipboard.writeText("xattr -dr com.apple.quarantine /Applications/Ember.app");
-                const btn = e.currentTarget;
-                btn.textContent = "コピーしました";
-                setTimeout(() => { btn.textContent = "コピー"; }, 2000);
-              }}>コピー</button>
-            </div>
-          </div>
-          <div className="install-platform">
-            <h3>Linux版 (x64 / AArch64)</h3>
-            <p className="lead">Linux版はGitHub Releasesからビルド済みバイナリをダウンロードできます。</p>
-            <ol className="install-steps">
-              <li><a href="https://github.com/kiyohken2000/5ch-browser-template/releases/latest" target="_blank" rel="noreferrer">最新リリースページ</a>から AppImage, deb, または rpm をダウンロードします。</li>
-              <li>AppImage: `chmod +x` して実行。deb: `sudo dpkg -i` でインストール。rpm: `sudo rpm -i` でインストール。</li>
-              <li>初回起動後、板一覧を取得して利用開始します。</li>
-            </ol>
-            <p className="lead" style={{ marginTop: 8 }}>
-              x64 と AArch64 の両アーキテクチャに対応しています。ファイル名のサフィックスで判別してください。
-            </p>
-            <p className="lead" style={{ marginTop: 8 }}>
-              Raspberry Pi (AArch64) では画面描画に問題がある場合、環境変数
-              `LIBGL_ALWAYS_SOFTWARE=1` を設定して起動してください。
-            </p>
+        <section className="platforms-strip">
+          <span>対応プラットフォーム</span>
+          <div className="platforms-list">
+            <span className="platform-chip"><WindowsIcon /> Windows 11</span>
+            <span className="platform-chip"><AppleIcon /> macOS (Apple Silicon)</span>
+            <span className="platform-chip"><LinuxIcon /> Linux x64 / AArch64</span>
           </div>
         </section>
 
-        <section className="card download-panel">
-          <h2>最新リリース</h2>
-          <p className="mono">status: {metaStatus}</p>
-          <p className="mono">version: {meta?.version || "-"}</p>
-          <p className="mono">released_at: {meta?.released_at || "-"}</p>
-          <ul className="asset-list">
-            <li>
-              <span>Windows x64</span>
-              <strong>
-                {windowsAsset ? (
-                  <a href={buildAssetUrl(primaryDownloadUrl, windowsAsset.filename)} target="_blank" rel="noreferrer">
-                    {windowsAsset.filename}
-                  </a>
-                ) : (
-                  "-"
-                )}
-              </strong>
-              <em>{windowsAsset ? formatBytes(windowsAsset.size) : "-"}</em>
-            </li>
-            <li>
-              <span>macOS ARM64</span>
-              <strong>
-                {macAsset ? (
-                  <a href={buildAssetUrl(primaryDownloadUrl, macAsset.filename)} target="_blank" rel="noreferrer">
-                    {macAsset.filename}
-                  </a>
-                ) : (
-                  "-"
-                )}
-              </strong>
-              <em>{macAsset ? formatBytes(macAsset.size) : "-"}</em>
-            </li>
-            <li>
-              <span>Linux (x64 / AArch64)</span>
-              <strong>
-                <a href="https://github.com/kiyohken2000/5ch-browser-template/releases/latest" target="_blank" rel="noreferrer">GitHub Releases</a>
-              </strong>
-              <em>AppImage / deb / rpm</em>
-            </li>
-          </ul>
-        </section>
+        <section id="features" className="section">
+          <div className="section-head">
+            <p className="kicker">Features</p>
+            <h2>専ブラに求められる要素を、<br />妥協なく。</h2>
+          </div>
 
-        <section className="card system-req-panel">
-          <h2>動作環境</h2>
-          <div className="system-req-grid">
-            <div className="system-req-item">
-              <h3>Windows</h3>
-              <p>Windows 11 x64 で動作確認しています。</p>
+          <div className="feature-big">
+            <div className="feature-big-text">
+              <h3>ライト / ダーク、どちらも美しく。</h3>
+              <p>
+                OSの外観設定に合わせて自動切替。
+                WindowsでもmacOSでも、手触りの良いネイティブな見た目を維持します。
+              </p>
+              <div className="toggle-group">
+                <div className="toggle-set" role="tablist" aria-label="プラットフォーム">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={platform === "windows"}
+                    className={`toggle-pill ${platform === "windows" ? "is-active" : ""}`}
+                    onClick={() => setPlatform("windows")}
+                  >
+                    <WindowsIcon /> Windows
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={platform === "mac"}
+                    className={`toggle-pill ${platform === "mac" ? "is-active" : ""}`}
+                    onClick={() => setPlatform("mac")}
+                  >
+                    <AppleIcon /> macOS
+                  </button>
+                </div>
+                <div className="toggle-set" role="tablist" aria-label="テーマ">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={theme === "light"}
+                    className={`toggle-pill ${theme === "light" ? "is-active" : ""}`}
+                    onClick={() => setTheme("light")}
+                  >
+                    <SunIcon /> Light
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={theme === "dark"}
+                    className={`toggle-pill ${theme === "dark" ? "is-active" : ""}`}
+                    onClick={() => setTheme("dark")}
+                  >
+                    <MoonIcon /> Dark
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="system-req-item">
-              <h3>macOS</h3>
-              <p>macOS 26 (Apple Silicon) で動作確認しています。</p>
+            <div className="feature-big-shot">
+              <button
+                type="button"
+                className="shot-button"
+                onClick={() => openZoom(showcaseImage, showcaseAlt)}
+                aria-label="スクリーンショットを拡大"
+              >
+                <img src={showcaseImage} alt={showcaseAlt} />
+              </button>
             </div>
           </div>
-          <p className="system-req-note">
-            Windows 10、32bit版Windows、Intel Mac での動作はサポート対象外であり、対応予定もありません。
-          </p>
+
+          <div className="feature-grid">
+            <article className="card feature-card">
+              <div className="feature-icon"><LayoutIcon /></div>
+              <h3>リバー型レイアウト</h3>
+              <p>
+                板・スレ・本文を縦横に配置可能。画面幅を無駄なく使い切る、好みのレイアウトを。
+              </p>
+              <button
+                type="button"
+                className="shot-button feature-shot"
+                onClick={() => openZoom(emberRiberLayout2, "リバー型レイアウト")}
+                aria-label="スクリーンショットを拡大"
+              >
+                <img src={emberRiberLayout2} alt="リバー型レイアウト" />
+              </button>
+            </article>
+
+            <article className="card feature-card">
+              <div className="feature-icon"><ImageIcon /></div>
+              <h3>画像プレビュー</h3>
+              <p>
+                スレ内の画像をサイドペインに一覧表示。
+                タップで拡大、アンカーからのジャンプもスムーズ。
+              </p>
+              <button
+                type="button"
+                className="shot-button feature-shot"
+                onClick={() => openZoom(emberImagePane, "画像ペイン")}
+                aria-label="スクリーンショットを拡大"
+              >
+                <img src={emberImagePane} alt="画像ペイン" />
+              </button>
+            </article>
+
+            <article className="card feature-card">
+              <div className="feature-icon"><SearchIcon /></div>
+              <h3>NG / 検索 / お気に入り</h3>
+              <p>
+                ワード・ID・名前NG、スレ検索、板・スレのお気に入り管理。
+                定番機能は一通り揃っています。
+              </p>
+              <button
+                type="button"
+                className="shot-button feature-shot"
+                onClick={() => openZoom(emberRiberLayout1, "NGフィルタ / 検索")}
+                aria-label="スクリーンショットを拡大"
+              >
+                <img src={emberRiberLayout1} alt="NGフィルタ / 検索" />
+              </button>
+            </article>
+
+            <article className="card feature-card">
+              <div className="feature-icon"><ZapIcon /></div>
+              <h3>Rust製の軽さ</h3>
+              <p>
+                Tauri v2 + Rust で構築。Electron製より軽量・高速で、
+                起動もスクロールも快適です。
+              </p>
+              <button
+                type="button"
+                className="shot-button feature-shot"
+                onClick={() => openZoom(emberWindowsImagePane, "Windowsで動作するEmber")}
+                aria-label="スクリーンショットを拡大"
+              >
+                <img src={emberWindowsImagePane} alt="Windowsで動作するEmber" />
+              </button>
+            </article>
+          </div>
         </section>
+
+        <section id="install" className="section">
+          <div className="section-head">
+            <p className="kicker">Install</p>
+            <h2>インストール方法</h2>
+          </div>
+
+          <div className="install-grid">
+            <article className="card install-card">
+              <div className="install-head">
+                <WindowsIcon />
+                <h3>Windows</h3>
+              </div>
+              <ol className="install-steps">
+                <li><code>ember-win-x64.zip</code> をダウンロード</li>
+                <li>ZIPを展開して <code>ember.exe</code> を実行</li>
+                <li>板一覧を取得して利用開始</li>
+              </ol>
+              <p className="note">更新時はアプリ終了後、<code>ember.exe</code> を新しいものに上書きしてください。</p>
+            </article>
+
+            <article className="card install-card">
+              <div className="install-head">
+                <AppleIcon />
+                <h3>macOS</h3>
+              </div>
+              <ol className="install-steps">
+                <li><code>ember-mac-arm64.zip</code> をダウンロード</li>
+                <li>ZIPを展開して <code>.dmg</code> を開く</li>
+                <li>アプリをApplicationsへ移動して起動</li>
+              </ol>
+              <p className="note">「壊れているため開けません」と表示される場合は下記コマンドを実行:</p>
+              <div className="cmd-block">
+                <code>xattr -dr com.apple.quarantine /Applications/Ember.app</code>
+                <button
+                  className="cmd-copy"
+                  onClick={(e) => {
+                    void navigator.clipboard.writeText("xattr -dr com.apple.quarantine /Applications/Ember.app");
+                    const btn = e.currentTarget;
+                    btn.textContent = "Copied";
+                    setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+                  }}
+                >
+                  Copy
+                </button>
+              </div>
+            </article>
+
+            <article className="card install-card">
+              <div className="install-head">
+                <LinuxIcon />
+                <h3>Linux (x64 / AArch64)</h3>
+              </div>
+              <ol className="install-steps">
+                <li><a href={`${REPO_RELEASES_URL}/latest`} target="_blank" rel="noreferrer">最新リリース</a>から AppImage / deb / rpm を取得</li>
+                <li>AppImage: <code>chmod +x</code> して実行<br />deb: <code>sudo dpkg -i</code> / rpm: <code>sudo rpm -i</code></li>
+                <li>板一覧を取得して利用開始</li>
+              </ol>
+              <p className="note">
+                Raspberry Pi (AArch64) で描画に問題がある場合、
+                <code>LIBGL_ALWAYS_SOFTWARE=1</code> を設定してください。
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="download" className="section">
+          <div className="section-head">
+            <p className="kicker">Download</p>
+            <h2>最新リリース</h2>
+          </div>
+          <div className="card download-card">
+            <div className="download-meta">
+              <div>
+                <p className="mono muted">status</p>
+                <p className="mono">{metaStatus}</p>
+              </div>
+              <div>
+                <p className="mono muted">version</p>
+                <p className="mono strong">{meta?.version || "-"}</p>
+              </div>
+              <div>
+                <p className="mono muted">released_at</p>
+                <p className="mono">{meta?.released_at || "-"}</p>
+              </div>
+              <a className="btn ghost small" href="/latest.json" target="_blank" rel="noreferrer">
+                latest.json
+              </a>
+            </div>
+            <ul className="asset-list">
+              <li>
+                <span className="asset-label"><WindowsIcon /> Windows x64</span>
+                <strong>
+                  {windowsAsset ? (
+                    <a href={buildAssetUrl(primaryDownloadUrl, windowsAsset.filename)} target="_blank" rel="noreferrer">
+                      {windowsAsset.filename}
+                    </a>
+                  ) : (
+                    "-"
+                  )}
+                </strong>
+                <em>{windowsAsset ? formatBytes(windowsAsset.size) : "-"}</em>
+              </li>
+              <li>
+                <span className="asset-label"><AppleIcon /> macOS ARM64</span>
+                <strong>
+                  {macAsset ? (
+                    <a href={buildAssetUrl(primaryDownloadUrl, macAsset.filename)} target="_blank" rel="noreferrer">
+                      {macAsset.filename}
+                    </a>
+                  ) : (
+                    "-"
+                  )}
+                </strong>
+                <em>{macAsset ? formatBytes(macAsset.size) : "-"}</em>
+              </li>
+              <li>
+                <span className="asset-label"><LinuxIcon /> Linux (x64 / AArch64)</span>
+                <strong>
+                  <a href={`${REPO_RELEASES_URL}/latest`} target="_blank" rel="noreferrer">GitHub Releases</a>
+                </strong>
+                <em>AppImage / deb / rpm</em>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <section className="section">
+          <div className="card support-card">
+            <div>
+              <h3>フィードバック</h3>
+              <p className="lead">
+                不具合報告・要望は <a href={ISSUES_URL} target="_blank" rel="noreferrer">GitHub Issues</a> へお願いします。
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <footer className="site-footer">
+          <div className="footer-left">
+            <img src={appIcon} alt="" className="footer-logo" />
+            <div>
+              <p className="strong">Ember</p>
+              <p className="muted small">5ch.io 専用ブラウザ · Tauri v2 + React</p>
+            </div>
+          </div>
+          <div className="footer-links">
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer">GitHub</a>
+            <a href={X_URL} target="_blank" rel="noreferrer">X</a>
+            <a href={ISSUES_URL} target="_blank" rel="noreferrer">Issues</a>
+            <a href="/latest.json" target="_blank" rel="noreferrer">latest.json</a>
+          </div>
+        </footer>
       </main>
 
       {zoomedImage ? (
@@ -289,5 +495,98 @@ export default function App() {
         </div>
       ) : null}
     </>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v12" /><path d="m6 11 6 6 6-6" /><path d="M5 21h14" />
+    </svg>
+  );
+}
+
+function GithubIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 0 0 7.86 10.92c.58.11.79-.25.79-.56v-2c-3.2.69-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.95.1-.74.4-1.25.73-1.54-2.55-.29-5.23-1.28-5.23-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.58.23 2.75.11 3.04.74.81 1.19 1.83 1.19 3.09 0 4.42-2.69 5.39-5.25 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.68.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
+    </svg>
+  );
+}
+
+function WindowsIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M3 5.5 11 4v7.5H3V5.5Zm0 13V13h8v7.5L3 18.5Zm10-14.5L22 2v9.5h-9V4Zm0 16.5V13h9v9l-9-1.5Z" />
+    </svg>
+  );
+}
+
+function AppleIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M17.6 12.3c0-2.7 2.2-4 2.3-4.1-1.3-1.8-3.2-2.1-3.9-2.1-1.7-.2-3.2.9-4.1.9-.9 0-2.2-.9-3.6-.9-1.8 0-3.5 1.1-4.5 2.7-1.9 3.4-.5 8.3 1.4 11 .9 1.3 2 2.8 3.4 2.7 1.4-.1 1.9-.9 3.5-.9 1.6 0 2.1.9 3.5.9 1.5 0 2.4-1.3 3.3-2.6 1-1.5 1.5-3 1.5-3.1-.1 0-2.8-1.1-2.8-4.5ZM14.8 4.4c.7-.9 1.3-2.1 1.1-3.3-1.1.1-2.4.8-3.2 1.7-.7.8-1.3 2-1.1 3.2 1.2.1 2.5-.7 3.2-1.6Z" />
+    </svg>
+  );
+}
+
+function LinuxIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 2c-2.8 0-4 2.5-4 5 0 1.3.4 2.4 1 3.3-1.5 1.6-3 4.2-3 6.9 0 2 .6 3.7 1.7 4.3.5.3 1.1.3 1.6 0 .4-.3.6-.7.8-1.1.2 1.1 1.1 2 2.9 2 1.7 0 2.5-.8 2.8-1.9.2.4.4.8.8 1 .5.3 1.1.3 1.6 0 1.1-.6 1.7-2.3 1.7-4.3 0-2.8-1.5-5.4-3-7 .7-.9 1.1-2 1.1-3.2 0-2.5-1.2-5-4-5Zm-1.5 5.5c.4 0 .7.4.7.9s-.3.9-.7.9-.8-.4-.8-.9.3-.9.8-.9Zm3 0c.5 0 .8.4.8.9s-.3.9-.8.9-.7-.4-.7-.9.3-.9.7-.9Zm-1.5 2.7c1.5 0 2.5.9 2.5 1.7 0 .7-1 1.1-2.5 1.1s-2.5-.4-2.5-1.1c0-.8 1-1.7 2.5-1.7Z" />
+    </svg>
+  );
+}
+
+function SunIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
+    </svg>
+  );
+}
+
+function LayoutIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2.5" />
+      <path d="M3 9h18M9 9v12" />
+    </svg>
+  );
+}
+
+function ImageIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="18" height="18" rx="2.5" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 16-5-5L6 21" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  );
+}
+
+function ZapIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z" />
+    </svg>
   );
 }
