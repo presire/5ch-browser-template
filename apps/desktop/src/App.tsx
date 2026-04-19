@@ -13,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause,
+  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -658,6 +658,7 @@ export default function App() {
   const hoverPreviewShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [thumbSize, setThumbSize] = useState(200);
   const [thumbMaskEnabled, setThumbMaskEnabled] = useState(false);
+  const [thumbMaskForceOnStart, setThumbMaskForceOnStart] = useState(false);
   const [responseBodyBottomPad, setResponseBodyBottomPad] = useState(false);
   const [titleClickRefresh, setTitleClickRefresh] = useState(false);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(false);
@@ -3102,6 +3103,7 @@ export default function App() {
           hoverPreviewDelay?: number;
           thumbSize?: number;
           thumbMaskEnabled?: boolean;
+          thumbMaskForceOnStart?: boolean;
           restoreSession?: boolean;
           autoRefreshInterval?: number;
           alwaysOnTop?: boolean;
@@ -3143,7 +3145,12 @@ export default function App() {
         }
         if (typeof parsed.hoverPreviewDelay === "number") setHoverPreviewDelay(parsed.hoverPreviewDelay);
         if (typeof parsed.thumbSize === "number") setThumbSize(parsed.thumbSize);
-        if (typeof parsed.thumbMaskEnabled === "boolean") setThumbMaskEnabled(parsed.thumbMaskEnabled);
+        if (typeof parsed.thumbMaskForceOnStart === "boolean") setThumbMaskForceOnStart(parsed.thumbMaskForceOnStart);
+        if (parsed.thumbMaskForceOnStart === true) {
+          setThumbMaskEnabled(true);
+        } else if (typeof parsed.thumbMaskEnabled === "boolean") {
+          setThumbMaskEnabled(parsed.thumbMaskEnabled);
+        }
         if (typeof parsed.restoreSession === "boolean") { setRestoreSession(parsed.restoreSession); restoreSessionRef.current = parsed.restoreSession; }
         if (typeof parsed.autoRefreshInterval === "number") setAutoRefreshInterval(parsed.autoRefreshInterval);
         if (typeof parsed.alwaysOnTop === "boolean") setAlwaysOnTop(parsed.alwaysOnTop);
@@ -3777,6 +3784,7 @@ export default function App() {
       hoverPreviewDelay,
       thumbSize,
       thumbMaskEnabled,
+      thumbMaskForceOnStart,
       restoreSession,
       autoRefreshInterval,
       alwaysOnTop,
@@ -3792,7 +3800,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskForceOnStart, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -4707,6 +4715,13 @@ export default function App() {
                 </button>
                 <button className="title-action-btn" onClick={downloadAllThreadImages} title="画像を一括ダウンロード"><Download size={14} /></button>
                 <button className={`title-action-btn ${imageGalleryOpen ? "active-toggle" : ""}`} onClick={() => setImageGalleryOpen((v) => !v)} title="画像一覧"><Images size={14} /></button>
+                <button
+                  className={`title-action-btn ${thumbMaskEnabled ? "active-toggle" : ""}`}
+                  onClick={() => setThumbMaskEnabled((v) => !v)}
+                  title={thumbMaskEnabled ? "サムネイルマスク解除" : "サムネイルをマスク"}
+                >
+                  {thumbMaskEnabled ? <ImageOff size={14} /> : <Image size={14} />}
+                </button>
                 <button
                   className={`title-action-btn ${autoScrollEnabled ? "active-toggle" : ""}`}
                   onClick={() => setAutoScrollEnabled((v) => !v)}
@@ -6086,6 +6101,10 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={thumbMaskEnabled} onChange={(e) => setThumbMaskEnabled(e.target.checked)} />
                   <span>サムネイルをマスク (ホバーで表示)</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={thumbMaskForceOnStart} onChange={(e) => setThumbMaskForceOnStart(e.target.checked)} />
+                  <span>起動時に必ずマスクを有効化</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={hoverPreviewEnabled} onChange={(e) => setHoverPreviewEnabled(e.target.checked)} />
