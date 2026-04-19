@@ -13,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause,
+  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -658,6 +658,7 @@ export default function App() {
   const hoverPreviewShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [thumbSize, setThumbSize] = useState(200);
   const [thumbMaskEnabled, setThumbMaskEnabled] = useState(false);
+  const [thumbMaskForceOnStart, setThumbMaskForceOnStart] = useState(false);
   const [responseBodyBottomPad, setResponseBodyBottomPad] = useState(false);
   const [titleClickRefresh, setTitleClickRefresh] = useState(false);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(false);
@@ -671,6 +672,7 @@ export default function App() {
   hoverPreviewEnabledRef.current = hoverPreviewEnabled;
   const [boardPaneTab, setBoardPaneTab] = useState<"boards" | "fav-threads">("boards");
   const [favRecentExpanded, setFavRecentExpanded] = useState(false);
+  const [favRecentPostedExpanded, setFavRecentPostedExpanded] = useState(false);
   const [showCachedOnly, setShowCachedOnly] = useState(false);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [showRecentOpenedOnly, setShowRecentOpenedOnly] = useState(false);
@@ -3101,6 +3103,7 @@ export default function App() {
           hoverPreviewDelay?: number;
           thumbSize?: number;
           thumbMaskEnabled?: boolean;
+          thumbMaskForceOnStart?: boolean;
           restoreSession?: boolean;
           autoRefreshInterval?: number;
           alwaysOnTop?: boolean;
@@ -3142,7 +3145,12 @@ export default function App() {
         }
         if (typeof parsed.hoverPreviewDelay === "number") setHoverPreviewDelay(parsed.hoverPreviewDelay);
         if (typeof parsed.thumbSize === "number") setThumbSize(parsed.thumbSize);
-        if (typeof parsed.thumbMaskEnabled === "boolean") setThumbMaskEnabled(parsed.thumbMaskEnabled);
+        if (typeof parsed.thumbMaskForceOnStart === "boolean") setThumbMaskForceOnStart(parsed.thumbMaskForceOnStart);
+        if (parsed.thumbMaskForceOnStart === true) {
+          setThumbMaskEnabled(true);
+        } else if (typeof parsed.thumbMaskEnabled === "boolean") {
+          setThumbMaskEnabled(parsed.thumbMaskEnabled);
+        }
         if (typeof parsed.restoreSession === "boolean") { setRestoreSession(parsed.restoreSession); restoreSessionRef.current = parsed.restoreSession; }
         if (typeof parsed.autoRefreshInterval === "number") setAutoRefreshInterval(parsed.autoRefreshInterval);
         if (typeof parsed.alwaysOnTop === "boolean") setAlwaysOnTop(parsed.alwaysOnTop);
@@ -3776,6 +3784,7 @@ export default function App() {
       hoverPreviewDelay,
       thumbSize,
       thumbMaskEnabled,
+      thumbMaskForceOnStart,
       restoreSession,
       autoRefreshInterval,
       alwaysOnTop,
@@ -3791,7 +3800,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskForceOnStart, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -4443,6 +4452,49 @@ export default function App() {
                   )
                 )}
               </div>
+              <div className="board-category">
+                <button
+                  className="category-toggle"
+                  onClick={() => setFavRecentPostedExpanded((v) => !v)}
+                >
+                  <span className="category-arrow">{favRecentPostedExpanded ? "\u25BC" : "\u25B6"}</span>
+                  最近書き込んだスレ ({recentPostedThreads.length})
+                </button>
+                {favRecentPostedExpanded && (
+                  recentPostedThreads.length === 0 ? (
+                    <span className="ng-empty">(なし)</span>
+                  ) : (
+                    <ul className="category-boards">
+                      {recentPostedThreads.filter((rt) => !favSearchQuery.trim() || rt.title.toLowerCase().includes(favSearchQuery.trim().toLowerCase())).map((rt) => {
+                        const isFav = favorites.threads.some((t) => t.threadUrl === rt.threadUrl);
+                        return (
+                          <li key={rt.threadUrl}>
+                            <button
+                              className="board-item"
+                              onClick={() => {
+                                openThreadInTab(rt.threadUrl, rt.title);
+                                setStatus(`loading recent posted thread: ${rt.title}`);
+                              }}
+                              title={rt.threadUrl}
+                            >
+                              <span
+                                className={`fav-star ${isFav ? "active" : ""}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleFavoriteThread({ threadUrl: rt.threadUrl, title: rt.title });
+                                }}
+                              >
+                                <Star size={12} fill={isFav ? "currentColor" : "none"} />
+                              </span>
+                              {rt.title}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )
+                )}
+              </div>
             </div>
           )}
         </section>
@@ -4663,6 +4715,13 @@ export default function App() {
                 </button>
                 <button className="title-action-btn" onClick={downloadAllThreadImages} title="画像を一括ダウンロード"><Download size={14} /></button>
                 <button className={`title-action-btn ${imageGalleryOpen ? "active-toggle" : ""}`} onClick={() => setImageGalleryOpen((v) => !v)} title="画像一覧"><Images size={14} /></button>
+                <button
+                  className={`title-action-btn ${thumbMaskEnabled ? "active-toggle" : ""}`}
+                  onClick={() => setThumbMaskEnabled((v) => !v)}
+                  title={thumbMaskEnabled ? "サムネイルマスク解除" : "サムネイルをマスク"}
+                >
+                  {thumbMaskEnabled ? <ImageOff size={14} /> : <Image size={14} />}
+                </button>
                 <button
                   className={`title-action-btn ${autoScrollEnabled ? "active-toggle" : ""}`}
                   onClick={() => setAutoScrollEnabled((v) => !v)}
@@ -5911,7 +5970,6 @@ export default function App() {
                 ["A", "オートスクロールのオン/オフ"],
                 ["Escape", "ライトボックス/ダイアログを閉じる"],
                 ["ダブルクリック (レス行)", "引用して書き込み"],
-                ["中クリック (タブ)", "タブを閉じる"],
               ].map(([key, desc]) => (
                 <div key={key} className="shortcut-row">
                   <kbd>{key}</kbd>
@@ -6043,6 +6101,10 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={thumbMaskEnabled} onChange={(e) => setThumbMaskEnabled(e.target.checked)} />
                   <span>サムネイルをマスク (ホバーで表示)</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={thumbMaskForceOnStart} onChange={(e) => setThumbMaskForceOnStart(e.target.checked)} />
+                  <span>起動時に必ずマスクを有効化</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={hoverPreviewEnabled} onChange={(e) => setHoverPreviewEnabled(e.target.checked)} />
