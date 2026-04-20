@@ -172,7 +172,11 @@
       "Bash(scripts/release_finish.sh 0.0.102 \"- オートスクロールのオン/オフを A キーで切替可能に \\(ショートカット一覧にも追記\\)\")",
       "Bash(scripts/release.sh 0.0.103 '- 書き込みウィンドウをコンパクト化: 名前/メール/sageを横1行に統合、各セクションのpaddingを圧縮、文字数カウンタをアクション行に統合 *)",
       "Bash(scripts/release_finish.sh 0.0.103 '- 書き込みウィンドウをコンパクト化: 名前/メール/sageを横1行に統合、各セクションのpaddingを圧縮、文字数カウンタをアクション行に統合 *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(scripts/release.sh *)",
+      "Bash(/c/Users/all/develop/python/5ch-browser-template/scripts/release.sh *)",
+      "Bash(/c/Users/all/develop/python/5ch-browser-template/scripts/release_finish.sh *)",
+      "Bash(scripts/release_finish.sh *)"
     ]
   }
 }
