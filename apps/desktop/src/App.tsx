@@ -97,10 +97,11 @@ type FavoriteBoard = { boardName: string; url: string };
 type FavoriteThread = { threadUrl: string; title: string; boardUrl: string };
 type RecentThread = FavoriteThread & { updatedAt: number };
 type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
-type NgEntry = { value: string; mode: "hide" | "hide-images" };
-type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: string[] };
+type NgEntry = { value: string; mode: "hide" | "hide-images"; disabled?: boolean };
+type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: (string | NgEntry)[] };
 const ngVal = (e: string | NgEntry): string => typeof e === "string" ? e : e.value;
 const ngEntryMode = (e: string | NgEntry): "hide" | "hide-images" => typeof e === "string" ? "hide" : e.mode;
+const ngEntryDisabled = (e: string | NgEntry): boolean => typeof e === "string" ? false : (e.disabled ?? false);
 type AuthConfig = {
   upliftEmail: string;
   upliftPassword: string;
@@ -1081,6 +1082,38 @@ export default function App() {
     setStatus(`removed NG ${type}: ${value}`);
   };
 
+  const toggleNgEntry = (type: "words" | "ids" | "names" | "thread_words", value: string) => {
+    void persistNgFilters({
+      ...ngFilters,
+      [type]: ngFilters[type].map((e) => {
+        if (ngVal(e) !== value) return e;
+        const base = typeof e === "string" ? { value: e, mode: "hide" as const } : e;
+        return { ...base, disabled: !ngEntryDisabled(e) };
+      }),
+    });
+  };
+
+  const setNgSectionDisabled = (type: "words" | "ids" | "names" | "thread_words", disabled: boolean) => {
+    void persistNgFilters({
+      ...ngFilters,
+      [type]: ngFilters[type].map((e) => {
+        const base = typeof e === "string" ? { value: e, mode: "hide" as const } : e;
+        return { ...base, disabled };
+      }),
+    });
+  };
+
+  const toggleAllNg = (disabled: boolean) => {
+    const mapList = (list: (string | NgEntry)[]) =>
+      list.map((e) => { const b = typeof e === "string" ? { value: e, mode: "hide" as const } : e; return { ...b, disabled }; });
+    void persistNgFilters({
+      words: mapList(ngFilters.words),
+      ids: mapList(ngFilters.ids),
+      names: mapList(ngFilters.names),
+      thread_words: mapList(ngFilters.thread_words),
+    });
+  };
+
   const ngMatch = (pattern: string, target: string): boolean => {
     if (pattern.startsWith("/") && pattern.endsWith("/") && pattern.length > 2) {
       try {
@@ -1096,6 +1129,7 @@ export default function App() {
     if (ngFilters.words.length === 0 && ngFilters.ids.length === 0 && ngFilters.names.length === 0) return null;
     let result: null | "hide" | "hide-images" = null;
     for (const w of ngFilters.words) {
+      if (ngEntryDisabled(w)) continue;
       if (ngMatch(ngVal(w), resp.text)) {
         const m = ngEntryMode(w);
         if (m === "hide") return "hide";
@@ -1103,6 +1137,7 @@ export default function App() {
       }
     }
     for (const n of ngFilters.names) {
+      if (ngEntryDisabled(n)) continue;
       if (ngMatch(ngVal(n), resp.name)) {
         const m = ngEntryMode(n);
         if (m === "hide") return "hide";
@@ -1113,6 +1148,7 @@ export default function App() {
       const idMatch = resp.time.match(/ID:([^\s]+)/);
       if (idMatch) {
         for (const entry of ngFilters.ids) {
+          if (ngEntryDisabled(entry)) continue;
           if (idMatch[1] === ngVal(entry)) {
             const m = ngEntryMode(entry);
             if (m === "hide") return "hide";
@@ -2280,8 +2316,8 @@ export default function App() {
   );
   const filteredThreadItems = threadItems
     .filter((t) => {
-      if (ngFilters.words.some((w) => ngMatch(ngVal(w), t.title))) return false;
-      if (ngFilters.thread_words.some((w) => ngMatch(ngVal(w), t.title))) return false;
+      if (ngFilters.words.some((w) => !ngEntryDisabled(w) && ngMatch(ngVal(w), t.title))) return false;
+      if (ngFilters.thread_words.some((w) => !ngEntryDisabled(w) && ngMatch(ngVal(w), t.title))) return false;
       if (threadSearchQuery.trim()) {
         return t.title.toLowerCase().includes(threadSearchQuery.trim().toLowerCase());
       }
@@ -4553,12 +4589,21 @@ export default function App() {
               </div>
               {ngFilters.thread_words.length > 0 && (
                 <ul className="thread-ng-list">
-                  {ngFilters.thread_words.map((w) => (
-                    <li key={w}>
-                      <span>{w}</span>
-                      <button className="ng-remove" onClick={() => removeNgEntry("thread_words", w)}>×</button>
-                    </li>
-                  ))}
+                  {ngFilters.thread_words.map((w) => {
+                    const v = ngVal(w);
+                    const off = ngEntryDisabled(w);
+                    return (
+                      <li key={v} className={off ? "ng-disabled" : ""}>
+                        <button
+                          className={`ng-toggle ${off ? "ng-toggle-off" : "ng-toggle-on"}`}
+                          onClick={() => toggleNgEntry("thread_words", v)}
+                          title={off ? "クリックで有効化" : "クリックで無効化"}
+                        >{off ? "OFF" : "ON"}</button>
+                        <span>{v}</span>
+                        <button className="ng-remove" onClick={() => removeNgEntry("thread_words", v)}>×</button>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
@@ -5473,6 +5518,8 @@ export default function App() {
             <span className="ng-panel-count">
               {ngFilters.words.length}語 / {ngFilters.ids.length}ID / {ngFilters.names.length}名
             </span>
+            <button className="ng-toggle-all" onClick={() => toggleAllNg(false)} title="全NGを有効化">全有効</button>
+            <button className="ng-toggle-all" onClick={() => toggleAllNg(true)} title="全NGを無効化">全無効</button>
             <button onClick={() => setNgPanelOpen(false)}>閉じる</button>
           </header>
           <div className="ng-panel-add">
@@ -5501,7 +5548,15 @@ export default function App() {
           <div className="ng-panel-lists">
             {(["words", "ids", "names"] as const).map((type) => (
               <div key={type} className="ng-list-section">
-                <h4>{type === "words" ? "ワード" : type === "ids" ? "ID" : "名前"} ({ngFilters[type].length})</h4>
+                <h4 className="ng-section-header">
+                  <span>{type === "words" ? "ワード" : type === "ids" ? "ID" : "名前"} ({ngFilters[type].filter(e => !ngEntryDisabled(e)).length}/{ngFilters[type].length})</span>
+                  {ngFilters[type].length > 0 && (
+                    <span className="ng-section-actions">
+                      <button className="ng-toggle-all" onClick={() => setNgSectionDisabled(type, false)}>全有効</button>
+                      <button className="ng-toggle-all" onClick={() => setNgSectionDisabled(type, true)}>全無効</button>
+                    </span>
+                  )}
+                </h4>
                 {ngFilters[type].length === 0 ? (
                   <span className="ng-empty">(なし)</span>
                 ) : (
@@ -5509,8 +5564,14 @@ export default function App() {
                     {ngFilters[type].map((entry) => {
                       const v = ngVal(entry);
                       const mode = ngEntryMode(entry);
+                      const off = ngEntryDisabled(entry);
                       return (
-                        <li key={v}>
+                        <li key={v} className={off ? "ng-disabled" : ""}>
+                          <button
+                            className={`ng-toggle ${off ? "ng-toggle-off" : "ng-toggle-on"}`}
+                            onClick={() => toggleNgEntry(type, v)}
+                            title={off ? "クリックで有効化" : "クリックで無効化"}
+                          >{off ? "OFF" : "ON"}</button>
                           <span className={`ng-mode-label ${mode === "hide-images" ? "ng-mode-img" : "ng-mode-hide"}`}>
                             {mode === "hide-images" ? "画像" : "非表示"}
                           </span>
