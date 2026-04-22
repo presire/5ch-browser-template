@@ -131,6 +131,7 @@ const MIN_COL_WIDTH = 16;
 const DEFAULT_COL_WIDTHS: Record<string, number> = {
   fetched: 18,
   id: 36,
+  datNumber: 80,
   res: 42,
   read: 36,
   unread: 36,
@@ -138,8 +139,21 @@ const DEFAULT_COL_WIDTHS: Record<string, number> = {
   speed: 54,
 };
 const COL_RESIZE_HANDLE_PX = 5;
-type ThreadColKey = "fetched" | "title" | "res" | "read" | "unread" | "lastFetch" | "speed";
-const DEFAULT_COL_VISIBLE: Record<ThreadColKey, boolean> = { fetched: true, title: true, res: true, read: true, unread: true, lastFetch: true, speed: true };
+type ThreadColKey = "fetched" | "id" | "datNumber" | "title" | "res" | "read" | "unread" | "lastFetch" | "speed";
+type ToggleableThreadColKey = "fetched" | "datNumber" | "title" | "res" | "read" | "unread" | "lastFetch" | "speed";
+const DEFAULT_THREAD_COL_ORDER: ThreadColKey[] = ["fetched", "id", "title", "res", "read", "unread", "lastFetch", "speed", "datNumber"];
+const THREAD_COL_LABELS: Record<ThreadColKey, string> = {
+  fetched: "!",
+  id: "番号",
+  datNumber: "dat番号",
+  title: "タイトル",
+  res: "レス",
+  read: "既読",
+  unread: "新着",
+  lastFetch: "最終取得",
+  speed: "勢い",
+};
+const DEFAULT_COL_VISIBLE: Record<ToggleableThreadColKey, boolean> = { fetched: true, datNumber: true, title: true, res: true, read: true, unread: true, lastFetch: true, speed: true };
 const COMPOSE_PREFS_KEY = "desktop.composePrefs.v1";
 const NAME_HISTORY_KEY = "desktop.nameHistory.v1";
 const BOOKMARK_KEY = "desktop.bookmarks.v1";
@@ -266,6 +280,19 @@ const getThreadKeyFromThreadUrl = (url: string): string => {
   } catch {
     return "";
   }
+};
+
+const normalizeThreadColOrder = (order?: string[]): ThreadColKey[] => {
+  const next: ThreadColKey[] = [];
+  for (const key of order ?? []) {
+    if (DEFAULT_THREAD_COL_ORDER.includes(key as ThreadColKey) && !next.includes(key as ThreadColKey)) {
+      next.push(key as ThreadColKey);
+    }
+  }
+  for (const key of DEFAULT_THREAD_COL_ORDER) {
+    if (!next.includes(key)) next.push(key);
+  }
+  return next;
 };
 
 const normalizeThreadTitleForSearch = (title: string): string => {
@@ -719,7 +746,7 @@ export default function App() {
   } | null>(null);
   const gestureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const gestureBlockContextRef = useRef(false);
-  const [threadSortKey, setThreadSortKey] = useState<"fetched" | "id" | "title" | "res" | "got" | "new" | "lastFetch" | "speed">("id");
+  const [threadSortKey, setThreadSortKey] = useState<"fetched" | "id" | "datNumber" | "title" | "res" | "got" | "new" | "lastFetch" | "speed">("id");
   const [threadSortAsc, setThreadSortAsc] = useState(true);
   const cachedSortOrderRef = useRef<string[]>([]);
   const prevSortSnapshotRef = useRef({ key: "", asc: true, urls: "", favFetched: false });
@@ -764,6 +791,7 @@ export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [gestureListOpen, setGestureListOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [threadColumnsOpen, setThreadColumnsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [boardsFontSize, setBoardsFontSize] = useState(12);
   const [threadsFontSize, setThreadsFontSize] = useState(12);
@@ -790,7 +818,9 @@ export default function App() {
   const [paneLayoutMode, setPaneLayoutMode] = useState<PaneLayoutMode>("classic");
   const resizeDragRef = useRef<ResizeDragState | null>(null);
   const [threadColWidths, setThreadColWidths] = useState<Record<string, number>>({ ...DEFAULT_COL_WIDTHS });
-  const [threadColVisible, setThreadColVisible] = useState<Record<ThreadColKey, boolean>>({ ...DEFAULT_COL_VISIBLE });
+  const [threadColVisible, setThreadColVisible] = useState<Record<ToggleableThreadColKey, boolean>>({ ...DEFAULT_COL_VISIBLE });
+  const [threadColOrder, setThreadColOrder] = useState<ThreadColKey[]>(() => [...DEFAULT_THREAD_COL_ORDER]);
+  const [threadColOrderDraft, setThreadColOrderDraft] = useState<ThreadColKey[]>(() => [...DEFAULT_THREAD_COL_ORDER]);
   const layoutPrefsLoadedRef = useRef(false);
   const threadScrollPositions = useRef<Record<string, number>>({});
   const boardTreeRef = useRef<HTMLDivElement | null>(null);
@@ -1410,13 +1440,29 @@ export default function App() {
     setSelectedResponse(1);
   };
 
-  const toggleThreadSort = (key: "fetched" | "id" | "title" | "res" | "got" | "new" | "lastFetch" | "speed") => {
+  const toggleThreadSort = (key: "fetched" | "id" | "datNumber" | "title" | "res" | "got" | "new" | "lastFetch" | "speed") => {
     if (threadSortKey === key) {
       setThreadSortAsc((prev) => !prev);
     } else {
       setThreadSortKey(key);
-      setThreadSortAsc(key === "id" || key === "title" || key === "fetched");
+      setThreadSortAsc(key === "id" || key === "datNumber" || key === "title" || key === "fetched");
     }
+  };
+
+  const moveThreadColumnDraft = (index: number, direction: -1 | 1) => {
+    setThreadColOrderDraft((prev) => {
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(index, 1);
+      next.splice(nextIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const openThreadColumnsDialog = () => {
+    setThreadColOrderDraft([...threadColOrder]);
+    setThreadColumnsOpen(true);
   };
 
   const selectBoard = (board: BoardEntry) => {
@@ -2314,7 +2360,11 @@ export default function App() {
         })
       : fallbackThreadItems
   );
-  const filteredThreadItems = threadItems
+  const normalizedThreadItems = threadItems.map((t) => ({
+    ...t,
+    datNumber: ("datNumber" in t && typeof t.datNumber === "string" && t.datNumber) ? t.datNumber : (getThreadKeyFromThreadUrl(t.threadUrl) || "-"),
+  }));
+  const filteredThreadItems = normalizedThreadItems
     .filter((t) => {
       if (ngFilters.words.some((w) => !ngEntryDisabled(w) && ngMatch(ngVal(w), t.title))) return false;
       if (ngFilters.thread_words.some((w) => !ngEntryDisabled(w) && ngMatch(ngVal(w), t.title))) return false;
@@ -2336,6 +2386,7 @@ export default function App() {
       let cmp = 0;
       if (threadSortKey === "fetched") cmp = (threadReadMap[a.id] ? 0 : 1) - (threadReadMap[b.id] ? 0 : 1);
       else if (threadSortKey === "id") cmp = a.id - b.id;
+      else if (threadSortKey === "datNumber") cmp = Number(a.datNumber || 0) - Number(b.datNumber || 0);
       else if (threadSortKey === "title") cmp = a.title.localeCompare(b.title);
       else if (threadSortKey === "res") cmp = a.res - b.res;
       else if (threadSortKey === "got") cmp = a.got - b.got;
@@ -2357,6 +2408,94 @@ export default function App() {
       return (orderMap.get(a.threadUrl) ?? 999999) - (orderMap.get(b.threadUrl) ?? 999999);
     });
   }
+  const isThreadColShown = (key: ThreadColKey): boolean => {
+    if (key === "id") return true;
+    return threadColVisible[key];
+  };
+  const orderedThreadColumns = normalizeThreadColOrder(threadColOrder).filter(isThreadColShown);
+  const renderThreadHeaderCell = (colKey: ThreadColKey) => {
+    if (colKey === "title") {
+      return (
+        <th key={colKey} className="sortable-th" onClick={() => toggleThreadSort("title")}>
+          {THREAD_COL_LABELS[colKey]}{threadSortKey === "title" ? (threadSortAsc ? " ▲" : " ▼") : ""}
+        </th>
+      );
+    }
+    const isLeftResize = colKey === "res" || colKey === "read" || colKey === "unread" || colKey === "lastFetch" || colKey === "speed";
+    const resizeSide: "left" | "right" = isLeftResize ? "left" : "right";
+    const sortKey: "fetched" | "id" | "datNumber" | "res" | "got" | "new" | "lastFetch" | "speed" = colKey === "read"
+      ? "got"
+      : colKey === "unread"
+      ? "new"
+      : colKey;
+    return (
+      <th
+        key={colKey}
+        className={`sortable-th ${isLeftResize ? "col-resizable-left" : "col-resizable"}`}
+        style={{ width: (threadColWidths[colKey] ?? DEFAULT_COL_WIDTHS[colKey] ?? 60) + "px" }}
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          if (resizeSide === "right" && e.clientX >= r.right - COL_RESIZE_HANDLE_PX) return;
+          if (resizeSide === "left" && e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return;
+          toggleThreadSort(sortKey);
+        }}
+        onMouseDown={(e) => beginColResize(colKey, resizeSide, e)}
+        onDoubleClick={(e) => resetColWidth(colKey, resizeSide, e)}
+        onMouseMove={(e) => colResizeCursor(resizeSide, e)}
+        title={colKey === "fetched" ? "取得済みスレを上にソート" : undefined}
+      >
+        {THREAD_COL_LABELS[colKey]}{threadSortKey === sortKey ? (threadSortAsc ? " ▲" : " ▼") : ""}
+      </th>
+    );
+  };
+  const renderThreadDataCell = (
+    colKey: ThreadColKey,
+    t: (typeof visibleThreadItems)[number],
+    isSavedMode: boolean,
+    hasUnread: boolean,
+  ) => {
+    switch (colKey) {
+      case "fetched":
+        return <td key={colKey} className="thread-fetched-cell">{(showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) ? (hasUnread ? "\u25CF" : "") : (hasUnread || threadReadMap[t.id] ? "\u25CF" : "")}</td>;
+      case "id":
+        return <td key={colKey}>{t.id}</td>;
+      case "datNumber":
+        return <td key={colKey}>{t.datNumber}</td>;
+      case "title":
+        return (
+          <td
+            key={colKey}
+            className="thread-title-cell"
+            style={threadAgeColorEnabled && !hasUnread && t.createdAt > 0 ? { color: threadAgeColor(t.createdAt) } : undefined}
+            onMouseEnter={(e) => onThreadTitleMouseEnter(e, t.title)}
+            onMouseLeave={onThreadTitleMouseLeave}
+            dangerouslySetInnerHTML={renderHighlightedPlainText(t.title, threadSearchQuery)}
+          />
+        );
+      case "res":
+        return <td key={colKey}>{t.res >= 0 ? t.res : "-"}</td>;
+      case "read":
+        return <td key={colKey}>{isSavedMode ? (t.got >= 0 ? t.got : "-") : (t.got > 0 ? t.got : "-")}</td>;
+      case "unread":
+        return (
+          <td key={colKey} className={`new-count ${hasUnread ? "has-new" : ""}`}>
+            {isSavedMode ? (t.res >= 0 ? Math.max(0, t.res - t.got) : "-") : (t.got > 0 && t.res > 0 ? Math.max(0, t.res - t.got) : "-")}
+          </td>
+        );
+      case "lastFetch":
+        return <td key={colKey} className="last-fetch-cell">{threadFetchTimesRef.current[t.threadUrl] ?? "-"}</td>;
+      case "speed":
+        return (
+          <td key={colKey} className="speed-cell">
+            <span className="speed-bar" style={{
+              width: `${Math.min(100, t.speed * 2)}%`,
+              background: t.speed >= 20 ? "rgba(200,40,40,0.25)" : t.speed >= 5 ? "rgba(200,120,40,0.2)" : "rgba(200,80,40,0.15)",
+            }} />
+            <span className="speed-val">{t.speed.toFixed(1)}</span>
+          </td>
+        );
+    }
+  };
   const selectedThreadItem = visibleThreadItems.find((t) => t.id === selectedThread) ?? null;
   const unreadThreadCount = visibleThreadItems.filter((t) => !threadReadMap[t.id]).length;
   const selectedThreadLabel = selectedThreadItem ? `#${selectedThreadItem.id}` : "-";
@@ -2880,6 +3019,8 @@ export default function App() {
     setResponseTopRatio(DEFAULT_RESPONSE_TOP_RATIO);
     setPaneLayoutMode("classic");
     setThreadColWidths({ ...DEFAULT_COL_WIDTHS });
+    setThreadColVisible({ ...DEFAULT_COL_VISIBLE });
+    setThreadColOrder([...DEFAULT_THREAD_COL_ORDER]);
     setBoardsFontSize(12);
     setThreadsFontSize(12);
     setResponsesFontSize(12);
@@ -2993,6 +3134,7 @@ export default function App() {
         if (aboutOpen) { setAboutOpen(false); return; }
         if (shortcutsOpen) { setShortcutsOpen(false); return; }
         if (gestureListOpen) { setGestureListOpen(false); return; }
+        if (threadColumnsOpen) { setThreadColumnsOpen(false); return; }
         if (responseReloadMenuOpen) { setResponseReloadMenuOpen(false); return; }
         if (threadFilterMenuOpen) { setThreadFilterMenuOpen(false); return; }
         if (openMenu) { setOpenMenu(null); return; }
@@ -3167,6 +3309,7 @@ export default function App() {
           threadAgeColorEnabled?: boolean;
           composeSize?: { w: number; h: number };
           threadColVisible?: Record<string, boolean>;
+          threadColOrder?: string[];
           responseBodyBottomPad?: boolean;
           titleClickRefresh?: boolean;
           autoScrollSpeed?: number;
@@ -3214,6 +3357,7 @@ export default function App() {
         if (typeof parsed.threadAgeColorEnabled === "boolean") setThreadAgeColorEnabled(parsed.threadAgeColorEnabled);
         if (parsed.composeSize && typeof parsed.composeSize.w === "number" && typeof parsed.composeSize.h === "number") setComposeSize(parsed.composeSize);
         if (parsed.threadColVisible && typeof parsed.threadColVisible === "object") setThreadColVisible((prev) => ({ ...prev, ...parsed.threadColVisible }));
+        if (Array.isArray(parsed.threadColOrder)) setThreadColOrder(normalizeThreadColOrder(parsed.threadColOrder));
         if (typeof parsed.responseBodyBottomPad === "boolean") setResponseBodyBottomPad(parsed.responseBodyBottomPad);
         if (typeof parsed.titleClickRefresh === "boolean") setTitleClickRefresh(parsed.titleClickRefresh);
         if (typeof parsed.autoScrollSpeed === "number" && parsed.autoScrollSpeed > 0) setAutoScrollSpeed(parsed.autoScrollSpeed);
@@ -3848,6 +3992,7 @@ export default function App() {
       threadAgeColorEnabled,
       composeSize: composeSize ?? undefined,
       threadColVisible,
+      threadColOrder,
       responseBodyBottomPad,
       titleClickRefresh,
       autoScrollSpeed,
@@ -3856,7 +4001,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskForceOnStart, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskForceOnStart, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -4026,11 +4171,13 @@ export default function App() {
               ["unread", "新着"],
               ["lastFetch", "最終取得"],
               ["speed", "勢い"],
-            ] as [ThreadColKey, string][]).map(([key, label]) => ({
+              ["datNumber", "dat番号"],
+            ] as [ToggleableThreadColKey, string][]).map(([key, label]) => ({
               text: `${threadColVisible[key] ? "\u2713 " : "　"}${label}`,
               action: () => setThreadColVisible((prev) => ({ ...prev, [key]: !prev[key] })),
               keepOpen: true,
             })) },
+            { text: "カラム並べ替え...", action: openThreadColumnsDialog },
           ]},
           { label: "板", items: [
             { text: "板一覧を取得", action: () => fetchBoardCategories() },
@@ -4612,30 +4759,7 @@ export default function App() {
           <table>
             <thead>
               <tr>
-                {threadColVisible.fetched && <th className="sortable-th col-resizable" style={{ width: threadColWidths.fetched + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX >= r.right - COL_RESIZE_HANDLE_PX) return; toggleThreadSort("fetched"); }} onMouseDown={(e) => beginColResize("fetched", "right", e)} onDoubleClick={(e) => resetColWidth("fetched", "right", e)} onMouseMove={(e) => colResizeCursor("right", e)} title="取得済みスレを上にソート">
-                  !{threadSortKey === "fetched" ? (threadSortAsc ? "\u25B2" : "\u25BC") : ""}
-                </th>}
-                <th className="sortable-th col-resizable" style={{ width: threadColWidths.id + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX >= r.right - COL_RESIZE_HANDLE_PX) return; toggleThreadSort("id"); }} onMouseDown={(e) => beginColResize("id", "right", e)} onDoubleClick={(e) => resetColWidth("id", "right", e)} onMouseMove={(e) => colResizeCursor("right", e)}>
-                  番号{threadSortKey === "id" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
-                </th>
-                {threadColVisible.title && <th className="sortable-th" onClick={() => toggleThreadSort("title")}>
-                  タイトル{threadSortKey === "title" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
-                </th>}
-                {threadColVisible.res && <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.res + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("res"); }} onMouseDown={(e) => beginColResize("res", "left", e)} onDoubleClick={(e) => resetColWidth("res", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
-                  レス{threadSortKey === "res" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
-                </th>}
-                {threadColVisible.read && <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.read + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("got"); }} onMouseDown={(e) => beginColResize("read", "left", e)} onDoubleClick={(e) => resetColWidth("read", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
-                  既読{threadSortKey === "got" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
-                </th>}
-                {threadColVisible.unread && <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.unread + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("new"); }} onMouseDown={(e) => beginColResize("unread", "left", e)} onDoubleClick={(e) => resetColWidth("unread", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
-                  新着{threadSortKey === "new" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
-                </th>}
-                {threadColVisible.lastFetch && <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.lastFetch + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("lastFetch"); }} onMouseDown={(e) => beginColResize("lastFetch", "left", e)} onDoubleClick={(e) => resetColWidth("lastFetch", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
-                  最終取得{threadSortKey === "lastFetch" ? (threadSortAsc ? " ▲" : " ▼") : ""}
-                </th>}
-                {threadColVisible.speed && <th className="sortable-th col-resizable-left" style={{ width: threadColWidths.speed + "px" }} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); if (e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return; toggleThreadSort("speed"); }} onMouseDown={(e) => beginColResize("speed", "left", e)} onDoubleClick={(e) => resetColWidth("speed", "left", e)} onMouseMove={(e) => colResizeCursor("left", e)}>
-                  勢い{threadSortKey === "speed" ? (threadSortAsc ? " \u25B2" : " \u25BC") : ""}
-                </th>}
+                {orderedThreadColumns.map(renderThreadHeaderCell)}
               </tr>
             </thead>
             <tbody ref={threadTbodyRef}>
@@ -4685,28 +4809,7 @@ export default function App() {
                     }}
                     onContextMenu={(e) => onThreadContextMenu(e, t.id)}
                   >
-                    {threadColVisible.fetched && <td className="thread-fetched-cell">{(showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) ? (hasUnread ? "\u25CF" : "") : (hasUnread || threadReadMap[t.id] ? "\u25CF" : "")}</td>}
-                    <td>{t.id}</td>
-                    {threadColVisible.title && <td
-                      className="thread-title-cell"
-                      style={threadAgeColorEnabled && !hasUnread && t.createdAt > 0 ? { color: threadAgeColor(t.createdAt) } : undefined}
-                      onMouseEnter={(e) => onThreadTitleMouseEnter(e, t.title)}
-                      onMouseLeave={onThreadTitleMouseLeave}
-                      dangerouslySetInnerHTML={renderHighlightedPlainText(t.title, threadSearchQuery)}
-                    />}
-                    {threadColVisible.res && <td>{t.res >= 0 ? t.res : "-"}</td>}
-                    {threadColVisible.read && <td>{isSavedMode ? (t.got >= 0 ? t.got : "-") : (t.got > 0 ? t.got : "-")}</td>}
-                    {threadColVisible.unread && <td className={`new-count ${hasUnread ? "has-new" : ""}`}>
-                      {isSavedMode ? (t.res >= 0 ? Math.max(0, t.res - t.got) : "-") : (t.got > 0 && t.res > 0 ? Math.max(0, t.res - t.got) : "-")}
-                    </td>}
-                    {threadColVisible.lastFetch && <td className="last-fetch-cell">{threadFetchTimesRef.current[t.threadUrl] ?? "-"}</td>}
-                    {threadColVisible.speed && <td className="speed-cell">
-                      <span className="speed-bar" style={{
-                        width: `${Math.min(100, t.speed * 2)}%`,
-                        background: t.speed >= 20 ? "rgba(200,40,40,0.25)" : t.speed >= 5 ? "rgba(200,120,40,0.2)" : "rgba(200,80,40,0.15)",
-                      }} />
-                      <span className="speed-val">{t.speed.toFixed(1)}</span>
-                    </td>}
+                    {orderedThreadColumns.map((colKey) => renderThreadDataCell(colKey, t, isSavedMode, hasUnread))}
                   </tr>
                 );
               })}
@@ -6123,6 +6226,39 @@ export default function App() {
                   <span>{desc}</span>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {threadColumnsOpen && (
+        <div className="lightbox-overlay" onClick={() => setThreadColumnsOpen(false)}>
+          <div className="settings-panel thread-columns-panel" onClick={(e) => e.stopPropagation()}>
+            <header className="settings-header">
+              <strong>カラム並べ替え</strong>
+              <button onClick={() => setThreadColumnsOpen(false)}>閉じる</button>
+            </header>
+            <div className="thread-columns-body">
+              {threadColOrderDraft.map((colKey, index) => (
+                <div key={colKey} className="thread-columns-row">
+                  <span className="thread-columns-handle">{index + 1}.</span>
+                  <span className="thread-columns-label">{THREAD_COL_LABELS[colKey]}</span>
+                  <button onClick={() => moveThreadColumnDraft(index, -1)} disabled={index === 0}>上へ</button>
+                  <button onClick={() => moveThreadColumnDraft(index, 1)} disabled={index === threadColOrderDraft.length - 1}>下へ</button>
+                </div>
+              ))}
+            </div>
+            <div className="thread-columns-actions">
+              <button onClick={() => setThreadColOrderDraft([...DEFAULT_THREAD_COL_ORDER])}>標準に戻す</button>
+              <div style={{ flex: 1 }} />
+              <button onClick={() => setThreadColumnsOpen(false)}>キャンセル</button>
+              <button
+                onClick={() => {
+                  setThreadColOrder(normalizeThreadColOrder(threadColOrderDraft));
+                  setThreadColumnsOpen(false);
+                }}
+              >
+                OK
+              </button>
             </div>
           </div>
         </div>
