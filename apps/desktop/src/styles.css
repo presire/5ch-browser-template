@@ -2769,6 +2769,36 @@ button.search-history-btn:hover {
   color: var(--ink);
   box-shadow: 2px 2px 6px rgba(0,0,0,0.4);
 }
+.thread-columns-panel {
+  width: 420px;
+}
+.thread-columns-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+.thread-columns-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+}
+.thread-columns-handle {
+  color: var(--sub);
+  text-align: right;
+}
+.thread-columns-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thread-columns-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
 .dark .board-button-bar {
   background: #2d2d30;
   border-color: var(--line);
