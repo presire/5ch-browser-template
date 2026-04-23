@@ -728,6 +728,8 @@ export default function App() {
   const [responsesLoading, setResponsesLoading] = useState(false);
   const [ngInput, setNgInput] = useState("");
   const [ngInputType, setNgInputType] = useState<"words" | "ids" | "names">("words");
+  const [ngBulkOpen, setNgBulkOpen] = useState(false);
+  const [ngBulkText, setNgBulkText] = useState("");
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(60);
@@ -1107,6 +1109,18 @@ export default function App() {
     const entry: string | NgEntry = type === "thread_words" ? trimmed : { value: trimmed, mode: mode ?? ngAddMode };
     void persistNgFilters({ ...ngFilters, [type]: [...ngFilters[type], entry] });
     setStatus(`added NG ${type}: ${trimmed}`);
+  };
+
+  const addNgBulk = () => {
+    const lines = ngBulkText.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    if (lines.length === 0) return;
+    const existing = new Set(ngFilters[ngInputType].map(ngVal));
+    const newEntries: NgEntry[] = lines.filter(v => !existing.has(v)).map(v => ({ value: v, mode: ngAddMode }));
+    if (newEntries.length === 0) { setStatus("全て既登録済みです"); return; }
+    void persistNgFilters({ ...ngFilters, [ngInputType]: [...ngFilters[ngInputType], ...newEntries] });
+    setStatus(`${newEntries.length}件登録しました`);
+    setNgBulkText("");
+    setNgBulkOpen(false);
   };
 
   const removeNgEntry = (type: "words" | "ids" | "names" | "thread_words", value: string) => {
@@ -5673,7 +5687,22 @@ export default function App() {
               <option value="hide-images">画像NG</option>
             </select>
             <button onClick={() => { addNgEntry(ngInputType, ngInput); setNgInput(""); }}>追加</button>
+            <button className={ngBulkOpen ? "active-toggle" : ""} onClick={() => setNgBulkOpen(v => !v)}>一括</button>
           </div>
+          {ngBulkOpen && (
+            <div className="ng-panel-bulk">
+              <textarea
+                value={ngBulkText}
+                onChange={(e) => setNgBulkText(e.target.value)}
+                placeholder="改行区切りで複数入力"
+                rows={5}
+              />
+              <div className="ng-panel-bulk-actions">
+                <button onClick={addNgBulk}>登録</button>
+                <button onClick={() => { setNgBulkOpen(false); setNgBulkText(""); }}>キャンセル</button>
+              </div>
+            </div>
+          )}
           <div className="ng-panel-lists">
             {(["words", "ids", "names"] as const).map((type) => (
               <div key={type} className="ng-list-section">
