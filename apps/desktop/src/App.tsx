@@ -520,7 +520,7 @@ const renderResponseBody = (html: string, opts?: { hideImages?: boolean; imageSi
         if (sizeGated) {
           collectedThumbs.push(`<span class="thumb-link thumb-size-gate" data-lightbox-src="${href}" data-gate-src="${href}" data-size-limit="${opts.imageSizeLimitKb}"><span class="thumb-gate-loading">画像を確認中…</span></span>`);
         } else {
-          collectedThumbs.push(`<span class="thumb-link" data-lightbox-src="${href}"><img class="response-thumb" src="${href}" loading="lazy" alt="" /></span>`);
+          collectedThumbs.push(`<span class="thumb-link" data-lightbox-src="${href}"><img class="response-thumb" src="${href}" loading="lazy" referrerpolicy="no-referrer" alt="" /></span>`);
         }
         return `<a class="body-link" href="${href}" target="_blank" rel="noopener">${match}</a>`;
       }
@@ -728,6 +728,8 @@ export default function App() {
   const [responsesLoading, setResponsesLoading] = useState(false);
   const [ngInput, setNgInput] = useState("");
   const [ngInputType, setNgInputType] = useState<"words" | "ids" | "names">("words");
+  const [ngBulkOpen, setNgBulkOpen] = useState(false);
+  const [ngBulkText, setNgBulkText] = useState("");
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(60);
@@ -749,7 +751,7 @@ export default function App() {
   const [threadSortKey, setThreadSortKey] = useState<"fetched" | "id" | "datNumber" | "title" | "res" | "got" | "new" | "lastFetch" | "speed">("id");
   const [threadSortAsc, setThreadSortAsc] = useState(true);
   const cachedSortOrderRef = useRef<string[]>([]);
-  const prevSortSnapshotRef = useRef({ key: "", asc: true, urls: "", favFetched: false });
+  const prevSortSnapshotRef = useRef({ key: "", asc: true, urls: "", favFetched: false, newUrls: 0 });
   const [threadTabs, setThreadTabs] = useState<ThreadTab[]>([]);
   const [activeTabIndex, setActiveTabIndex] = useState(-1);
   const tabCacheRef = useRef<Map<string, { responses: ThreadResponseItem[]; selectedResponse: number; scrollResponseNo?: number; newResponseStart?: number | null }>>(new Map());
@@ -821,6 +823,8 @@ export default function App() {
   const [threadColVisible, setThreadColVisible] = useState<Record<ToggleableThreadColKey, boolean>>({ ...DEFAULT_COL_VISIBLE });
   const [threadColOrder, setThreadColOrder] = useState<ThreadColKey[]>(() => [...DEFAULT_THREAD_COL_ORDER]);
   const [threadColOrderDraft, setThreadColOrderDraft] = useState<ThreadColKey[]>(() => [...DEFAULT_THREAD_COL_ORDER]);
+  const knownThreadUrlsRef = useRef<Map<string, Set<string>>>(new Map());
+  const [newThreadUrls, setNewThreadUrls] = useState<Set<string>>(new Set());
   const layoutPrefsLoadedRef = useRef(false);
   const threadScrollPositions = useRef<Record<string, number>>({});
   const boardTreeRef = useRef<HTMLDivElement | null>(null);
@@ -909,12 +913,12 @@ export default function App() {
             const sizeStr = size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)}MB` : `${Math.round(size / 1024)}KB`;
             gate.innerHTML = `<span class="thumb-gate-blocked" data-reveal-src="${src}">サイズ制限 (${sizeStr}) により非表示 — クリックで表示</span>`;
           } else {
-            gate.innerHTML = `<img class="response-thumb" src="${src}" loading="lazy" alt="" />`;
+            gate.innerHTML = `<img class="response-thumb" src="${src}" loading="lazy" referrerpolicy="no-referrer" alt="" />`;
           }
         }).catch(() => {
           if (!gate.dataset.gateSrc) return;
           delete gate.dataset.gateSrc;
-          gate.innerHTML = `<img class="response-thumb" src="${src}" loading="lazy" alt="" />`;
+          gate.innerHTML = `<img class="response-thumb" src="${src}" loading="lazy" referrerpolicy="no-referrer" alt="" />`;
         });
       });
     };
@@ -1107,6 +1111,18 @@ export default function App() {
     setStatus(`added NG ${type}: ${trimmed}`);
   };
 
+  const addNgBulk = () => {
+    const lines = ngBulkText.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    if (lines.length === 0) return;
+    const existing = new Set(ngFilters[ngInputType].map(ngVal));
+    const newEntries: NgEntry[] = lines.filter(v => !existing.has(v)).map(v => ({ value: v, mode: ngAddMode }));
+    if (newEntries.length === 0) { setStatus("全て既登録済みです"); return; }
+    void persistNgFilters({ ...ngFilters, [ngInputType]: [...ngFilters[ngInputType], ...newEntries] });
+    setStatus(`${newEntries.length}件登録しました`);
+    setNgBulkText("");
+    setNgBulkOpen(false);
+  };
+
   const removeNgEntry = (type: "words" | "ids" | "names" | "thread_words", value: string) => {
     void persistNgFilters({ ...ngFilters, [type]: ngFilters[type].filter((v) => ngVal(v) !== value) });
     setStatus(`removed NG ${type}: ${value}`);
@@ -1261,6 +1277,7 @@ export default function App() {
 
   const openThreadInTab = (url: string, title: string) => {
     setResponseSearchQuery("");
+    setNewThreadUrls((prev) => { if (!prev.has(url)) return prev; const next = new Set(prev); next.delete(url); return next; });
     pushRecentOpenedThread(url, title);
     const existingIndex = threadTabs.findIndex((t) => t.threadUrl === url);
     if (existingIndex >= 0) {
@@ -1604,6 +1621,14 @@ export default function App() {
       });
       await loadReadStatusForBoard(url, rows);
       setFetchedThreads(rows);
+      const currentUrls = new Set(rows.map((r) => r.threadUrl));
+      const known = knownThreadUrlsRef.current.get(url);
+      if (known && known.size > 0) {
+        setNewThreadUrls(new Set([...currentUrls].filter((u) => !known.has(u))));
+      } else {
+        setNewThreadUrls(new Set());
+      }
+      knownThreadUrlsRef.current.set(url, currentUrls);
       if (!keepSortOnRefreshRef.current) {
         setThreadSortKey("id");
         setThreadSortAsc(true);
@@ -1701,6 +1726,14 @@ export default function App() {
       });
       setFetchedThreads(rows);
       void loadReadStatusForBoard(url, rows);
+      const currentUrls = new Set(rows.map((r) => r.threadUrl));
+      const known = knownThreadUrlsRef.current.get(url);
+      if (known && known.size > 0) {
+        setNewThreadUrls(new Set([...currentUrls].filter((u) => !known.has(u))));
+      } else {
+        setNewThreadUrls(new Set());
+      }
+      knownThreadUrlsRef.current.set(url, currentUrls);
     } catch {
       // silent refresh — ignore errors
     }
@@ -2379,12 +2412,16 @@ export default function App() {
     sortSnapshot.key !== threadSortKey ||
     sortSnapshot.asc !== threadSortAsc ||
     sortSnapshot.urls !== currentFilteredUrls ||
-    sortSnapshot.favFetched !== favNewCountsFetched;
+    sortSnapshot.favFetched !== favNewCountsFetched ||
+    sortSnapshot.newUrls !== newThreadUrls.size;
   let visibleThreadItems: typeof filteredThreadItems;
   if (needsResort || cachedSortOrderRef.current.length === 0) {
     visibleThreadItems = [...filteredThreadItems].sort((a, b) => {
       let cmp = 0;
-      if (threadSortKey === "fetched") cmp = (threadReadMap[a.id] ? 0 : 1) - (threadReadMap[b.id] ? 0 : 1);
+      if (threadSortKey === "fetched") {
+        const score = (t: typeof a) => newThreadUrls.has(t.threadUrl) ? 1 : threadReadMap[t.id] ? 0 : 2;
+        cmp = score(a) - score(b);
+      }
       else if (threadSortKey === "id") cmp = a.id - b.id;
       else if (threadSortKey === "datNumber") cmp = Number(a.datNumber || 0) - Number(b.datNumber || 0);
       else if (threadSortKey === "title") cmp = a.title.localeCompare(b.title);
@@ -2400,7 +2437,7 @@ export default function App() {
       return threadSortAsc ? cmp : -cmp;
     });
     cachedSortOrderRef.current = visibleThreadItems.map((t) => t.threadUrl);
-    prevSortSnapshotRef.current = { key: threadSortKey, asc: threadSortAsc, urls: currentFilteredUrls, favFetched: favNewCountsFetched };
+    prevSortSnapshotRef.current = { key: threadSortKey, asc: threadSortAsc, urls: currentFilteredUrls, favFetched: favNewCountsFetched, newUrls: newThreadUrls.size };
   } else {
     const orderMap = new Map<string, number>();
     cachedSortOrderRef.current.forEach((url, i) => orderMap.set(url, i));
@@ -2455,8 +2492,11 @@ export default function App() {
     hasUnread: boolean,
   ) => {
     switch (colKey) {
-      case "fetched":
-        return <td key={colKey} className="thread-fetched-cell">{(showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) ? (hasUnread ? "\u25CF" : "") : (hasUnread || threadReadMap[t.id] ? "\u25CF" : "")}</td>;
+      case "fetched": {
+        const isNewThread = newThreadUrls.has(t.threadUrl);
+        const unreadMark = (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) ? (hasUnread ? "●" : "") : (hasUnread || threadReadMap[t.id] ? "●" : "");
+        return <td key={colKey} className={`thread-fetched-cell${isNewThread ? " thread-fetched-new" : ""}`}>{isNewThread ? "★" : unreadMark}</td>;
+      }
       case "id":
         return <td key={colKey}>{t.id}</td>;
       case "datNumber":
@@ -5069,7 +5109,7 @@ export default function App() {
                   if (src) {
                     const parent = gateBlocked.closest<HTMLElement>(".thumb-size-gate");
                     if (parent) {
-                      parent.innerHTML = `<img class="response-thumb" src="${src}" loading="lazy" alt="" />`;
+                      parent.innerHTML = `<img class="response-thumb" src="${src}" loading="lazy" referrerpolicy="no-referrer" alt="" />`;
                     }
                   }
                   return;
@@ -5647,7 +5687,22 @@ export default function App() {
               <option value="hide-images">画像NG</option>
             </select>
             <button onClick={() => { addNgEntry(ngInputType, ngInput); setNgInput(""); }}>追加</button>
+            <button className={ngBulkOpen ? "active-toggle" : ""} onClick={() => setNgBulkOpen(v => !v)}>一括</button>
           </div>
+          {ngBulkOpen && (
+            <div className="ng-panel-bulk">
+              <textarea
+                value={ngBulkText}
+                onChange={(e) => setNgBulkText(e.target.value)}
+                placeholder="改行区切りで複数入力"
+                rows={5}
+              />
+              <div className="ng-panel-bulk-actions">
+                <button onClick={addNgBulk}>登録</button>
+                <button onClick={() => { setNgBulkOpen(false); setNgBulkText(""); }}>キャンセル</button>
+              </div>
+            </div>
+          )}
           <div className="ng-panel-lists">
             {(["words", "ids", "names"] as const).map((type) => (
               <div key={type} className="ng-list-section">
