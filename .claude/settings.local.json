@@ -180,5 +180,9 @@
       "Bash(cmd *)",
       "Bash(zip -j ember-win-x64.zip ember.exe)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "context7"
+  ],
+  "enableAllProjectMcpServers": true
 }
