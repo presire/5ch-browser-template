@@ -2399,7 +2399,7 @@ button.search-history-btn:hover {
 
 .thumb-masked .response-thumb,
 .thumb-masked .image-gallery-thumb {
-  filter: blur(16px) brightness(0.8);
+  filter: blur(var(--thumb-mask-blur, 16px)) brightness(var(--thumb-mask-brightness, 0.8));
   transition: filter 0.2s;
 }
 .thumb-masked .thumb-link:hover .response-thumb,
@@ -2626,6 +2626,13 @@ button.search-history-btn:hover {
 }
 .settings-row select {
   padding: 2px 4px;
+}
+.settings-sub-row {
+  padding-left: 20px;
+  opacity: 0.9;
+}
+.settings-sub-row input[type="range"] {
+  flex: 1;
 }
 
 .dark .settings-panel {
