@@ -699,6 +699,7 @@ export default function App() {
   const hoverPreviewShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [thumbSize, setThumbSize] = useState(200);
   const [thumbMaskEnabled, setThumbMaskEnabled] = useState(false);
+  const [thumbMaskStrength, setThumbMaskStrength] = useState(80);
   const [thumbMaskForceOnStart, setThumbMaskForceOnStart] = useState(false);
   const [responseBodyBottomPad, setResponseBodyBottomPad] = useState(false);
   const [titleClickRefresh, setTitleClickRefresh] = useState(false);
@@ -3343,6 +3344,7 @@ export default function App() {
           hoverPreviewDelay?: number;
           thumbSize?: number;
           thumbMaskEnabled?: boolean;
+          thumbMaskStrength?: number;
           thumbMaskForceOnStart?: boolean;
           restoreSession?: boolean;
           autoRefreshInterval?: number;
@@ -3386,6 +3388,7 @@ export default function App() {
         }
         if (typeof parsed.hoverPreviewDelay === "number") setHoverPreviewDelay(parsed.hoverPreviewDelay);
         if (typeof parsed.thumbSize === "number") setThumbSize(parsed.thumbSize);
+        if (typeof parsed.thumbMaskStrength === "number") setThumbMaskStrength(parsed.thumbMaskStrength);
         if (typeof parsed.thumbMaskForceOnStart === "boolean") setThumbMaskForceOnStart(parsed.thumbMaskForceOnStart);
         if (parsed.thumbMaskForceOnStart === true) {
           setThumbMaskEnabled(true);
@@ -4026,6 +4029,7 @@ export default function App() {
       hoverPreviewDelay,
       thumbSize,
       thumbMaskEnabled,
+      thumbMaskStrength,
       thumbMaskForceOnStart,
       restoreSession,
       autoRefreshInterval,
@@ -4043,7 +4047,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskForceOnStart, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -4150,7 +4154,7 @@ export default function App() {
   return (
     <div
       className={`shell${darkMode ? " dark" : ""}${thumbMaskEnabled ? " thumb-masked" : ""}`}
-      style={{ fontFamily: fontFamily ? `"Backslash", ${fontFamily}` : undefined, gridTemplateRows: showBoardButtons && favorites.boards.length > 0 ? "26px 32px auto 1fr 22px" : undefined, "--thumb-size": `${thumbSize}px` } as React.CSSProperties}
+      style={{ fontFamily: fontFamily ? `"Backslash", ${fontFamily}` : undefined, gridTemplateRows: showBoardButtons && favorites.boards.length > 0 ? "26px 32px auto 1fr 22px" : undefined, "--thumb-size": `${thumbSize}px`, "--thumb-mask-blur": `${(thumbMaskStrength / 100) * 20}px`, "--thumb-mask-brightness": `${1 - (thumbMaskStrength / 100) * 0.25}` } as React.CSSProperties}
       onClick={() => {
         setThreadMenu(null);
         setResponseMenu(null);
@@ -6416,6 +6420,13 @@ export default function App() {
                   <input type="checkbox" checked={thumbMaskEnabled} onChange={(e) => setThumbMaskEnabled(e.target.checked)} />
                   <span>サムネイルをマスク (ホバーで表示)</span>
                 </label>
+                {thumbMaskEnabled && (
+                  <label className="settings-row settings-sub-row">
+                    <span>マスク強度</span>
+                    <input type="range" value={thumbMaskStrength} min={10} max={100} step={5} onChange={(e) => setThumbMaskStrength(Number(e.target.value))} />
+                    <span>{thumbMaskStrength}%</span>
+                  </label>
+                )}
                 <label className="settings-row">
                   <input type="checkbox" checked={thumbMaskForceOnStart} onChange={(e) => setThumbMaskForceOnStart(e.target.checked)} />
                   <span>起動時に必ずマスクを有効化</span>
