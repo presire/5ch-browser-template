@@ -84,7 +84,17 @@ jobs:
         if: steps.check.outputs.changed == 'true'
         run: |
           git fetch upstream --tags
-          git push origin --tags
+          FAILED=""
+          for TAG in $(git tag -l | sort -V); do
+            if ! git push origin "refs/tags/${TAG}" 2>/dev/null; then
+              echo "::warning::Failed to push tag ${TAG} (likely requires 'workflow' scope on PAT)"
+              FAILED="${FAILED} ${TAG}"
+            fi
+          done
+          if [ -n "$FAILED" ]; then
+            echo "::warning::Some tags failed to push:${FAILED}"
+            echo "Grant 'workflow' scope to PAT_TOKEN to fix this."
+          fi
 
       - name: Create and push win10 tag
         if: steps.check.outputs.changed == 'true'
