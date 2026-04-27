@@ -97,10 +97,11 @@ type FavoriteBoard = { boardName: string; url: string };
 type FavoriteThread = { threadUrl: string; title: string; boardUrl: string };
 type RecentThread = FavoriteThread & { updatedAt: number };
 type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
-type NgEntry = { value: string; mode: "hide" | "hide-images"; disabled?: boolean };
+type NgEntry = { value: string; mode: "hide" | "hide-images"; disabled?: boolean; excludeNo1?: boolean };
 type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: (string | NgEntry)[] };
 const ngVal = (e: string | NgEntry): string => typeof e === "string" ? e : e.value;
 const ngEntryMode = (e: string | NgEntry): "hide" | "hide-images" => typeof e === "string" ? "hide" : e.mode;
+const ngEntryExcludeNo1 = (e: string | NgEntry): boolean => typeof e === "string" ? false : (e.excludeNo1 ?? false);
 const ngEntryDisabled = (e: string | NgEntry): boolean => typeof e === "string" ? false : (e.disabled ?? false);
 type AuthConfig = {
   upliftEmail: string;
@@ -1140,6 +1141,17 @@ export default function App() {
     });
   };
 
+  const toggleNgEntryExcludeNo1 = (type: "words" | "ids" | "names" | "thread_words", value: string) => {
+    void persistNgFilters({
+      ...ngFilters,
+      [type]: ngFilters[type].map((e) => {
+        if (ngVal(e) !== value) return e;
+        const base = typeof e === "string" ? { value: e, mode: "hide" as const } : e;
+        return { ...base, excludeNo1: !ngEntryExcludeNo1(e) };
+      }),
+    });
+  };
+
   const setNgSectionDisabled = (type: "words" | "ids" | "names" | "thread_words", disabled: boolean) => {
     void persistNgFilters({
       ...ngFilters,
@@ -1172,11 +1184,13 @@ export default function App() {
     return target.toLowerCase().includes(pattern.toLowerCase());
   };
 
-  const getNgResult = (resp: { name: string; time: string; text: string }): null | "hide" | "hide-images" => {
+  const getNgResult = (resp: { name: string; time: string; text: string; responseNo?: number }): null | "hide" | "hide-images" => {
     if (ngFilters.words.length === 0 && ngFilters.ids.length === 0 && ngFilters.names.length === 0) return null;
+    const isNo1 = resp.responseNo === 1;
     let result: null | "hide" | "hide-images" = null;
     for (const w of ngFilters.words) {
       if (ngEntryDisabled(w)) continue;
+      if (isNo1 && ngEntryExcludeNo1(w)) continue;
       if (ngMatch(ngVal(w), resp.text)) {
         const m = ngEntryMode(w);
         if (m === "hide") return "hide";
@@ -1185,6 +1199,7 @@ export default function App() {
     }
     for (const n of ngFilters.names) {
       if (ngEntryDisabled(n)) continue;
+      if (isNo1 && ngEntryExcludeNo1(n)) continue;
       if (ngMatch(ngVal(n), resp.name)) {
         const m = ngEntryMode(n);
         if (m === "hide") return "hide";
@@ -1196,6 +1211,7 @@ export default function App() {
       if (idMatch) {
         for (const entry of ngFilters.ids) {
           if (ngEntryDisabled(entry)) continue;
+          if (isNo1 && ngEntryExcludeNo1(entry)) continue;
           if (idMatch[1] === ngVal(entry)) {
             const m = ngEntryMode(entry);
             if (m === "hide") return "hide";
@@ -2622,7 +2638,7 @@ export default function App() {
 
   const ngResultMap = new Map<number, "hide" | "hide-images">();
   for (const r of responseItems) {
-    const result = getNgResult(r);
+    const result = getNgResult({ name: r.name, time: r.time, text: r.text, responseNo: r.id });
     if (result) ngResultMap.set(r.id, result);
   }
   const ngFilteredCount = ngResultMap.size;
@@ -2658,7 +2674,7 @@ export default function App() {
   const galleryImages = useMemo(() => {
     const items: { url: string; responseNo: number }[] = [];
     for (const r of fetchedResponses) {
-      if (getNgResult({ name: r.name || "", time: r.dateAndId || "", text: r.body || "" })) continue;
+      if (getNgResult({ name: r.name || "", time: r.dateAndId || "", text: r.body || "", responseNo: r.responseNo })) continue;
       for (const url of extractImageUrls(r.body || "")) {
         items.push({ url, responseNo: r.responseNo });
       }
@@ -4132,6 +4148,8 @@ export default function App() {
     return () => clearInterval(id);
   }, [autoRefreshEnabled, autoRefreshInterval, threadUrl]);
 
+  const fetchedResponsesCountRef = useRef(0);
+  fetchedResponsesCountRef.current = fetchedResponses.length;
   useEffect(() => {
     if (!autoScrollEnabled) return;
     const container = responseScrollRef.current;
@@ -4141,14 +4159,13 @@ export default function App() {
     const tick = (now: number) => {
       const dt = now - last;
       last = now;
-      const step = (autoScrollSpeed * dt) / 1000;
-      const target = container.scrollTop + step;
-      const max = container.scrollHeight - container.clientHeight;
-      if (target >= max) {
-        container.scrollTop = max;
+      if (fetchedResponsesCountRef.current >= 1000) {
         setAutoScrollEnabled(false);
         return;
       }
+      const step = (autoScrollSpeed * dt) / 1000;
+      const max = container.scrollHeight - container.clientHeight;
+      const target = Math.min(container.scrollTop + step, max);
       container.scrollTop = target;
       rafId = requestAnimationFrame(tick);
     };
@@ -5740,6 +5757,7 @@ export default function App() {
                       const v = ngVal(entry);
                       const mode = ngEntryMode(entry);
                       const off = ngEntryDisabled(entry);
+                      const exNo1 = ngEntryExcludeNo1(entry);
                       return (
                         <li key={v} className={off ? "ng-disabled" : ""}>
                           <button
@@ -5750,6 +5768,11 @@ export default function App() {
                           <span className={`ng-mode-label ${mode === "hide-images" ? "ng-mode-img" : "ng-mode-hide"}`}>
                             {mode === "hide-images" ? "画像" : "非表示"}
                           </span>
+                          <button
+                            className={`ng-toggle ${exNo1 ? "ng-toggle-on" : "ng-toggle-off"}`}
+                            onClick={() => toggleNgEntryExcludeNo1(type, v)}
+                            title={exNo1 ? ">>1を除外中 (クリックで解除)" : ">>1には適用しない (クリックで有効)"}
+                          >&gt;&gt;1除外</button>
                           <span>{v}</span>
                           <button className="ng-remove" onClick={() => removeNgEntry(type, v)}>×</button>
                         </li>
