@@ -82,18 +82,24 @@ jobs:
 
       - name: Sync upstream tags
         if: steps.check.outputs.changed == 'true'
+        env:
+          PUSH_TOKEN: ${{ github.token }}
         run: |
           git fetch upstream --tags
+          # PAT_TOKEN cannot push tags whose commit history modifies
+          # .github/workflows/ (requires 'workflow' scope on classic PATs).
+          # Use the built-in GITHUB_TOKEN which inherits job-level
+          # contents:write and is not subject to this restriction.
+          TAG_REMOTE="https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git"
           FAILED=""
           for TAG in $(git tag -l | sort -V); do
-            if ! git push origin "refs/tags/${TAG}" 2>/dev/null; then
-              echo "::warning::Failed to push tag ${TAG} (likely requires 'workflow' scope on PAT)"
+            if ! git push --quiet "${TAG_REMOTE}" "refs/tags/${TAG}" 2>/dev/null; then
+              echo "::warning::Failed to push tag ${TAG}"
               FAILED="${FAILED} ${TAG}"
             fi
           done
           if [ -n "$FAILED" ]; then
-            echo "::warning::Some tags failed to push:${FAILED}"
-            echo "Grant 'workflow' scope to PAT_TOKEN to fix this."
+            echo "::warning::Tags that failed to push:${FAILED}"
           fi
 
       - name: Create and push win10 tag
