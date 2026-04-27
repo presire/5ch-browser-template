@@ -12,6 +12,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DESKTOP_DIR="$ROOT_DIR/apps/desktop"
 OUT_DIR="$ROOT_DIR/out"
 LANDING_DIR="$ROOT_DIR/apps/landing"
+cd "$ROOT_DIR"
 
 if [[ $# -lt 2 ]]; then
   echo "Usage: $0 <version> <release-notes>"
