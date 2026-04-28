@@ -99,6 +99,35 @@ type RecentThread = FavoriteThread & { updatedAt: number };
 type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
 type NgEntry = { value: string; mode: "hide" | "hide-images"; disabled?: boolean; excludeNo1?: boolean };
 type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: (string | NgEntry)[] };
+type NgImageEntry = { hash: string; thumbnail: string; sourceUrl: string; addedAt: number; disabled?: boolean };
+type NgImageFilter = { entries: NgImageEntry[]; threshold: number };
+const hammingDistanceB64 = (a: string, b: string): number => {
+  if (!a || !b) return 999;
+  try {
+    const ba = atob(a);
+    const bb = atob(b);
+    if (ba.length !== bb.length) return 999;
+    let dist = 0;
+    for (let i = 0; i < ba.length; i++) {
+      let xor = ba.charCodeAt(i) ^ bb.charCodeAt(i);
+      while (xor) {
+        dist += xor & 1;
+        xor >>>= 1;
+      }
+    }
+    return dist;
+  } catch {
+    return 999;
+  }
+};
+const isImageHashBlocked = (hash: string, filter: NgImageFilter): boolean => {
+  if (!hash) return false;
+  for (const entry of filter.entries) {
+    if (entry.disabled) continue;
+    if (hammingDistanceB64(hash, entry.hash) <= filter.threshold) return true;
+  }
+  return false;
+};
 const ngVal = (e: string | NgEntry): string => typeof e === "string" ? e : e.value;
 const ngEntryMode = (e: string | NgEntry): "hide" | "hide-images" => typeof e === "string" ? "hide" : e.mode;
 const ngEntryExcludeNo1 = (e: string | NgEntry): boolean => typeof e === "string" ? false : (e.excludeNo1 ?? false);
@@ -682,6 +711,10 @@ export default function App() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [favorites, setFavorites] = useState<FavoritesData>({ boards: [], threads: [] });
   const [ngFilters, setNgFilters] = useState<NgFilters>({ words: [], ids: [], names: [], thread_words: [] });
+  const [ngImageFilter, setNgImageFilter] = useState<NgImageFilter>({ entries: [], threshold: 10 });
+  const ngImageHashCacheRef = useRef(new Map<string, string | "pending" | "error">());
+  const [imageContextMenu, setImageContextMenu] = useState<{ x: number; y: number; url: string } | null>(null);
+  const [ngImagePanelOpen, setNgImagePanelOpen] = useState(false);
   const [ngAddMode, setNgAddMode] = useState<"hide" | "hide-images">("hide");
   const [threadNgOpen, setThreadNgOpen] = useState(false);
   const [threadNgInput, setThreadNgInput] = useState("");
@@ -929,6 +962,45 @@ export default function App() {
     return () => cancelAnimationFrame(raf);
   });
 
+  // Image NG (perceptual hash) scan
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    const activeEntries = ngImageFilter.entries.filter((e) => !e.disabled);
+    const scan = () => {
+      const cache = ngImageHashCacheRef.current;
+      const imgs = document.querySelectorAll<HTMLImageElement>("img.response-thumb, img.image-gallery-thumb");
+      imgs.forEach((img) => {
+        const src = img.getAttribute("src");
+        if (!src || src.startsWith("data:")) return;
+        const wrap = img.closest<HTMLElement>(".thumb-link, .image-gallery-thumb-wrap");
+        if (activeEntries.length === 0) {
+          if (wrap) wrap.classList.remove("ng-image-hidden");
+          return;
+        }
+        const cached = cache.get(src);
+        if (typeof cached === "string" && cached !== "pending" && cached !== "error") {
+          const blocked = isImageHashBlocked(cached, ngImageFilter);
+          if (wrap) wrap.classList.toggle("ng-image-hidden", blocked);
+          return;
+        }
+        if (cached === "pending" || cached === "error") return;
+        cache.set(src, "pending");
+        invoke<string>("compute_image_hash_from_url", { url: src })
+          .then((hash) => {
+            cache.set(src, hash);
+            const blocked = isImageHashBlocked(hash, ngImageFilter);
+            if (wrap) wrap.classList.toggle("ng-image-hidden", blocked);
+          })
+          .catch((e) => {
+            cache.set(src, "error");
+            console.warn("compute_image_hash_from_url failed", src, e);
+          });
+      });
+    };
+    const raf = requestAnimationFrame(scan);
+    return () => cancelAnimationFrame(raf);
+  });
+
   const fetchMenu = async () => {
     setStatus("loading...");
     try {
@@ -1099,6 +1171,67 @@ export default function App() {
     } catch (error) {
       setStatus(`ng save error: ${String(error)}`);
     }
+  };
+
+  const loadNgImageFilter = async () => {
+    if (!isTauriRuntime()) return;
+    try {
+      const data = await invoke<NgImageFilter>("load_ng_image_filter");
+      setNgImageFilter({ entries: data.entries ?? [], threshold: typeof data.threshold === "number" ? data.threshold : 10 });
+    } catch {
+      // no saved image NG yet
+    }
+  };
+
+  const persistNgImageFilter = async (next: NgImageFilter) => {
+    setNgImageFilter(next);
+    if (!isTauriRuntime()) return;
+    try {
+      await invoke("save_ng_image_filter", { filter: next });
+    } catch (error) {
+      setStatus(`ng image save error: ${String(error)}`);
+    }
+  };
+
+  const addNgImageFromUrl = async (url: string) => {
+    if (!isTauriRuntime()) {
+      setStatus("画像NG登録はTauri環境が必要です");
+      return;
+    }
+    if (ngImageFilter.entries.some((e) => e.sourceUrl === url)) {
+      setStatus("既に登録済みの画像です");
+      return;
+    }
+    setStatus("画像をハッシュ化中…");
+    try {
+      const entry = await invoke<NgImageEntry>("build_ng_image_entry", { url });
+      if (ngImageFilter.entries.some((e) => e.hash === entry.hash)) {
+        setStatus("同じハッシュの画像が既に登録されています");
+        return;
+      }
+      await persistNgImageFilter({ ...ngImageFilter, entries: [...ngImageFilter.entries, entry] });
+      setStatus(`画像NGに追加: ${entry.sourceUrl}`);
+    } catch (error) {
+      setStatus(`画像NG登録失敗: ${String(error)}`);
+    }
+  };
+
+  const removeNgImageEntry = (hash: string) => {
+    void persistNgImageFilter({
+      ...ngImageFilter,
+      entries: ngImageFilter.entries.filter((e) => e.hash !== hash),
+    });
+  };
+
+  const toggleNgImageEntry = (hash: string) => {
+    void persistNgImageFilter({
+      ...ngImageFilter,
+      entries: ngImageFilter.entries.map((e) => e.hash === hash ? { ...e, disabled: !e.disabled } : e),
+    });
+  };
+
+  const setNgImageThreshold = (threshold: number) => {
+    void persistNgImageFilter({ ...ngImageFilter, threshold });
   };
 
   const addNgEntry = (type: "words" | "ids" | "names" | "thread_words", value: string, mode?: "hide" | "hide-images") => {
@@ -3572,6 +3705,7 @@ export default function App() {
     void fetchBoardCategories();
     void loadFavorites();
     void loadNgFilters();
+    void loadNgImageFilter();
     // Load auth config and auto-login
     if (isTauriRuntime()) {
       invoke<AuthConfig>("load_auth_config").then((cfg) => {
@@ -4197,6 +4331,7 @@ export default function App() {
         setSearchHistoryMenu(null);
         setResponseReloadMenuOpen(false);
         setThreadFilterMenuOpen(false);
+        setImageContextMenu(null);
       }}
     >
       {mouseGestureEnabled && <canvas ref={gestureCanvasRef} className="gesture-trail" />}
@@ -4218,6 +4353,7 @@ export default function App() {
             { text: "スレURLをコピー", action: () => { void navigator.clipboard.writeText(threadUrl); setStatus("copied thread url"); } },
             { text: "sep" },
             { text: "NGフィルタ", action: () => setNgPanelOpen((v) => !v) },
+            { text: "画像NG", action: () => setNgImagePanelOpen((v) => !v) },
           ]},
           { label: "表示", items: [
             { text: `文字サイズ (${paneLabel(focusedPane)}): ${paneFontSize(focusedPane)[0]}px`, action: () => {} },
@@ -4971,6 +5107,7 @@ export default function App() {
                   {autoScrollEnabled ? <Pause size={14} /> : <Play size={14} />}
                 </button>
                 <button className="title-action-btn" onClick={() => setNgPanelOpen((v) => !v)} title="NGフィルタ"><EyeOff size={14} /></button>
+                <button className="title-action-btn" onClick={() => setNgImagePanelOpen((v) => !v)} title="画像NG"><ImageOff size={14} /></button>
               </span>
             </div>
           )}
@@ -5103,6 +5240,18 @@ export default function App() {
                 if (parts.length === 0) return;
                 e.preventDefault();
                 e.clipboardData.setData("text/plain", parts.join("\n\n"));
+              }}
+              onContextMenu={(e) => {
+                const target = e.target as HTMLElement;
+                const thumbImg = target.closest<HTMLImageElement>("img.response-thumb, img.image-gallery-thumb");
+                if (!thumbImg) return;
+                const wrap = thumbImg.closest<HTMLElement>("[data-lightbox-src]");
+                const url = wrap?.dataset.lightboxSrc ?? thumbImg.getAttribute("src") ?? "";
+                if (!url || url.startsWith("data:")) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const p = clampMenuPosition(e.clientX, e.clientY, 200, 40);
+                setImageContextMenu({ x: p.x, y: p.y, url });
               }}
               onClick={(e) => {
                 const target = e.target as HTMLElement;
@@ -5785,6 +5934,54 @@ export default function App() {
           </div>
         </section>
       )}
+      {ngImagePanelOpen && (
+        <section className="ng-panel ng-image-panel" role="dialog" aria-label="画像NG">
+          <header className="ng-panel-header">
+            <strong>画像NG</strong>
+            <span className="ng-panel-count">
+              {ngImageFilter.entries.filter((e) => !e.disabled).length}/{ngImageFilter.entries.length}
+            </span>
+            <label className="ng-image-threshold">
+              閾値:
+              <input
+                type="range"
+                min={0}
+                max={32}
+                step={1}
+                value={ngImageFilter.threshold}
+                onChange={(e) => setNgImageThreshold(Number(e.target.value))}
+              />
+              <span>{ngImageFilter.threshold}</span>
+            </label>
+            <button onClick={() => setNgImagePanelOpen(false)}>閉じる</button>
+          </header>
+          <div className="ng-image-list">
+            {ngImageFilter.entries.length === 0 ? (
+              <span className="ng-empty">画像を右クリックして「この画像をNG登録」から追加できます</span>
+            ) : (
+              ngImageFilter.entries.map((entry) => (
+                <div key={entry.hash} className={`ng-image-item${entry.disabled ? " ng-disabled" : ""}`}>
+                  <img className="ng-image-thumb" src={entry.thumbnail} alt="" />
+                  <div className="ng-image-meta">
+                    <div className="ng-image-url" title={entry.sourceUrl}>{entry.sourceUrl}</div>
+                    <div className="ng-image-sub">
+                      <span>追加: {new Date(entry.addedAt * 1000).toLocaleString()}</span>
+                      <span className="ng-image-hash" title={entry.hash}>hash: {entry.hash.slice(0, 12)}…</span>
+                    </div>
+                  </div>
+                  <div className="ng-image-actions">
+                    <button
+                      className={`ng-toggle ${entry.disabled ? "ng-toggle-off" : "ng-toggle-on"}`}
+                      onClick={() => toggleNgImageEntry(entry.hash)}
+                    >{entry.disabled ? "OFF" : "ON"}</button>
+                    <button className="ng-remove" onClick={() => removeNgImageEntry(entry.hash)}>×</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      )}
       {paneLayoutMode === "river" && threadTitlePopup && (
         <div className="thread-title-hover-popup" style={{ left: threadTitlePopup.x, top: threadTitlePopup.y }}>
           {threadTitlePopup.title}
@@ -5871,6 +6068,12 @@ export default function App() {
               </button>
             ) : null;
           })()}
+        </div>
+      )}
+      {imageContextMenu && (
+        <div className="thread-menu image-context-menu" style={{ left: imageContextMenu.x, top: imageContextMenu.y }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => { void addNgImageFromUrl(imageContextMenu.url); setImageContextMenu(null); }}>この画像をNG登録</button>
+          <button onClick={() => { setNgImagePanelOpen(true); setImageContextMenu(null); }}>画像NG一覧を開く</button>
         </div>
       )}
       {tabMenu && (
