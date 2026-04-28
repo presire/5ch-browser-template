@@ -80,6 +80,7 @@ git add \
   "$DESKTOP_DIR/package.json" \
   "$TAURI_DIR/tauri.conf.json" \
   "$TAURI_DIR/Cargo.toml" \
+  "$TAURI_DIR/src/lib.rs" \
   Cargo.lock \
   "$DESKTOP_DIR/src/App.tsx" \
   "$DESKTOP_DIR/src/styles.css"
