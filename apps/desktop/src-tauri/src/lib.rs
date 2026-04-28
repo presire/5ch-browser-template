@@ -933,6 +933,110 @@ fn save_ng_filters(filters: NgFilters) -> Result<(), String> {
     core_store::save_json("ng_filters.json", &filters).map_err(|e| e.to_string())
 }
 
+// --- Image NG (perceptual hash / dHash) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct NgImageEntry {
+    hash: String,
+    thumbnail: String,
+    source_url: String,
+    added_at: i64,
+    #[serde(default)]
+    disabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NgImageFilter {
+    #[serde(default)]
+    entries: Vec<NgImageEntry>,
+    #[serde(default = "default_image_threshold")]
+    threshold: u32,
+}
+
+fn default_image_threshold() -> u32 { 10 }
+
+impl Default for NgImageFilter {
+    fn default() -> Self {
+        Self { entries: Vec::new(), threshold: default_image_threshold() }
+    }
+}
+
+async fn fetch_image_bytes(url: &str) -> Result<Vec<u8>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("HTTPクライアント作成エラー: {}", e))?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("画像取得失敗: {}", e))?
+        .error_for_status()
+        .map_err(|e| format!("画像取得失敗: {}", e))?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("画像読込失敗: {}", e))?;
+    Ok(bytes.to_vec())
+}
+
+fn compute_dhash(bytes: &[u8]) -> Result<String, String> {
+    let img = image::load_from_memory(bytes).map_err(|e| format!("デコード失敗: {}", e))?;
+    let hasher = image_hasher::HasherConfig::new().to_hasher();
+    Ok(hasher.hash_image(&img).to_base64())
+}
+
+#[tauri::command]
+async fn compute_image_hash_from_url(url: String) -> Result<String, String> {
+    let bytes = fetch_image_bytes(&url).await?;
+    compute_dhash(&bytes)
+}
+
+#[tauri::command]
+async fn build_ng_image_entry(url: String) -> Result<NgImageEntry, String> {
+    use base64::Engine;
+    let bytes = fetch_image_bytes(&url).await?;
+    let img = image::load_from_memory(&bytes).map_err(|e| format!("デコード失敗: {}", e))?;
+    let hasher = image_hasher::HasherConfig::new().to_hasher();
+    let hash = hasher.hash_image(&img).to_base64();
+
+    let thumb = img.thumbnail(96, 96);
+    let mut buf: Vec<u8> = Vec::new();
+    thumb
+        .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Jpeg)
+        .map_err(|e| format!("サムネ生成失敗: {}", e))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
+    let data_url = format!("data:image/jpeg;base64,{}", b64);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    Ok(NgImageEntry {
+        hash,
+        thumbnail: data_url,
+        source_url: url,
+        added_at: now,
+        disabled: false,
+    })
+}
+
+#[tauri::command]
+fn load_ng_image_filter() -> Result<NgImageFilter, String> {
+    match core_store::load_json::<NgImageFilter>("ng_image_filter.json") {
+        Ok(data) => Ok(data),
+        Err(_) => Ok(NgImageFilter::default()),
+    }
+}
+
+#[tauri::command]
+fn save_ng_image_filter(filter: NgImageFilter) -> Result<(), String> {
+    core_store::save_json("ng_image_filter.json", &filter).map_err(|e| e.to_string())
+}
+
 // --- Read status persistence ---
 
 /// Map of board_url -> { thread_key -> last_read_response_no }
@@ -1450,6 +1554,10 @@ pub fn run() {
             save_favorites,
             load_ng_filters,
             save_ng_filters,
+            compute_image_hash_from_url,
+            build_ng_image_entry,
+            load_ng_image_filter,
+            save_ng_image_filter,
             load_read_status,
             save_read_status,
             load_auth_config,
