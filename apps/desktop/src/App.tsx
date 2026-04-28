@@ -3758,6 +3758,21 @@ export default function App() {
 
   const handlePopupImageClick = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
+    const anchor = target.closest<HTMLElement>(".anchor-ref");
+    if (anchor) {
+      e.preventDefault();
+      const ids = getAnchorIds(anchor);
+      const first = ids.find((id) => responseItems.some((r) => r.id === id));
+      if (first) {
+        setSelectedResponse(first);
+        setAnchorPopup(null);
+        setBackRefPopup(null);
+        setNestedPopups([]);
+        setIdPopup(null);
+        setStatus(`jumped to >>${first}`);
+      }
+      return;
+    }
     const bodyLink = target.closest<HTMLAnchorElement>("a.body-link");
     if (bodyLink) {
       e.preventDefault();
