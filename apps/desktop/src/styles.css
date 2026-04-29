@@ -1963,6 +1963,38 @@ button.search-history-btn:hover {
   color: #e6a817;
 }
 
+.recent-thread-item {
+  position: relative;
+}
+
+.recent-thread-item .board-item {
+  padding-right: 22px;
+}
+
+.recent-thread-remove {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: #888;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.recent-thread-item:hover .recent-thread-remove {
+  display: inline-flex;
+}
+
+.recent-thread-remove:hover {
+  color: #c0392b;
+  background: rgba(192, 57, 43, 0.12);
+}
+
 .fav-category {
   background: linear-gradient(180deg, #fff8e0 0%, #f0e8c0 100%);
 }
@@ -2125,11 +2157,6 @@ button.search-history-btn:hover {
   opacity: 0.4;
 }
 
-.thread-ng-list li.ng-disabled span {
-  text-decoration: line-through;
-  opacity: 0.45;
-}
-
 .ng-empty {
   font-size: 11px;
   color: #999999;
@@ -2204,15 +2231,6 @@ button.search-history-btn:hover {
 .ng-image-panel .ng-panel-header {
   gap: 8px;
 }
-.ng-image-threshold {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-}
-.ng-image-threshold input[type="range"] {
-  width: 100px;
-}
 .ng-image-list {
   display: flex;
   flex-direction: column;
@@ -2272,46 +2290,34 @@ button.search-history-btn:hover {
   align-items: center;
   gap: 4px;
 }
-
-.thread-ng-popup {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  padding: 4px 6px;
-  font-size: 12px;
-}
-
-.thread-ng-add {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 4px;
-}
-
-.thread-ng-add input {
-  font-size: 12px;
-  padding: 2px 4px;
-  border: 1px solid var(--line);
-}
-
-.thread-ng-add button {
-  font-size: 11px;
-  padding: 1px 6px;
-  cursor: pointer;
-}
-
-.thread-ng-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 120px;
-  overflow-y: auto;
-}
-
-.thread-ng-list li {
+.ng-image-threshold-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 1px 0;
-  font-size: 12px;
+  gap: 6px;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.ng-image-threshold-row input[type="range"] {
+  width: 100px;
+}
+.ng-image-threshold-label {
+  color: #666;
+}
+.ng-image-threshold-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 18px;
+  text-align: right;
+}
+.dark .ng-image-threshold-label {
+  color: #999;
+}
+
+.thread-ng-panel {
+  grid-template-rows: auto auto 1fr;
+}
+
+.thread-ng-panel .ng-panel-add {
+  grid-template-columns: 1fr auto;
 }
 
 .response-jump {
@@ -3156,21 +3162,6 @@ button.search-history-btn:hover {
   background: #616161;
   border-color: #757575;
 }
-.dark .thread-ng-popup {
-  background: #2d2d30;
-  border-color: #555;
-  color: var(--ink);
-}
-.dark .thread-ng-add input {
-  background: #1e1e1e;
-  color: var(--ink);
-  border-color: #555;
-}
-.dark .thread-ng-add button {
-  background: #3c3c3c;
-  color: var(--ink);
-  border-color: #555;
-}
 .dark .board-search {
   background: #1e1e1e;
   border-color: #555;
@@ -3269,6 +3260,13 @@ button.search-history-btn:hover {
 .dark .board-item:hover,
 .dark .board-item.selected {
   background: #37373d;
+}
+.dark .recent-thread-remove {
+  color: #aaa;
+}
+.dark .recent-thread-remove:hover {
+  color: #ff7a6c;
+  background: rgba(255, 122, 108, 0.14);
 }
 .dark .category-header {
   color: var(--sub);
