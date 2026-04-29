@@ -182,7 +182,8 @@
       "Bash(echo \"exit=$?\")",
       "Read(//c/Users/all/AppData/Local/Temp/claude/C--Users-all-develop-python-5ch-browser-template/2629ce4f-8677-4728-9512-d0fdad7f9870/tasks/**)",
       "Bash(taskkill //F //FI \"WINDOWTITLE eq npm*\")",
-      "Bash(taskkill //F //IM node.exe //FI \"MEMUSAGE gt 1\")"
+      "Bash(taskkill //F //IM node.exe //FI \"MEMUSAGE gt 1\")",
+      "Bash(start *)"
     ]
   },
   "enableAllProjectMcpServers": true,
