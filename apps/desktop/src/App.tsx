@@ -99,7 +99,7 @@ type RecentThread = FavoriteThread & { updatedAt: number };
 type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
 type NgEntry = { value: string; mode: "hide" | "hide-images"; disabled?: boolean; excludeNo1?: boolean };
 type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: (string | NgEntry)[] };
-type NgImageEntry = { hash: string; thumbnail: string; sourceUrl: string; addedAt: number; disabled?: boolean };
+type NgImageEntry = { hash: string; thumbnail: string; sourceUrl: string; addedAt: number; disabled?: boolean; threshold?: number };
 type NgImageFilter = { entries: NgImageEntry[]; threshold: number };
 const hammingDistanceB64 = (a: string, b: string): number => {
   if (!a || !b) return 999;
@@ -124,7 +124,8 @@ const isImageHashBlocked = (hash: string, filter: NgImageFilter): boolean => {
   if (!hash) return false;
   for (const entry of filter.entries) {
     if (entry.disabled) continue;
-    if (hammingDistanceB64(hash, entry.hash) <= filter.threshold) return true;
+    const threshold = entry.threshold ?? filter.threshold;
+    if (hammingDistanceB64(hash, entry.hash) <= threshold) return true;
   }
   return false;
 };
@@ -1230,8 +1231,11 @@ export default function App() {
     });
   };
 
-  const setNgImageThreshold = (threshold: number) => {
-    void persistNgImageFilter({ ...ngImageFilter, threshold });
+  const setNgImageEntryThreshold = (hash: string, threshold: number) => {
+    void persistNgImageFilter({
+      ...ngImageFilter,
+      entries: ngImageFilter.entries.map((e) => e.hash === hash ? { ...e, threshold } : e),
+    });
   };
 
   const addNgEntry = (type: "words" | "ids" | "names" | "thread_words", value: string, mode?: "hide" | "hide-images") => {
@@ -2371,6 +2375,22 @@ export default function App() {
     };
     setRecentPostedThreads((prev) => {
       const next = upsertRecentThread(prev, entry);
+      try { localStorage.setItem(RECENT_POSTED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  const removeRecentOpenedThread = (url: string) => {
+    const target = normalizeThreadUrl(url);
+    setRecentOpenedThreads((prev) => {
+      const next = prev.filter((t) => t.threadUrl !== target);
+      try { localStorage.setItem(RECENT_OPENED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  const removeRecentPostedThread = (url: string) => {
+    const target = normalizeThreadUrl(url);
+    setRecentPostedThreads((prev) => {
+      const next = prev.filter((t) => t.threadUrl !== target);
       try { localStorage.setItem(RECENT_POSTED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
       return next;
     });
@@ -4542,7 +4562,17 @@ export default function App() {
           )}
         </div>
         {threadSearchQuery && <button className="title-action-btn" onClick={() => setThreadSearchQuery("")} title="検索クリア"><X size={14} /></button>}
-        <button className="title-action-btn" onClick={() => fetchThreadListFromCurrent()} title="スレ一覧を更新"><RefreshCw size={14} /></button>
+        <button className="title-action-btn" onClick={() => {
+          if (showFavoritesOnly) {
+            void fetchFavNewCounts();
+          } else if (showRecentOpenedOnly) {
+            void fetchSavedThreadCounts(recentOpenedThreads, "recent-opened");
+          } else if (showRecentPostedOnly) {
+            void fetchSavedThreadCounts(recentPostedThreads, "recent-posted");
+          } else {
+            void fetchThreadListFromCurrent();
+          }
+        }} title="スレ一覧を更新"><RefreshCw size={14} /></button>
         <button className="title-action-btn" onClick={() => setShowNewThreadDialog(true)} title="スレ立て"><FilePenLine size={14} /></button>
         <div className="title-split-wrap" onClick={(e) => e.stopPropagation()}>
           <button
@@ -4866,7 +4896,7 @@ export default function App() {
                       {recentOpenedThreads.filter((rt) => !favSearchQuery.trim() || rt.title.toLowerCase().includes(favSearchQuery.trim().toLowerCase())).map((rt) => {
                         const isFav = favorites.threads.some((t) => t.threadUrl === rt.threadUrl);
                         return (
-                          <li key={rt.threadUrl}>
+                          <li key={rt.threadUrl} className="recent-thread-item">
                             <button
                               className="board-item"
                               onClick={() => {
@@ -4886,6 +4916,19 @@ export default function App() {
                               </span>
                               {rt.title}
                             </button>
+                            <span
+                              className="recent-thread-remove"
+                              role="button"
+                              aria-label="履歴から削除"
+                              title="履歴から削除"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeRecentOpenedThread(rt.threadUrl);
+                                setStatus(`履歴から削除: ${rt.title}`);
+                              }}
+                            >
+                              <Trash2 size={11} />
+                            </span>
                           </li>
                         );
                       })}
@@ -4909,7 +4952,7 @@ export default function App() {
                       {recentPostedThreads.filter((rt) => !favSearchQuery.trim() || rt.title.toLowerCase().includes(favSearchQuery.trim().toLowerCase())).map((rt) => {
                         const isFav = favorites.threads.some((t) => t.threadUrl === rt.threadUrl);
                         return (
-                          <li key={rt.threadUrl}>
+                          <li key={rt.threadUrl} className="recent-thread-item">
                             <button
                               className="board-item"
                               onClick={() => {
@@ -4929,6 +4972,19 @@ export default function App() {
                               </span>
                               {rt.title}
                             </button>
+                            <span
+                              className="recent-thread-remove"
+                              role="button"
+                              aria-label="書き込み履歴から削除"
+                              title="書き込み履歴から削除"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeRecentPostedThread(rt.threadUrl);
+                                setStatus(`書き込み履歴から削除: ${rt.title}`);
+                              }}
+                            >
+                              <Trash2 size={11} />
+                            </span>
                           </li>
                         );
                       })}
@@ -4955,44 +5011,6 @@ export default function App() {
             : { gridTemplateRows: `${threadPanePx}px ${SPLITTER_PX}px 1fr` }}
         >
         <section className="pane threads" onMouseDown={() => setFocusedPane("threads")} style={{ '--fs-delta': `${threadsFontSize - 12}px` } as React.CSSProperties}>
-          {threadNgOpen && (
-            <div className="thread-ng-popup">
-              <div className="thread-ng-add">
-                <input
-                  value={threadNgInput}
-                  onChange={(e) => setThreadNgInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && threadNgInput.trim()) {
-                      addNgEntry("thread_words", threadNgInput);
-                      setThreadNgInput("");
-                    }
-                  }}
-                  placeholder="NGワード (例: BE:12345, /正規表現/も可)"
-                  style={{ flex: 1 }}
-                />
-                <button onClick={() => { addNgEntry("thread_words", threadNgInput); setThreadNgInput(""); }}>追加</button>
-              </div>
-              {ngFilters.thread_words.length > 0 && (
-                <ul className="thread-ng-list">
-                  {ngFilters.thread_words.map((w) => {
-                    const v = ngVal(w);
-                    const off = ngEntryDisabled(w);
-                    return (
-                      <li key={v} className={off ? "ng-disabled" : ""}>
-                        <button
-                          className={`ng-toggle ${off ? "ng-toggle-off" : "ng-toggle-on"}`}
-                          onClick={() => toggleNgEntry("thread_words", v)}
-                          title={off ? "クリックで有効化" : "クリックで無効化"}
-                        >{off ? "OFF" : "ON"}</button>
-                        <span>{v}</span>
-                        <button className="ng-remove" onClick={() => removeNgEntry("thread_words", v)}>×</button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          )}
           <div className="threads-table-wrap" ref={threadListScrollRef} onScroll={hideThreadTitlePopup}>
           <table>
             <thead>
@@ -5866,6 +5884,52 @@ export default function App() {
           ))}
         </section>
       )}
+      {threadNgOpen && (
+        <section className="ng-panel thread-ng-panel" role="dialog" aria-label="スレ一覧NGワード">
+          <header className="ng-panel-header">
+            <strong>スレ一覧NGワード</strong>
+            <span className="ng-panel-count">{ngFilters.thread_words.length}語</span>
+            <button onClick={() => setThreadNgOpen(false)}>閉じる</button>
+          </header>
+          <div className="ng-panel-add">
+            <input
+              value={threadNgInput}
+              onChange={(e) => setThreadNgInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && threadNgInput.trim()) {
+                  addNgEntry("thread_words", threadNgInput);
+                  setThreadNgInput("");
+                }
+              }}
+              placeholder="NGワード (例: BE:12345, /正規表現/も可)"
+            />
+            <button onClick={() => { addNgEntry("thread_words", threadNgInput); setThreadNgInput(""); }}>追加</button>
+          </div>
+          <div className="ng-panel-lists">
+            {ngFilters.thread_words.length === 0 ? (
+              <span className="ng-empty">(なし)</span>
+            ) : (
+              <ul className="ng-list">
+                {ngFilters.thread_words.map((w) => {
+                  const v = ngVal(w);
+                  const off = ngEntryDisabled(w);
+                  return (
+                    <li key={v} className={off ? "ng-disabled" : ""}>
+                      <button
+                        className={`ng-toggle ${off ? "ng-toggle-off" : "ng-toggle-on"}`}
+                        onClick={() => toggleNgEntry("thread_words", v)}
+                        title={off ? "クリックで有効化" : "クリックで無効化"}
+                      >{off ? "OFF" : "ON"}</button>
+                      <span>{v}</span>
+                      <button className="ng-remove" onClick={() => removeNgEntry("thread_words", v)}>×</button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </section>
+      )}
       {ngPanelOpen && (
         <section className="ng-panel" role="dialog" aria-label="NGフィルタ">
           <header className="ng-panel-header">
@@ -5970,18 +6034,6 @@ export default function App() {
             <span className="ng-panel-count">
               {ngImageFilter.entries.filter((e) => !e.disabled).length}/{ngImageFilter.entries.length}
             </span>
-            <label className="ng-image-threshold">
-              閾値:
-              <input
-                type="range"
-                min={0}
-                max={32}
-                step={1}
-                value={ngImageFilter.threshold}
-                onChange={(e) => setNgImageThreshold(Number(e.target.value))}
-              />
-              <span>{ngImageFilter.threshold}</span>
-            </label>
             <button onClick={() => setNgImagePanelOpen(false)}>閉じる</button>
           </header>
           <div className="ng-image-list">
@@ -5996,6 +6048,18 @@ export default function App() {
                     <div className="ng-image-sub">
                       <span>追加: {new Date(entry.addedAt * 1000).toLocaleString()}</span>
                       <span className="ng-image-hash" title={entry.hash}>hash: {entry.hash.slice(0, 12)}…</span>
+                    </div>
+                    <div className="ng-image-threshold-row">
+                      <span className="ng-image-threshold-label">閾値:</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={32}
+                        step={1}
+                        value={entry.threshold ?? ngImageFilter.threshold}
+                        onChange={(e) => setNgImageEntryThreshold(entry.hash, Number(e.target.value))}
+                      />
+                      <span className="ng-image-threshold-value">{entry.threshold ?? ngImageFilter.threshold}</span>
                     </div>
                   </div>
                   <div className="ng-image-actions">
@@ -6065,6 +6129,21 @@ export default function App() {
             if (t && "threadUrl" in t && typeof t.threadUrl === "string") purgeThreadCache(t.threadUrl);
             setThreadMenu(null);
           }}>キャッシュから削除</button>
+          {(showRecentOpenedOnly || showRecentPostedOnly) && (
+            <button onClick={() => {
+              const t = threadItems.find((item) => item.id === threadMenu.threadId);
+              if (t && "threadUrl" in t && typeof t.threadUrl === "string") {
+                if (showRecentOpenedOnly) {
+                  removeRecentOpenedThread(t.threadUrl);
+                  setStatus(`履歴から削除: ${t.title}`);
+                } else if (showRecentPostedOnly) {
+                  removeRecentPostedThread(t.threadUrl);
+                  setStatus(`書き込み履歴から削除: ${t.title}`);
+                }
+              }
+              setThreadMenu(null);
+            }}>履歴から削除</button>
+          )}
         </div>
       )}
       {responseMenu && (
