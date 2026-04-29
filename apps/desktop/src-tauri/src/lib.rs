@@ -917,7 +917,7 @@ struct NgFilters {
     #[serde(default)]
     names: Vec<NgEntry>,
     #[serde(default)]
-    thread_words: Vec<String>,
+    thread_words: Vec<NgEntry>,
 }
 
 #[tauri::command]
