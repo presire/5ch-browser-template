@@ -944,6 +944,8 @@ struct NgImageEntry {
     added_at: i64,
     #[serde(default)]
     disabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    threshold: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1021,6 +1023,7 @@ async fn build_ng_image_entry(url: String) -> Result<NgImageEntry, String> {
         source_url: url,
         added_at: now,
         disabled: false,
+        threshold: None,
     })
 }
 

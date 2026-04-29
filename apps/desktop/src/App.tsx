@@ -99,7 +99,7 @@ type RecentThread = FavoriteThread & { updatedAt: number };
 type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
 type NgEntry = { value: string; mode: "hide" | "hide-images"; disabled?: boolean; excludeNo1?: boolean };
 type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: (string | NgEntry)[] };
-type NgImageEntry = { hash: string; thumbnail: string; sourceUrl: string; addedAt: number; disabled?: boolean };
+type NgImageEntry = { hash: string; thumbnail: string; sourceUrl: string; addedAt: number; disabled?: boolean; threshold?: number };
 type NgImageFilter = { entries: NgImageEntry[]; threshold: number };
 const hammingDistanceB64 = (a: string, b: string): number => {
   if (!a || !b) return 999;
@@ -124,7 +124,8 @@ const isImageHashBlocked = (hash: string, filter: NgImageFilter): boolean => {
   if (!hash) return false;
   for (const entry of filter.entries) {
     if (entry.disabled) continue;
-    if (hammingDistanceB64(hash, entry.hash) <= filter.threshold) return true;
+    const threshold = entry.threshold ?? filter.threshold;
+    if (hammingDistanceB64(hash, entry.hash) <= threshold) return true;
   }
   return false;
 };
@@ -1230,8 +1231,11 @@ export default function App() {
     });
   };
 
-  const setNgImageThreshold = (threshold: number) => {
-    void persistNgImageFilter({ ...ngImageFilter, threshold });
+  const setNgImageEntryThreshold = (hash: string, threshold: number) => {
+    void persistNgImageFilter({
+      ...ngImageFilter,
+      entries: ngImageFilter.entries.map((e) => e.hash === hash ? { ...e, threshold } : e),
+    });
   };
 
   const addNgEntry = (type: "words" | "ids" | "names" | "thread_words", value: string, mode?: "hide" | "hide-images") => {
@@ -6030,18 +6034,6 @@ export default function App() {
             <span className="ng-panel-count">
               {ngImageFilter.entries.filter((e) => !e.disabled).length}/{ngImageFilter.entries.length}
             </span>
-            <label className="ng-image-threshold">
-              閾値:
-              <input
-                type="range"
-                min={0}
-                max={32}
-                step={1}
-                value={ngImageFilter.threshold}
-                onChange={(e) => setNgImageThreshold(Number(e.target.value))}
-              />
-              <span>{ngImageFilter.threshold}</span>
-            </label>
             <button onClick={() => setNgImagePanelOpen(false)}>閉じる</button>
           </header>
           <div className="ng-image-list">
@@ -6056,6 +6048,18 @@ export default function App() {
                     <div className="ng-image-sub">
                       <span>追加: {new Date(entry.addedAt * 1000).toLocaleString()}</span>
                       <span className="ng-image-hash" title={entry.hash}>hash: {entry.hash.slice(0, 12)}…</span>
+                    </div>
+                    <div className="ng-image-threshold-row">
+                      <span className="ng-image-threshold-label">閾値:</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={32}
+                        step={1}
+                        value={entry.threshold ?? ngImageFilter.threshold}
+                        onChange={(e) => setNgImageEntryThreshold(entry.hash, Number(e.target.value))}
+                      />
+                      <span className="ng-image-threshold-value">{entry.threshold ?? ngImageFilter.threshold}</span>
                     </div>
                   </div>
                   <div className="ng-image-actions">

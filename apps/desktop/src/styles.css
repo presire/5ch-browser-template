@@ -2231,15 +2231,6 @@ button.search-history-btn:hover {
 .ng-image-panel .ng-panel-header {
   gap: 8px;
 }
-.ng-image-threshold {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-}
-.ng-image-threshold input[type="range"] {
-  width: 100px;
-}
 .ng-image-list {
   display: flex;
   flex-direction: column;
@@ -2298,6 +2289,27 @@ button.search-history-btn:hover {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.ng-image-threshold-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  margin-top: 2px;
+}
+.ng-image-threshold-row input[type="range"] {
+  width: 100px;
+}
+.ng-image-threshold-label {
+  color: #666;
+}
+.ng-image-threshold-value {
+  font-variant-numeric: tabular-nums;
+  min-width: 18px;
+  text-align: right;
+}
+.dark .ng-image-threshold-label {
+  color: #999;
 }
 
 .thread-ng-panel {
