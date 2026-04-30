@@ -4611,7 +4611,8 @@ button.search-history-btn:hover {
 }
 
 /* Stacking order so children render above parents.
-   id-popup (parent) < anchor-popup (child opened from id) < nested-popup (child of anchor) */
+   id-popup (parent) < anchor-popup (child opened from id) < nested-popup (child of anchor)
+   Popups opened FROM another popup get an inline zIndex via allocatePopupZ() in App.tsx */
 .shell.glass .id-popup { z-index: 600; }
 .shell.glass .anchor-popup,
 .shell.glass .back-ref-popup { z-index: 605; }
