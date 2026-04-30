@@ -3438,7 +3438,7 @@ button.search-history-btn:hover {
   height: 7px;
   border-radius: 1px;
   pointer-events: none;
-  z-index: 220;
+  z-index: 9999;
   background: hsl(var(--h), 88%, 62%);
   transform: translate3d(var(--x), var(--y), 0) rotate(0deg) scale(0.8);
   animation: typing-confetti-burst var(--dur) ease-out forwards;
@@ -3466,7 +3466,7 @@ button.search-history-btn:hover {
   height: 4px;
   border-radius: 50%;
   pointer-events: none;
-  z-index: 220;
+  z-index: 9999;
   background: #ff6030;
   transform: translate3d(var(--x), var(--y), 0) scale(1);
   animation: delete-explosion-burst var(--dur) ease-out forwards;
