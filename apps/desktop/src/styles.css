@@ -854,6 +854,13 @@ li.fav-drag-over {
 .response-be-link:hover {
   text-decoration: underline;
 }
+.dark .response-be-link {
+  color: #ff9933;
+}
+.shell.glass.dark .response-be-link {
+  color: #ffb066;
+  text-shadow: 0 0 1px rgba(0, 0, 0, 0.5);
+}
 
 .response-date {
   font-size: calc(11px + var(--fs-delta, 0px));
@@ -4037,21 +4044,22 @@ button.search-history-btn:hover {
 
 /* === Floating menus / panels === */
 .shell.glass .title-split-menu {
-  background: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.68);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border-color: rgba(255, 255, 255, 0.6);
   box-shadow:
-    0 8px 30px rgba(0, 0, 0, 0.15),
+    0 8px 30px rgba(0, 0, 0, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
 .shell.glass .title-split-menu button {
   border-bottom-color: rgba(255, 255, 255, 0.4);
+  color: var(--ink);
 }
 
 .shell.glass .title-split-menu button:hover {
-  background: rgba(255, 255, 255, 0.5);
+  background: rgba(0, 102, 204, 0.18);
 }
 
 .shell.glass .ng-panel,
@@ -4073,20 +4081,20 @@ button.search-history-btn:hover {
 
 /* Dark variant */
 .shell.glass.dark .title-split-menu {
-  background: rgba(30, 30, 40, 0.85);
-  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(30, 30, 40, 0.68);
+  border-color: rgba(255, 255, 255, 0.18);
   box-shadow:
-    0 8px 30px rgba(0, 0, 0, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    0 8px 30px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .shell.glass.dark .title-split-menu button {
-  border-bottom-color: rgba(255, 255, 255, 0.06);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
   color: var(--ink);
 }
 
 .shell.glass.dark .title-split-menu button:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(0, 102, 204, 0.32);
 }
 
 .shell.glass.dark .ng-panel,
@@ -4538,14 +4546,18 @@ button.search-history-btn:hover {
   border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
-/* === Context menus (right-click menus) — opaque, on top of everything === */
+/* === Context menus (right-click menus) — frosted glass === */
 .shell.glass .thread-menu,
 .shell.glass .response-menu,
 .shell.glass .image-context-menu,
 .shell.glass .menu-dropdown.image-context-menu {
-  background: #f8f8fa;
-  border-color: rgba(0, 0, 0, 0.18);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.22);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
   z-index: 500;
 }
 
@@ -4565,9 +4577,13 @@ button.search-history-btn:hover {
 .shell.glass.dark .response-menu,
 .shell.glass.dark .image-context-menu,
 .shell.glass.dark .menu-dropdown.image-context-menu {
-  background: #1c1c24;
+  background: rgba(30, 30, 40, 0.7);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
   border-color: rgba(255, 255, 255, 0.18);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .shell.glass.dark .thread-menu button,
@@ -4592,8 +4608,14 @@ button.search-history-btn:hover {
   box-shadow:
     0 12px 40px rgba(0, 0, 0, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.7);
-  z-index: 600;
 }
+
+/* Stacking order so children render above parents.
+   id-popup (parent) < anchor-popup (child opened from id) < nested-popup (child of anchor) */
+.shell.glass .id-popup { z-index: 600; }
+.shell.glass .anchor-popup,
+.shell.glass .back-ref-popup { z-index: 605; }
+.shell.glass .nested-popup { z-index: 610; }
 
 .shell.glass .response-viewer article {
   background: rgba(255, 255, 255, 0.55);
