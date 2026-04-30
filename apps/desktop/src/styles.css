@@ -3705,14 +3705,28 @@ button.search-history-btn:hover {
     inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
-.shell.glass .settings-panel {
-  background: rgba(255, 255, 255, 0.85);
+.shell.glass .settings-panel,
+.shell.glass .shortcuts-panel {
+  background: rgba(255, 255, 255, 0.55);
   backdrop-filter: blur(30px) saturate(180%);
   -webkit-backdrop-filter: blur(30px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.6);
   box-shadow:
     0 20px 60px rgba(0, 0, 0, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.shell.glass .shortcuts-header {
+  background: rgba(255, 255, 255, 0.4);
+  border-bottom-color: rgba(255, 255, 255, 0.5);
+}
+
+/* ガラス: 設定/ショートカット系ダイアログのバックドロップは黒塗りではなくブラーで */
+.shell.glass .lightbox-overlay:has(.settings-panel),
+.shell.glass .lightbox-overlay:has(.shortcuts-panel) {
+  background: rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
 }
 
 .shell.glass .compose-window {
@@ -3771,12 +3785,18 @@ button.search-history-btn:hover {
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
-.shell.glass.dark .settings-panel {
-  background: rgba(30, 30, 40, 0.85);
+.shell.glass.dark .settings-panel,
+.shell.glass.dark .shortcuts-panel {
+  background: rgba(30, 30, 40, 0.55);
   border-color: rgba(255, 255, 255, 0.12);
   box-shadow:
     0 20px 60px rgba(0, 0, 0, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.shell.glass.dark .shortcuts-header {
+  background: rgba(255, 255, 255, 0.05);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
 .shell.glass.dark .compose-window {
@@ -3983,6 +4003,12 @@ button.search-history-btn:hover {
 
 .shell.glass.dark .response-block:hover:not(.selected) {
   background: rgba(255, 255, 255, 0.06);
+}
+
+/* ガラス: 画像プレビュー(lightbox / hover-preview)を menu-bar/tool-bar より前面に */
+.shell.glass .lightbox-overlay,
+.shell.glass .hover-preview {
+  z-index: 800;
 }
 
 /* ガラス+ダーク: ID文字を明度ブースト + 黒の濃い縁取りで暗色パレットの可読性を確保 */
