@@ -13,7 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon,
+  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon, Sparkles,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -803,8 +803,8 @@ export default function App() {
   const [threadMenu, setThreadMenu] = useState<{ x: number; y: number; threadId: number } | null>(null);
   const [responseMenu, setResponseMenu] = useState<{ x: number; y: number; responseId: number } | null>(null);
   const [aaOverrides, setAaOverrides] = useState<Map<number, boolean>>(new Map());
-  const [anchorPopup, setAnchorPopup] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[] } | null>(null);
-  const [nestedPopups, setNestedPopups] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[] }[]>([]);
+  const [anchorPopup, setAnchorPopup] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[]; z?: number } | null>(null);
+  const [nestedPopups, setNestedPopups] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[]; z?: number }[]>([]);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const hoverPreviewRef = useRef<HTMLDivElement | null>(null);
   const hoverPreviewImgRef = useRef<HTMLImageElement | null>(null);
@@ -838,13 +838,19 @@ export default function App() {
   const [focusedPane, setFocusedPane] = useState<PaneName>("responses");
   const [fontFamily, setFontFamily] = useState("");
   const [darkMode, setDarkMode] = useState(false);
+  const [glassMode, setGlassMode] = useState(false);
   const [composeFontSize, setComposeFontSize] = useState(13);
-  const [idPopup, setIdPopup] = useState<{ right: number; y: number; anchorTop: number; id: string } | null>(null);
+  const [idPopup, setIdPopup] = useState<{ right: number; y: number; anchorTop: number; id: string; z?: number } | null>(null);
+  const popupTopZRef = useRef<number>(610);
+  const allocatePopupZ = (): number => {
+    popupTopZRef.current += 5;
+    return popupTopZRef.current;
+  };
   const idPopupCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [idMenu, setIdMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [beMenu, setBeMenu] = useState<{ x: number; y: number; beNumber: string } | null>(null);
   const anchorPopupCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [backRefPopup, setBackRefPopup] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[] } | null>(null);
+  const [backRefPopup, setBackRefPopup] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[]; z?: number } | null>(null);
   const [watchoiMenu, setWatchoiMenu] = useState<{ x: number; y: number; watchoi: string } | null>(null);
   const [composePos, setComposePos] = useState<{ x: number; y: number } | null>(null);
   const [composeSize, setComposeSize] = useState<{ w: number; h: number } | null>(null);
@@ -2767,6 +2773,11 @@ export default function App() {
     setNextThreadSearched(false);
     setNextThreadSearching(false);
   }, [activeThreadUrl]);
+  useEffect(() => {
+    if (!idPopup && !anchorPopup && !backRefPopup && nestedPopups.length === 0) {
+      popupTopZRef.current = 610;
+    }
+  }, [idPopup, anchorPopup, backRefPopup, nestedPopups]);
   const myPostNos = useMemo(() => new Set(myPosts[activeThreadUrl] ?? []), [myPosts, activeThreadUrl]);
   const replyToMeNos = useMemo(() => {
     if (myPostNos.size === 0) return new Set<number>();
@@ -2862,6 +2873,89 @@ export default function App() {
     }
     return map;
   })();
+
+  const handlePopupChainOver = (ev: ReactMouseEvent, nestedLevel?: number) => {
+    const t = ev.target as HTMLElement;
+    const pushNested = (rect: DOMRect, responseIds: number[]) => {
+      if (nestedLevel === undefined) {
+        setNestedPopups([{ x: rect.left, y: rect.bottom + 1, anchorTop: rect.top, responseIds, z: allocatePopupZ() }]);
+      } else {
+        setNestedPopups((prev) => {
+          const head = prev.slice(0, nestedLevel + 1);
+          const last = head[head.length - 1];
+          if (last && last.responseIds.length === responseIds.length && last.responseIds.every((v, j) => v === responseIds[j])) return head;
+          return [...head, { x: rect.left, y: rect.bottom + 1, anchorTop: rect.top, responseIds, z: allocatePopupZ() }];
+        });
+      }
+    };
+    const a = t.closest<HTMLElement>(".anchor-ref");
+    if (a) {
+      const ids = getAnchorIds(a).filter((id) => responseItems.some((r) => r.id === id));
+      if (ids.length > 0) pushNested(a.getBoundingClientRect(), ids);
+      return;
+    }
+    const b = t.closest<HTMLElement>(".popup-back-ref");
+    if (b) {
+      const target = Number(b.getAttribute("data-back-ref-target"));
+      const refs = backRefMap.get(target);
+      if (refs && refs.length > 0) pushNested(b.getBoundingClientRect(), refs);
+      return;
+    }
+    const idEl = t.closest<HTMLElement>(".popup-id-trigger");
+    if (idEl) {
+      if (idPopupCloseTimer.current) { clearTimeout(idPopupCloseTimer.current); idPopupCloseTimer.current = null; }
+      const id = idEl.getAttribute("data-popup-id") || "";
+      if (id) {
+        const rect = idEl.getBoundingClientRect();
+        const right = Math.max(8, window.innerWidth - rect.right);
+        setIdPopup({ right, y: rect.bottom + 2, anchorTop: rect.top, id, z: allocatePopupZ() });
+      }
+    }
+  };
+
+  const handlePopupChainOut = (ev: ReactMouseEvent, nestedLevel?: number) => {
+    const t = ev.target as HTMLElement;
+    const leftAnchor = !!t.closest(".anchor-ref") || !!t.closest(".popup-back-ref");
+    const leftId = !!t.closest(".popup-id-trigger");
+    if (!leftAnchor && !leftId) return;
+    const next = ev.relatedTarget as HTMLElement | null;
+    if (next?.closest(".anchor-popup") || next?.closest(".id-popup")) return;
+    if (leftAnchor) {
+      if (nestedLevel === undefined) setNestedPopups([]);
+      else setNestedPopups((prev) => prev.slice(0, nestedLevel + 1));
+    }
+    if (leftId) {
+      if (idPopupCloseTimer.current) clearTimeout(idPopupCloseTimer.current);
+      idPopupCloseTimer.current = setTimeout(() => setIdPopup(null), 150);
+    }
+  };
+
+  const renderPopupHeader = (resp: typeof responseItems[number]) => {
+    const id = extractId(resp.time);
+    const date = formatResponseDate(resp.time);
+    const refs = backRefMap.get(resp.id);
+    return (
+      <div className="anchor-popup-header">
+        <span className="response-viewer-no">{resp.id}</span>{" "}
+        {resp.name}{" "}
+        <time>{date}</time>
+        {id ? (
+          <span
+            className="response-id-cell popup-id-trigger"
+            data-popup-id={id}
+            style={{ color: getIdColor(id), marginLeft: 6 }}
+          >
+            ID:{id}
+          </span>
+        ) : null}
+        {refs && refs.length > 0 ? (
+          <span className="back-ref-trigger popup-back-ref" data-back-ref-target={resp.id}>
+            ▼{refs.length}
+          </span>
+        ) : null}
+      </div>
+    );
+  };
 
   const goFromLocationInput = () => {
     const next = rewrite5chNet(locationInput.trim());
@@ -3511,6 +3605,7 @@ export default function App() {
           threadsFontSize?: number;
           responsesFontSize?: number;
           darkMode?: boolean;
+          glassMode?: boolean;
           fontFamily?: string;
           threadColWidths?: Record<string, number>;
           showBoardButtons?: boolean;
@@ -3552,6 +3647,7 @@ export default function App() {
         setThreadsFontSize(typeof parsed.threadsFontSize === "number" ? parsed.threadsFontSize : fallbackFs);
         setResponsesFontSize(typeof parsed.responsesFontSize === "number" ? parsed.responsesFontSize : fallbackFs);
         if (typeof parsed.darkMode === "boolean") setDarkMode(parsed.darkMode);
+        if (typeof parsed.glassMode === "boolean") setGlassMode(parsed.glassMode);
         if (typeof parsed.fontFamily === "string") setFontFamily(parsed.fontFamily);
         if (parsed.threadColWidths && typeof parsed.threadColWidths === "object") {
           setThreadColWidths((prev) => ({ ...prev, ...parsed.threadColWidths }));
@@ -4212,6 +4308,7 @@ export default function App() {
       threadsFontSize,
       responsesFontSize,
       darkMode,
+      glassMode,
       fontFamily,
       threadColWidths,
       showBoardButtons,
@@ -4242,7 +4339,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -4275,6 +4372,11 @@ export default function App() {
       invoke("set_window_theme", { dark: darkMode }).catch(() => {});
     }
   }, [darkMode]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("glass", glassMode);
+    document.body.classList.toggle("glass", glassMode);
+  }, [glassMode]);
 
   useEffect(() => {
     if (isTauriRuntime()) {
@@ -4349,7 +4451,7 @@ export default function App() {
 
   return (
     <div
-      className={`shell${darkMode ? " dark" : ""}${thumbMaskEnabled ? " thumb-masked" : ""}`}
+      className={`shell${darkMode ? " dark" : ""}${glassMode ? " glass" : ""}${thumbMaskEnabled ? " thumb-masked" : ""}`}
       style={{ fontFamily: fontFamily ? `"Backslash", ${fontFamily}` : undefined, gridTemplateRows: showBoardButtons && favorites.boards.length > 0 ? "26px 32px auto 1fr 22px" : undefined, "--thumb-size": `${thumbSize}px`, "--thumb-mask-blur": `${(thumbMaskStrength / 100) * 20}px`, "--thumb-mask-brightness": `${1 - (thumbMaskStrength / 100) * 0.25}` } as React.CSSProperties}
       onClick={() => {
         setThreadMenu(null);
@@ -4510,6 +4612,20 @@ export default function App() {
           aria-label="テーマ切替"
         >
           {darkMode ? <Sun size={14} /> : <Moon size={14} />}
+        </button>
+        <button
+          className={`title-action-btn ${glassMode ? "active-toggle" : ""}`}
+          onClick={() => {
+            setGlassMode((prev) => {
+              const next = !prev;
+              setStatus(next ? "glass: on" : "glass: off");
+              return next;
+            });
+          }}
+          title={glassMode ? "ガラス効果オフ" : "ガラス効果オン"}
+          aria-label="ガラス効果切替"
+        >
+          <Sparkles size={14} />
         </button>
         <input className="address-input" value={locationInput} onChange={(e) => setLocationInput(e.target.value)} onKeyDown={onLocationInputKeyDown} onFocus={(e) => e.target.select()} />
         <button onClick={goFromLocationInput}>移動</button>
@@ -6293,7 +6409,7 @@ export default function App() {
         return (
           <div
             className="anchor-popup"
-            style={posStyle}
+            style={{ ...posStyle, zIndex: anchorPopup.z }}
             onMouseEnter={() => {
               if (anchorPopupCloseTimer.current) {
                 clearTimeout(anchorPopupCloseTimer.current);
@@ -6310,32 +6426,14 @@ export default function App() {
                 anchorPopupCloseTimer.current = null;
               }, 150);
             }}
-            onMouseOver={(ev) => {
-              const t = ev.target as HTMLElement;
-              const a = t.closest<HTMLElement>(".anchor-ref");
-              if (!a) return;
-              const ids = getAnchorIds(a).filter((id) => responseItems.some((r) => r.id === id));
-              if (ids.length > 0) {
-                const rect = a.getBoundingClientRect();
-                setNestedPopups([{ x: rect.left, y: rect.bottom + 1, anchorTop: rect.top, responseIds: ids }]);
-              }
-            }}
-            onMouseOut={(ev) => {
-              const t = ev.target as HTMLElement;
-              if (!t.closest(".anchor-ref")) return;
-              const next = ev.relatedTarget as HTMLElement | null;
-              if (next?.closest(".anchor-popup")) return;
-              setNestedPopups([]);
-            }}
+            onMouseOver={(ev) => handlePopupChainOver(ev)}
+            onMouseOut={(ev) => handlePopupChainOut(ev)}
             onClick={handlePopupImageClick}
             onMouseMove={handlePopupImageHover}
           >
             {popupResps.map((popupResp) => (
               <div key={popupResp.id}>
-                <div className="anchor-popup-header">
-                  <span className="response-viewer-no">{popupResp.id}</span> {popupResp.name}
-                  <time>{popupResp.time}</time>
-                </div>
+                {renderPopupHeader(popupResp)}
                 <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(popupResp.text)} />
               </div>
             ))}
@@ -6347,29 +6445,15 @@ export default function App() {
         return (
           <div
             className="anchor-popup back-ref-popup"
-            style={{ left: backRefPopup.x, bottom: window.innerHeight - backRefPopup.y }}
+            style={{ left: backRefPopup.x, bottom: window.innerHeight - backRefPopup.y, zIndex: backRefPopup.z }}
             onMouseLeave={(ev) => {
               const next = ev.relatedTarget as HTMLElement | null;
-              if (next?.closest(".anchor-popup")) return;
+              if (next?.closest(".anchor-popup") || next?.closest(".id-popup")) return;
               setBackRefPopup(null);
-            }}
-            onMouseOver={(ev) => {
-              const t = ev.target as HTMLElement;
-              const a = t.closest<HTMLElement>(".anchor-ref");
-              if (!a) return;
-              const ids = getAnchorIds(a).filter((id) => responseItems.some((r) => r.id === id));
-              if (ids.length > 0) {
-                const rect = a.getBoundingClientRect();
-                setNestedPopups([{ x: rect.left, y: rect.bottom + 1, anchorTop: rect.top, responseIds: ids }]);
-              }
-            }}
-            onMouseOut={(ev) => {
-              const t = ev.target as HTMLElement;
-              if (!t.closest(".anchor-ref")) return;
-              const next = ev.relatedTarget as HTMLElement | null;
-              if (next?.closest(".anchor-popup")) return;
               setNestedPopups([]);
             }}
+            onMouseOver={(ev) => handlePopupChainOver(ev)}
+            onMouseOut={(ev) => handlePopupChainOut(ev)}
             onClick={handlePopupImageClick}
             onMouseMove={handlePopupImageHover}
           >
@@ -6378,10 +6462,7 @@ export default function App() {
               if (!refResp) return null;
               return (
                 <div key={refNo} className="back-ref-popup-item">
-                  <div className="anchor-popup-header">
-                    <span className="response-viewer-no">{refResp.id}</span> {refResp.name}
-                    <time>{refResp.time}</time>
-                  </div>
+                  {renderPopupHeader(refResp)}
                   <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(refResp.text)} />
                 </div>
               );
@@ -6402,7 +6483,7 @@ export default function App() {
           <div
             key={`${np.responseIds[0]}-${i}`}
             className="anchor-popup nested-popup"
-            style={nPosStyle}
+            style={{ ...nPosStyle, zIndex: np.z }}
             onMouseEnter={() => {
               if (anchorPopupCloseTimer.current) {
                 clearTimeout(anchorPopupCloseTimer.current);
@@ -6420,36 +6501,14 @@ export default function App() {
                 anchorPopupCloseTimer.current = null;
               }, 150);
             }}
-            onMouseOver={(ev) => {
-              const t = ev.target as HTMLElement;
-              const a = t.closest<HTMLElement>(".anchor-ref");
-              if (!a) return;
-              const ids = getAnchorIds(a).filter((id) => responseItems.some((r) => r.id === id));
-              if (ids.length === 0) return;
-              const rect = a.getBoundingClientRect();
-              setNestedPopups((prev) => {
-                const head = prev.slice(0, i + 1);
-                const last = head[head.length - 1];
-                if (last && last.responseIds.length === ids.length && last.responseIds.every((v, j) => v === ids[j])) return head;
-                return [...head, { x: rect.left, y: rect.bottom + 1, anchorTop: rect.top, responseIds: ids }];
-              });
-            }}
-            onMouseOut={(ev) => {
-              const t = ev.target as HTMLElement;
-              if (!t.closest(".anchor-ref")) return;
-              const next = ev.relatedTarget as HTMLElement | null;
-              if (next?.closest(".anchor-popup")) return;
-              setNestedPopups((prev) => prev.slice(0, i + 1));
-            }}
+            onMouseOver={(ev) => handlePopupChainOver(ev, i)}
+            onMouseOut={(ev) => handlePopupChainOut(ev, i)}
             onClick={handlePopupImageClick}
             onMouseMove={handlePopupImageHover}
           >
             {nestedResps.map((nestedResp) => (
               <div key={nestedResp.id}>
-                <div className="anchor-popup-header">
-                  <span className="response-viewer-no">{nestedResp.id}</span> {nestedResp.name}
-                  <time>{nestedResp.time}</time>
-                </div>
+                {renderPopupHeader(nestedResp)}
                 <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(nestedResp.text)} />
               </div>
             ))}
@@ -6467,7 +6526,7 @@ export default function App() {
         return (
           <div
             className="id-popup"
-            style={idPosStyle}
+            style={{ ...idPosStyle, zIndex: idPopup.z }}
             onMouseEnter={() => { if (idPopupCloseTimer.current) { clearTimeout(idPopupCloseTimer.current); idPopupCloseTimer.current = null; } }}
             onMouseLeave={(ev) => {
               const next = ev.relatedTarget as HTMLElement | null;
@@ -6484,7 +6543,7 @@ export default function App() {
                 const rect = a.getBoundingClientRect();
                 const popupWidth = Math.min(620, window.innerWidth - 24);
                 const x = Math.max(8, Math.min(rect.left, window.innerWidth - popupWidth - 8));
-                setAnchorPopup({ x, y: rect.bottom + 1, anchorTop: rect.top, responseIds: ids });
+                setAnchorPopup({ x, y: rect.bottom + 1, anchorTop: rect.top, responseIds: ids, z: allocatePopupZ() });
               }
             }}
             onMouseOut={(ev) => {
@@ -6685,6 +6744,10 @@ export default function App() {
                     <option value="light">ライト</option>
                     <option value="dark">ダーク</option>
                   </select>
+                </label>
+                <label className="settings-row">
+                  <span>ガラス効果</span>
+                  <input type="checkbox" checked={glassMode} onChange={(e) => setGlassMode(e.target.checked)} />
                 </label>
                 <label className="settings-row">
                   <span>フォント</span>
