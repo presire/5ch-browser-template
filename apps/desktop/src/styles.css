@@ -3664,8 +3664,8 @@ button.search-history-btn:hover {
 
 .shell.glass .menu-bar {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.18));
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
   border-bottom-color: rgba(255, 255, 255, 0.5);
   position: relative;
   z-index: 200;
@@ -3673,8 +3673,8 @@ button.search-history-btn:hover {
 
 .shell.glass .tool-bar {
   background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
   border-bottom-color: rgba(255, 255, 255, 0.4);
   position: relative;
   z-index: 150;
@@ -3682,30 +3682,30 @@ button.search-history-btn:hover {
 
 .shell.glass .board-button-bar {
   background: rgba(255, 255, 255, 0.18);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
   border-bottom-color: rgba(255, 255, 255, 0.35);
 }
 
 .shell.glass .status-bar {
   background: rgba(255, 255, 255, 0.22);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-top-color: rgba(255, 255, 255, 0.4);
 }
 
 .shell.glass .address-input {
   background: rgba(255, 255, 255, 0.5);
   border-color: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .shell.glass .menu-dropdown,
 .shell.glass .menu-submenu {
   background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
   border-color: rgba(255, 255, 255, 0.6);
   box-shadow:
     0 8px 30px rgba(0, 0, 0, 0.15),
@@ -3715,8 +3715,8 @@ button.search-history-btn:hover {
 .shell.glass .settings-panel,
 .shell.glass .shortcuts-panel {
   background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(30px) saturate(180%);
-  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.6);
   box-shadow:
     0 20px 60px rgba(0, 0, 0, 0.18),
@@ -3732,14 +3732,14 @@ button.search-history-btn:hover {
 .shell.glass .lightbox-overlay:has(.settings-panel),
 .shell.glass .lightbox-overlay:has(.shortcuts-panel) {
   background: rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(12px) saturate(140%);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  backdrop-filter: blur(8px) saturate(140%);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
 }
 
 .shell.glass .compose-window {
   background: rgba(245, 245, 245, 0.55);
-  backdrop-filter: blur(30px) saturate(180%);
-  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   border-color: rgba(255, 255, 255, 0.6);
   box-shadow:
     0 20px 60px rgba(0, 0, 0, 0.2),
@@ -3747,13 +3747,13 @@ button.search-history-btn:hover {
   z-index: 300;
 }
 
-/* === Dark variant === */
+/* === Dark variant ===
+ * 軽量化: 4層の radial-gradient を 2層に削減 (top-left 紫 + bottom-right 青)。
+ * blur レイヤーが背景を再サンプリングするコストを抑制する。 */
 .shell.glass.dark {
   background:
-    radial-gradient(circle at 18% 22%, rgba(140, 90, 220, 0.5) 0%, transparent 45%),
-    radial-gradient(circle at 82% 28%, rgba(60, 130, 220, 0.5) 0%, transparent 50%),
-    radial-gradient(circle at 48% 88%, rgba(220, 90, 130, 0.4) 0%, transparent 45%),
-    radial-gradient(circle at 95% 95%, rgba(80, 130, 180, 0.5) 0%, transparent 50%),
+    radial-gradient(circle at 22% 25%, rgba(140, 90, 220, 0.55) 0%, transparent 55%),
+    radial-gradient(circle at 85% 80%, rgba(80, 130, 180, 0.55) 0%, transparent 55%),
     linear-gradient(135deg, #0e0e1a 0%, #0a1020 100%);
   background-attachment: fixed;
 }
@@ -3830,22 +3830,22 @@ button.search-history-btn:hover {
 .shell.glass .thread-tab-bar-wrap,
 .shell.glass .thread-tab-bar {
   background: rgba(255, 255, 255, 0.22);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
   border-bottom-color: rgba(255, 255, 255, 0.4);
 }
 
 .shell.glass .board-search {
   background: rgba(255, 255, 255, 0.55);
   border-color: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .shell.glass .threads-toolbar {
   background: rgba(255, 255, 255, 0.22);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
   border-bottom-color: rgba(255, 255, 255, 0.4);
   z-index: 100;
 }
@@ -3857,8 +3857,8 @@ button.search-history-btn:hover {
 .shell.glass .threads th {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.35) 100%);
   border-color: rgba(255, 255, 255, 0.45);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .shell.glass .threads td {
@@ -4045,8 +4045,8 @@ button.search-history-btn:hover {
 /* === Floating menus / panels === */
 .shell.glass .title-split-menu {
   background: rgba(255, 255, 255, 0.68);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
   border-color: rgba(255, 255, 255, 0.6);
   box-shadow:
     0 8px 30px rgba(0, 0, 0, 0.18),
@@ -4065,8 +4065,8 @@ button.search-history-btn:hover {
 .shell.glass .ng-panel,
 .shell.glass .ng-image-panel {
   background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(30px) saturate(180%);
-  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.6);
   box-shadow:
     0 20px 60px rgba(0, 0, 0, 0.18),
@@ -4120,8 +4120,8 @@ button.search-history-btn:hover {
 .shell.glass .compose-body {
   background: rgba(255, 255, 255, 0.6);
   border-color: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .shell.glass.dark .compose-header {
@@ -4176,8 +4176,8 @@ button.search-history-btn:hover {
   background: rgba(255, 255, 255, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.6);
   color: var(--ink);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
@@ -4242,8 +4242,8 @@ button.search-history-btn:hover {
   background: rgba(255, 255, 255, 0.18);
   border-color: rgba(255, 255, 255, 0.4);
   border-bottom: none;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .shell.glass .thread-tab.active {
@@ -4292,8 +4292,8 @@ button.search-history-btn:hover {
 .shell.glass .board-tab {
   background: rgba(255, 255, 255, 0.2);
   border-color: rgba(255, 255, 255, 0.4);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .shell.glass .board-tab.active {
@@ -4310,16 +4310,16 @@ button.search-history-btn:hover {
   background: rgba(255, 255, 255, 0.5);
   border-color: rgba(255, 255, 255, 0.6);
   color: var(--ink);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .shell.glass .category-toggle {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.18) 100%);
   border-bottom-color: rgba(255, 255, 255, 0.4);
   color: var(--ink);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .shell.glass .category-toggle:hover {
@@ -4453,8 +4453,8 @@ button.search-history-btn:hover {
 .shell.glass .search-history-dropdown {
   background: rgba(255, 255, 255, 0.85);
   border-color: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
   box-shadow:
     0 8px 30px rgba(0, 0, 0, 0.15),
     inset 0 1px 0 rgba(255, 255, 255, 0.7);
@@ -4479,8 +4479,8 @@ button.search-history-btn:hover {
 /* === Response nav bar (footer of response pane) === */
 .shell.glass .response-nav-bar {
   background: rgba(255, 255, 255, 0.22);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
   border-top-color: rgba(255, 255, 255, 0.4);
 }
 
@@ -4488,8 +4488,8 @@ button.search-history-btn:hover {
   background: rgba(255, 255, 255, 0.5);
   border-color: rgba(255, 255, 255, 0.6);
   color: var(--ink);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .shell.glass .response-nav-bar button:hover {
@@ -4526,8 +4526,8 @@ button.search-history-btn:hover {
 /* === Image gallery sub-pane === */
 .shell.glass .image-gallery-pane {
   background: rgba(255, 255, 255, 0.18);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
   border-left-color: rgba(255, 255, 255, 0.4);
 }
 
@@ -4552,8 +4552,8 @@ button.search-history-btn:hover {
 .shell.glass .image-context-menu,
 .shell.glass .menu-dropdown.image-context-menu {
   background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
   border-color: rgba(255, 255, 255, 0.6);
   box-shadow:
     0 8px 30px rgba(0, 0, 0, 0.18),
@@ -4578,8 +4578,8 @@ button.search-history-btn:hover {
 .shell.glass.dark .image-context-menu,
 .shell.glass.dark .menu-dropdown.image-context-menu {
   background: rgba(30, 30, 40, 0.7);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
   border-color: rgba(255, 255, 255, 0.18);
   box-shadow:
     0 8px 30px rgba(0, 0, 0, 0.55),
@@ -4602,8 +4602,8 @@ button.search-history-btn:hover {
 .shell.glass .back-ref-popup,
 .shell.glass .id-popup {
   background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
   border-color: rgba(255, 255, 255, 0.6);
   box-shadow:
     0 12px 40px rgba(0, 0, 0, 0.18),
@@ -4621,16 +4621,16 @@ button.search-history-btn:hover {
 .shell.glass .response-viewer article {
   background: rgba(255, 255, 255, 0.55);
   border-color: rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .shell.glass.dark .anchor-popup,
 .shell.glass.dark .back-ref-popup,
 .shell.glass.dark .id-popup {
   background: rgba(30, 30, 40, 0.7);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
   border-color: rgba(255, 255, 255, 0.18);
   box-shadow:
     0 12px 40px rgba(0, 0, 0, 0.55),
@@ -4640,4 +4640,87 @@ button.search-history-btn:hover {
 .shell.glass.dark .response-viewer article {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* ==========================================================
+ * Lite mode (.shell.glass.glass-lite)
+ * blur 半径と saturate を最小化、radial-gradient を 1層に削減し、
+ * GPU コンポジット負荷を現行ガラスから更に半減させる軽量版。
+ * 設定 UI 上は OFF / 軽量 / フル の 3段階の中間。
+ * 仕様: docs/glass-mockup.html (Variant 5 — Lite Glass)
+ * ========================================================== */
+
+.shell.glass.glass-lite {
+  background:
+    radial-gradient(circle at 22% 28%, rgba(255, 214, 165, 0.35) 0%, transparent 60%),
+    linear-gradient(135deg, #fdfcfb 0%, #ebe0d4 100%);
+  background-attachment: fixed;
+}
+
+.shell.glass.glass-lite.dark {
+  background:
+    radial-gradient(circle at 22% 25%, rgba(140, 90, 220, 0.22) 0%, transparent 60%),
+    linear-gradient(135deg, #16161f 0%, #14172a 100%);
+  background-attachment: fixed;
+}
+
+/* 大型の半透明面 (バー・パネル・コンテキストメニュー等): 14-16px → 6px */
+.shell.glass.glass-lite .menu-bar,
+.shell.glass.glass-lite .tool-bar,
+.shell.glass.glass-lite .board-button-bar,
+.shell.glass.glass-lite .menu-dropdown,
+.shell.glass.glass-lite .menu-submenu,
+.shell.glass.glass-lite .settings-panel,
+.shell.glass.glass-lite .shortcuts-panel,
+.shell.glass.glass-lite .compose-window,
+.shell.glass.glass-lite .ng-panel,
+.shell.glass.glass-lite .ng-image-panel,
+.shell.glass.glass-lite .title-split-menu,
+.shell.glass.glass-lite .search-history-dropdown,
+.shell.glass.glass-lite .thread-menu,
+.shell.glass.glass-lite .response-menu,
+.shell.glass.glass-lite .image-context-menu,
+.shell.glass.glass-lite .menu-dropdown.image-context-menu,
+.shell.glass.glass-lite .anchor-popup,
+.shell.glass.glass-lite .back-ref-popup,
+.shell.glass.glass-lite .id-popup {
+  backdrop-filter: blur(6px) saturate(120%);
+  -webkit-backdrop-filter: blur(6px) saturate(120%);
+}
+
+/* 中型ツールバー / ヘッダ系: 12px → 6px */
+.shell.glass.glass-lite .status-bar,
+.shell.glass.glass-lite .boards-header,
+.shell.glass.glass-lite .thread-tab-bar-wrap,
+.shell.glass.glass-lite .thread-tab-bar,
+.shell.glass.glass-lite .threads-toolbar,
+.shell.glass.glass-lite .response-nav-bar,
+.shell.glass.glass-lite .image-gallery-pane {
+  backdrop-filter: blur(6px) saturate(120%);
+  -webkit-backdrop-filter: blur(6px) saturate(120%);
+}
+
+/* 小要素 (入力欄・ボタン・タブ・記事カード): 6px → 4px */
+.shell.glass.glass-lite .address-input,
+.shell.glass.glass-lite .board-search,
+.shell.glass.glass-lite .fav-search,
+.shell.glass.glass-lite .compose-body,
+.shell.glass.glass-lite .settings-panel button,
+.shell.glass.glass-lite .compose-window button,
+.shell.glass.glass-lite .ng-panel button,
+.shell.glass.glass-lite .ng-image-panel button,
+.shell.glass.glass-lite .thread-tab,
+.shell.glass.glass-lite .board-tab,
+.shell.glass.glass-lite .category-toggle,
+.shell.glass.glass-lite .response-nav-bar button,
+.shell.glass.glass-lite .response-viewer article {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* ダイアログ用 lightbox-overlay: 8px → 4px */
+.shell.glass.glass-lite .lightbox-overlay:has(.settings-panel),
+.shell.glass.glass-lite .lightbox-overlay:has(.shortcuts-panel) {
+  backdrop-filter: blur(4px) saturate(110%);
+  -webkit-backdrop-filter: blur(4px) saturate(110%);
 }
