@@ -475,6 +475,22 @@ h1 {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
 }
 
+.glass-preview-link-row {
+  margin-top: 12px;
+  font-size: 0.9rem;
+}
+.glass-preview-link {
+  color: var(--ink-sub);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--line-strong);
+  padding-bottom: 1px;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+.glass-preview-link:hover {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
 /* Feature grid */
 .feature-grid {
   display: grid;

@@ -364,8 +364,19 @@ export default function App() {
             <div className="feature-big-text">
               <h3>ガラス効果で、洗練された質感。</h3>
               <p>
-                半透明のフロスト感あるガラス効果をオンにできます。
+                半透明のフロスト感あるガラス効果を、<b>オフ / 軽量 / フル</b>の3段階で切替できます。
                 ライト/ダークどちらのテーマでも、背景のグラデーションが透けて、デスクトップに馴染む上品な見た目に。
+                軽量モードは描画負荷を約半分に抑えつつ、ガラス感の輪郭を維持します。
+              </p>
+              <p className="glass-preview-link-row">
+                <a
+                  className="glass-preview-link"
+                  href="/glass-preview.html"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  ガラス効果のデザインバリアントをブラウザで見る →
+                </a>
               </p>
               <div className="toggle-group">
                 <div className="toggle-set" role="tablist" aria-label="ガラス効果">
