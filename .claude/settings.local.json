@@ -183,7 +183,18 @@
       "Read(//c/Users/all/AppData/Local/Temp/claude/C--Users-all-develop-python-5ch-browser-template/2629ce4f-8677-4728-9512-d0fdad7f9870/tasks/**)",
       "Bash(taskkill //F //FI \"WINDOWTITLE eq npm*\")",
       "Bash(taskkill //F //IM node.exe //FI \"MEMUSAGE gt 1\")",
-      "Bash(start *)"
+      "Bash(start *)",
+      "Bash(awk NR>=5730 && NR<=5740 *)",
+      "Bash(grep *)",
+      "Bash(cp \"/c/Users/all/develop/python/5ch-browser-template/_temp/images/ember_windows_glass_off_light.jpg\" \"/c/Users/all/develop/python/5ch-browser-template/apps/landing/src/assets/images/ember-windows-glass-off-light.jpg\")",
+      "Bash(cp \"/c/Users/all/develop/python/5ch-browser-template/_temp/images/ember_windows_glass_off_dark.jpg\" \"/c/Users/all/develop/python/5ch-browser-template/apps/landing/src/assets/images/ember-windows-glass-off-dark.jpg\")",
+      "Bash(cp \"/c/Users/all/develop/python/5ch-browser-template/_temp/images/ember_windows_glass_on_light.jpg\" \"/c/Users/all/develop/python/5ch-browser-template/apps/landing/src/assets/images/ember-windows-glass-on-light.jpg\")",
+      "Bash(cp \"/c/Users/all/develop/python/5ch-browser-template/_temp/images/ember_windows_glass_on_dark.jpg\" \"/c/Users/all/develop/python/5ch-browser-template/apps/landing/src/assets/images/ember-windows-glass-on-dark.jpg\")",
+      "Bash(taskkill *)",
+      "Bash(tail -8 \"C:\\\\\\\\Users\\\\\\\\all\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--Users-all-develop-python-5ch-browser-template\\\\\\\\2629ce4f-8677-4728-9512-d0fdad7f9870\\\\\\\\tasks\\\\\\\\bd3zngjzn.output\")",
+      "Bash(tail -f \"C:\\\\\\\\Users\\\\\\\\all\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--Users-all-develop-python-5ch-browser-template\\\\\\\\2629ce4f-8677-4728-9512-d0fdad7f9870\\\\\\\\tasks\\\\\\\\b6t4ecthh.output\")",
+      "Bash(tail -f \"C:\\\\\\\\Users\\\\\\\\all\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--Users-all-develop-python-5ch-browser-template\\\\\\\\2629ce4f-8677-4728-9512-d0fdad7f9870\\\\\\\\tasks\\\\\\\\bflmji511.output\")",
+      "Bash(tail *)"
     ]
   },
   "enableAllProjectMcpServers": true,
