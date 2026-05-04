@@ -505,7 +505,8 @@ li.fav-drag-over {
 .threads-table-wrap {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .threads th:nth-child(3) { width: auto; }
