@@ -731,6 +731,7 @@ export default function App() {
   const [ngImageFilter, setNgImageFilter] = useState<NgImageFilter>({ entries: [], threshold: 10 });
   const ngImageHashCacheRef = useRef(new Map<string, string | "pending" | "error">());
   const [imageContextMenu, setImageContextMenu] = useState<{ x: number; y: number; url: string } | null>(null);
+  const [youtubeContextMenu, setYoutubeContextMenu] = useState<{ x: number; y: number; url: string } | null>(null);
   const [ngImagePanelOpen, setNgImagePanelOpen] = useState(false);
   const [ngAddMode, setNgAddMode] = useState<"hide" | "hide-images">("hide");
   const [threadNgOpen, setThreadNgOpen] = useState(false);
@@ -4516,6 +4517,7 @@ export default function App() {
         setResponseReloadMenuOpen(false);
         setThreadFilterMenuOpen(false);
         setImageContextMenu(null);
+        setYoutubeContextMenu(null);
       }}
     >
       {mouseGestureEnabled && <canvas ref={gestureCanvasRef} className="gesture-trail" />}
@@ -5480,6 +5482,11 @@ export default function App() {
                 if (!url || url.startsWith("data:")) return;
                 e.preventDefault();
                 e.stopPropagation();
+                if (wrap?.classList.contains("youtube-thumb")) {
+                  const p = clampMenuPosition(e.clientX, e.clientY, 200, 60);
+                  setYoutubeContextMenu({ x: p.x, y: p.y, url });
+                  return;
+                }
                 const p = clampMenuPosition(e.clientX, e.clientY, 200, 40);
                 setImageContextMenu({ x: p.x, y: p.y, url });
               }}
@@ -6365,6 +6372,25 @@ export default function App() {
         <div className="thread-menu image-context-menu" style={{ left: imageContextMenu.x, top: imageContextMenu.y }} onClick={(e) => e.stopPropagation()}>
           <button onClick={() => { void addNgImageFromUrl(imageContextMenu.url); setImageContextMenu(null); }}>この画像をNG登録</button>
           <button onClick={() => { setNgImagePanelOpen(true); setImageContextMenu(null); }}>画像NG一覧を開く</button>
+        </div>
+      )}
+      {youtubeContextMenu && (
+        <div className="thread-menu image-context-menu" style={{ left: youtubeContextMenu.x, top: youtubeContextMenu.y }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => {
+            const url = youtubeContextMenu.url;
+            void navigator.clipboard.writeText(url).catch((err) => console.warn("clipboard.writeText failed", err));
+            setYoutubeContextMenu(null);
+            setStatus("動画URLをコピーしました");
+          }}>動画URLをコピー</button>
+          <button onClick={() => {
+            const url = youtubeContextMenu.url;
+            if (isTauriRuntime()) {
+              void invoke("open_external_url", { url }).catch(() => window.open(url, "_blank"));
+            } else {
+              window.open(url, "_blank");
+            }
+            setYoutubeContextMenu(null);
+          }}>動画を開く</button>
         </div>
       )}
       {tabMenu && (
