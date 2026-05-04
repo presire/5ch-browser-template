@@ -4529,6 +4529,12 @@ button.search-history-btn:hover {
   background: rgba(255, 255, 255, 0.7);
 }
 
+.shell.glass .response-nav-bar .link-filter-btn.active {
+  background: #4a90d9;
+  color: #fff;
+  border-color: #4a90d9;
+}
+
 .shell.glass .nav-jump-input {
   background: rgba(255, 255, 255, 0.5);
   border-color: rgba(255, 255, 255, 0.6);
@@ -4548,6 +4554,12 @@ button.search-history-btn:hover {
 
 .shell.glass.dark .response-nav-bar button:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+.shell.glass.dark .response-nav-bar .link-filter-btn.active {
+  background: #4a90d9 !important;
+  color: #fff !important;
+  border-color: #4a90d9 !important;
 }
 
 .shell.glass.dark .nav-jump-input {
