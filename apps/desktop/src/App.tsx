@@ -524,7 +524,7 @@ const isAsciiArt = (html: string): boolean => {
   return aaLineCount / lines.length >= 0.4;
 };
 
-const renderResponseBody = (html: string, opts?: { hideImages?: boolean; imageSizeLimitKb?: number }): { __html: string } => {
+const renderResponseBody = (html: string, opts?: { hideImages?: boolean; imageSizeLimitKb?: number; youtubeThumbs?: boolean }): { __html: string } => {
   let safe = html
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<a\s[^>]*>(.*?)<\/a>/gi, "$1")
@@ -609,12 +609,28 @@ const renderResponseBody = (html: string, opts?: { hideImages?: boolean; imageSi
     /sssp:\/\/(img\.5ch\.net\/[^\s<>&]+|img\.5ch\.io\/[^\s<>&]+)/gi,
     (_match, path) => `<img class="be-icon" src="https://${(path as string).replace("img.5ch.net", "img.5ch.io")}" loading="lazy" alt="BE" />`
   );
+  if (opts?.youtubeThumbs) {
+    const seenIds = new Set<string>();
+    const linkRe = /<a class="body-link" href="([^"]+)"/g;
+    const idRe = /(?:youtu\.be\/|youtube\.com\/(?:embed\/|shorts\/|watch\?[^"]*v=))([A-Za-z0-9_-]{11})/i;
+    let lm: RegExpExecArray | null;
+    while ((lm = linkRe.exec(safe)) !== null) {
+      const href = lm[1];
+      const im = href.match(idRe);
+      if (!im) continue;
+      const videoId = im[1];
+      if (seenIds.has(videoId)) continue;
+      seenIds.add(videoId);
+      const thumbUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+      collectedThumbs.push(`<span class="thumb-link youtube-thumb" data-lightbox-src="${href}"><img class="response-thumb youtube-thumb-img" src="${thumbUrl}" loading="lazy" referrerpolicy="no-referrer" alt="YouTube" /><span class="youtube-play-icon" aria-hidden="true">▶</span></span>`);
+    }
+  }
   if (collectedThumbs.length > 0) {
     safe += `<div class="response-thumbs-row">${collectedThumbs.join("")}</div>`;
   }
   return { __html: safe };
 };
-const renderResponseBodyHighlighted = (html: string, query: string, opts?: { hideImages?: boolean; imageSizeLimitKb?: number }): { __html: string } => {
+const renderResponseBodyHighlighted = (html: string, query: string, opts?: { hideImages?: boolean; imageSizeLimitKb?: number; youtubeThumbs?: boolean }): { __html: string } => {
   const rendered = renderResponseBody(html, opts).__html;
   return { __html: highlightHtmlPreservingTags(rendered, query) };
 };
@@ -715,6 +731,7 @@ export default function App() {
   const [ngImageFilter, setNgImageFilter] = useState<NgImageFilter>({ entries: [], threshold: 10 });
   const ngImageHashCacheRef = useRef(new Map<string, string | "pending" | "error">());
   const [imageContextMenu, setImageContextMenu] = useState<{ x: number; y: number; url: string } | null>(null);
+  const [youtubeContextMenu, setYoutubeContextMenu] = useState<{ x: number; y: number; url: string } | null>(null);
   const [ngImagePanelOpen, setNgImagePanelOpen] = useState(false);
   const [ngAddMode, setNgAddMode] = useState<"hide" | "hide-images">("hide");
   const [threadNgOpen, setThreadNgOpen] = useState(false);
@@ -736,6 +753,7 @@ export default function App() {
   const [thumbMaskEnabled, setThumbMaskEnabled] = useState(false);
   const [thumbMaskStrength, setThumbMaskStrength] = useState(80);
   const [thumbMaskForceOnStart, setThumbMaskForceOnStart] = useState(false);
+  const [youtubeThumbsEnabled, setYoutubeThumbsEnabled] = useState(true);
   const [responseBodyBottomPad, setResponseBodyBottomPad] = useState(false);
   const [titleClickRefresh, setTitleClickRefresh] = useState(false);
   const [autoScrollEnabled, setAutoScrollEnabled] = useState(false);
@@ -3637,6 +3655,7 @@ export default function App() {
           thumbMaskEnabled?: boolean;
           thumbMaskStrength?: number;
           thumbMaskForceOnStart?: boolean;
+          youtubeThumbsEnabled?: boolean;
           restoreSession?: boolean;
           autoRefreshInterval?: number;
           alwaysOnTop?: boolean;
@@ -3689,6 +3708,7 @@ export default function App() {
         } else if (typeof parsed.thumbMaskEnabled === "boolean") {
           setThumbMaskEnabled(parsed.thumbMaskEnabled);
         }
+        if (typeof parsed.youtubeThumbsEnabled === "boolean") setYoutubeThumbsEnabled(parsed.youtubeThumbsEnabled);
         if (typeof parsed.restoreSession === "boolean") { setRestoreSession(parsed.restoreSession); restoreSessionRef.current = parsed.restoreSession; }
         if (typeof parsed.autoRefreshInterval === "number") setAutoRefreshInterval(parsed.autoRefreshInterval);
         if (typeof parsed.alwaysOnTop === "boolean") setAlwaysOnTop(parsed.alwaysOnTop);
@@ -4344,6 +4364,7 @@ export default function App() {
       thumbMaskEnabled,
       thumbMaskStrength,
       thumbMaskForceOnStart,
+      youtubeThumbsEnabled,
       restoreSession,
       autoRefreshInterval,
       alwaysOnTop,
@@ -4360,7 +4381,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -4496,6 +4517,7 @@ export default function App() {
         setResponseReloadMenuOpen(false);
         setThreadFilterMenuOpen(false);
         setImageContextMenu(null);
+        setYoutubeContextMenu(null);
       }}
     >
       {mouseGestureEnabled && <canvas ref={gestureCanvasRef} className="gesture-trail" />}
@@ -5250,6 +5272,10 @@ export default function App() {
                     title={`クリックでスレ一覧を更新: ${getBoardUrlFromThreadUrl(threadTabs[activeTabIndex].threadUrl)}`}
                     onClick={() => {
                       const boardUrl = getBoardUrlFromThreadUrl(threadTabs[activeTabIndex].threadUrl);
+                      if (showCachedOnly) { setShowCachedOnly(false); setCachedThreadList([]); }
+                      setShowFavoritesOnly(false);
+                      setShowRecentOpenedOnly(false);
+                      setShowRecentPostedOnly(false);
                       setSelectedBoard(boardUrl.split("/").filter(Boolean).pop() || "");
                       lastBoardUrlRef.current = boardUrl;
                       setLocationInput(boardUrl);
@@ -5456,6 +5482,11 @@ export default function App() {
                 if (!url || url.startsWith("data:")) return;
                 e.preventDefault();
                 e.stopPropagation();
+                if (wrap?.classList.contains("youtube-thumb")) {
+                  const p = clampMenuPosition(e.clientX, e.clientY, 200, 60);
+                  setYoutubeContextMenu({ x: p.x, y: p.y, url });
+                  return;
+                }
                 const p = clampMenuPosition(e.clientX, e.clientY, 200, 40);
                 setImageContextMenu({ x: p.x, y: p.y, url });
               }}
@@ -5661,7 +5692,7 @@ export default function App() {
                         )}
                       </span>
                     </div>
-                    <div className={`response-body${(aaOverrides.has(r.id) ? aaOverrides.get(r.id) : isAsciiArt(r.text)) ? " aa" : ""}`} dangerouslySetInnerHTML={{ __html: renderResponseBodyHighlighted(r.text, responseSearchQuery, { hideImages: ngResultMap.get(r.id) === "hide-images", imageSizeLimitKb: imageSizeLimit }).__html + (responseBodyBottomPad ? "<br><br>" : "") }} />
+                    <div className={`response-body${(aaOverrides.has(r.id) ? aaOverrides.get(r.id) : isAsciiArt(r.text)) ? " aa" : ""}`} dangerouslySetInnerHTML={{ __html: renderResponseBodyHighlighted(r.text, responseSearchQuery, { hideImages: ngResultMap.get(r.id) === "hide-images", imageSizeLimitKb: imageSizeLimit, youtubeThumbs: youtubeThumbsEnabled }).__html + (responseBodyBottomPad ? "<br><br>" : "") }} />
                   </div>
                   </Fragment>
                 );
@@ -5939,7 +5970,7 @@ export default function App() {
             style={{ fontSize: `${composeFontSize}px` }}
           />
           {composePreview && (
-            <div className="compose-preview" dangerouslySetInnerHTML={renderResponseBody(composeBody || "(空)")} />
+            <div className="compose-preview" dangerouslySetInnerHTML={renderResponseBody(composeBody || "(空)", { youtubeThumbs: youtubeThumbsEnabled })} />
           )}
           <div className="compose-actions">
             <span className="compose-meta">{composeBody.length}文字 / {composeBody.split("\n").length}行</span>
@@ -6343,6 +6374,25 @@ export default function App() {
           <button onClick={() => { setNgImagePanelOpen(true); setImageContextMenu(null); }}>画像NG一覧を開く</button>
         </div>
       )}
+      {youtubeContextMenu && (
+        <div className="thread-menu image-context-menu" style={{ left: youtubeContextMenu.x, top: youtubeContextMenu.y }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => {
+            const url = youtubeContextMenu.url;
+            void navigator.clipboard.writeText(url).catch((err) => console.warn("clipboard.writeText failed", err));
+            setYoutubeContextMenu(null);
+            setStatus("動画URLをコピーしました");
+          }}>動画URLをコピー</button>
+          <button onClick={() => {
+            const url = youtubeContextMenu.url;
+            if (isTauriRuntime()) {
+              void invoke("open_external_url", { url }).catch(() => window.open(url, "_blank"));
+            } else {
+              window.open(url, "_blank");
+            }
+            setYoutubeContextMenu(null);
+          }}>動画を開く</button>
+        </div>
+      )}
       {tabMenu && (
         <div className="thread-menu tab-menu" style={{ left: tabMenu.x, top: tabMenu.y }} onClick={(e) => e.stopPropagation()}>
           <button onClick={() => { closeTab(tabMenu.tabIndex); setTabMenu(null); }}>タブを閉じる</button>
@@ -6399,6 +6449,7 @@ export default function App() {
       )}
       {idMenu && (
         <div className="thread-menu" style={{ left: idMenu.x, top: idMenu.y }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => { void navigator.clipboard.writeText(`ID:${idMenu.id}`); setStatus("IDをコピーしました"); setIdMenu(null); }}>このIDをコピー</button>
           <button onClick={() => { addNgEntry("ids", idMenu.id); setIdMenu(null); }}>NGIDに追加</button>
         </div>
       )}
@@ -6477,7 +6528,7 @@ export default function App() {
             {popupResps.map((popupResp) => (
               <div key={popupResp.id}>
                 {renderPopupHeader(popupResp)}
-                <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(popupResp.text)} />
+                <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(popupResp.text, { youtubeThumbs: youtubeThumbsEnabled })} />
               </div>
             ))}
           </div>
@@ -6506,7 +6557,7 @@ export default function App() {
               return (
                 <div key={refNo} className="back-ref-popup-item">
                   {renderPopupHeader(refResp)}
-                  <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(refResp.text)} />
+                  <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(refResp.text, { youtubeThumbs: youtubeThumbsEnabled })} />
                 </div>
               );
             })}
@@ -6552,7 +6603,7 @@ export default function App() {
             {nestedResps.map((nestedResp) => (
               <div key={nestedResp.id}>
                 {renderPopupHeader(nestedResp)}
-                <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(nestedResp.text)} />
+                <div className="anchor-popup-body" dangerouslySetInnerHTML={renderResponseBody(nestedResp.text, { youtubeThumbs: youtubeThumbsEnabled })} />
               </div>
             ))}
           </div>
@@ -6615,7 +6666,7 @@ export default function App() {
                   onClick={() => { setSelectedResponse(r.id); setIdPopup(null); }}
                 >
                   <span className="response-viewer-no">{r.id}</span>
-                  <span className="id-popup-text" dangerouslySetInnerHTML={renderResponseBody(r.text)} />
+                  <span className="id-popup-text" dangerouslySetInnerHTML={renderResponseBody(r.text, { youtubeThumbs: youtubeThumbsEnabled })} />
                 </div>
               ))}
             </div>
@@ -6893,6 +6944,10 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={thumbMaskForceOnStart} onChange={(e) => setThumbMaskForceOnStart(e.target.checked)} />
                   <span>起動時に必ずマスクを有効化</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={youtubeThumbsEnabled} onChange={(e) => setYoutubeThumbsEnabled(e.target.checked)} />
+                  <span>YouTubeリンクのサムネイル表示</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={hoverPreviewEnabled} onChange={(e) => setHoverPreviewEnabled(e.target.checked)} />
