@@ -5250,6 +5250,10 @@ export default function App() {
                     title={`クリックでスレ一覧を更新: ${getBoardUrlFromThreadUrl(threadTabs[activeTabIndex].threadUrl)}`}
                     onClick={() => {
                       const boardUrl = getBoardUrlFromThreadUrl(threadTabs[activeTabIndex].threadUrl);
+                      if (showCachedOnly) { setShowCachedOnly(false); setCachedThreadList([]); }
+                      setShowFavoritesOnly(false);
+                      setShowRecentOpenedOnly(false);
+                      setShowRecentPostedOnly(false);
                       setSelectedBoard(boardUrl.split("/").filter(Boolean).pop() || "");
                       lastBoardUrlRef.current = boardUrl;
                       setLocationInput(boardUrl);
