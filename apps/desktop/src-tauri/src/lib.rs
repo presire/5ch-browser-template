@@ -1266,15 +1266,118 @@ fn load_window_size() -> Result<Option<WindowSize>, String> {
 }
 
 #[tauri::command]
-fn set_window_theme(window: tauri::WebviewWindow, dark: bool) -> Result<(), String> {
+fn set_window_theme(app: tauri::AppHandle, dark: bool) -> Result<(), String> {
     use tauri::Theme;
-    window.set_theme(if dark { Some(Theme::Dark) } else { Some(Theme::Light) })
-        .map_err(|e| format!("{}", e))
+    let theme = if dark { Some(Theme::Dark) } else { Some(Theme::Light) };
+    for (_, w) in app.webview_windows() {
+        let _ = w.set_theme(theme);
+    }
+    Ok(())
 }
 
 #[tauri::command]
 fn set_always_on_top(window: tauri::WebviewWindow, on_top: bool) -> Result<(), String> {
     window.set_always_on_top(on_top).map_err(|e| format!("{}", e))
+}
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct YoutubePipBounds {
+    #[serde(default)]
+    x: Option<i32>,
+    #[serde(default)]
+    y: Option<i32>,
+    width: f64,
+    height: f64,
+}
+
+#[tauri::command]
+async fn open_youtube_pip(app: tauri::AppHandle, video_id: String) -> Result<(), String> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+    if video_id.len() != 11
+        || !video_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("Invalid YouTube video ID".into());
+    }
+
+    let label = "youtube-pip";
+    let inject_script = format!(
+        "window.__pipVideoId={}; if (typeof loadPipVideo === 'function') loadPipVideo();",
+        serde_json::to_string(&video_id).unwrap_or_else(|_| "\"\"".into())
+    );
+
+    if let Some(existing) = app.get_webview_window(label) {
+        existing.eval(&inject_script).map_err(|e| e.to_string())?;
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
+    let saved = core_store::load_json::<YoutubePipBounds>("youtube_pip_bounds.json").ok();
+    let width = saved.as_ref().map(|b| b.width).filter(|w| *w >= 200.0).unwrap_or(480.0);
+    let height = saved.as_ref().map(|b| b.height).filter(|h| *h >= 150.0).unwrap_or(310.0);
+
+    let mut builder = WebviewWindowBuilder::new(
+        &app,
+        label,
+        WebviewUrl::App(std::path::PathBuf::from("pip.html")),
+    )
+    .title("YouTube PiP")
+    .always_on_top(true)
+    .decorations(false)
+    .resizable(true)
+    .skip_taskbar(true)
+    .initialization_script(&inject_script)
+    .inner_size(width, height);
+
+    if let Some(b) = saved.as_ref() {
+        if let (Some(px), Some(py)) = (b.x, b.y) {
+            builder = builder.position(px as f64, py as f64);
+        }
+    }
+
+    let window = builder.build().map_err(|e| e.to_string())?;
+
+    let app_handle = app.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            if let Some(w) = app_handle.get_webview_window("youtube-pip") {
+                let pos = w.outer_position().ok();
+                let size = w.inner_size().ok();
+                if let Some(s) = size {
+                    let bounds = YoutubePipBounds {
+                        x: pos.map(|p| p.x),
+                        y: pos.map(|p| p.y),
+                        width: s.width as f64,
+                        height: s.height as f64,
+                    };
+                    std::thread::spawn(move || {
+                        let _ = core_store::save_json("youtube_pip_bounds.json", &bounds);
+                    });
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+fn close_youtube_pip(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("youtube-pip") {
+        window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn start_pip_drag(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("youtube-pip") {
+        window.start_dragging().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 // --- Image upload (tadaup.jp) ---
@@ -1582,6 +1685,9 @@ pub fn run() {
             load_upload_history,
             save_upload_history,
             set_always_on_top,
+            open_youtube_pip,
+            close_youtube_pip,
+            start_pip_drag,
             download_images
         ])
         .run(tauri::generate_context!())

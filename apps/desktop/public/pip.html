@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>YouTube PiP</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .titlebar {
+      height: 28px;
+      background: rgba(0, 0, 0, 0.92);
+      display: flex;
+      align-items: stretch;
+      user-select: none;
+      position: relative;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .drag {
+      flex: 1;
+      cursor: grab;
+    }
+    .drag:active { cursor: grabbing; }
+    .close-btn {
+      width: 40px;
+      border: none;
+      background: transparent;
+      color: #ccc;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.1s, color 0.1s;
+    }
+    .close-btn:hover { background: #e81123; color: #fff; }
+    .player-wrap { height: calc(100% - 28px); background: #000; }
+    iframe { width: 100%; height: 100%; border: 0; display: block; }
+    .err { color: #fff; padding: 16px; }
+  </style>
+</head>
+<body>
+  <div class="titlebar">
+    <div class="drag" data-tauri-drag-region></div>
+    <button class="close-btn" id="close-btn" aria-label="閉じる">✕</button>
+  </div>
+  <div class="player-wrap">
+    <iframe id="player" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>
+  </div>
+  <script>
+    function loadPipVideo() {
+      var v = window.__pipVideoId;
+      var player = document.getElementById('player');
+      if (!player) return;
+      if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) {
+        player.src = 'https://www.youtube.com/embed/' + v + '?autoplay=1&playsinline=1';
+        document.title = 'YouTube PiP';
+      } else {
+        player.style.display = 'none';
+        document.querySelector('.player-wrap').insertAdjacentHTML('beforeend', '<div class="err">Invalid video ID</div>');
+      }
+    }
+    function tauriInvoke(cmd) {
+      var ipc = window.__TAURI_INTERNALS__;
+      if (ipc && typeof ipc.invoke === 'function') {
+        return ipc.invoke(cmd);
+      }
+      return Promise.reject(new Error('Tauri IPC unavailable'));
+    }
+    function closeWindow() {
+      tauriInvoke('close_youtube_pip').catch(function (e) {
+        console.warn('close_youtube_pip failed', e);
+        try { window.close(); } catch (err) { console.warn('window.close failed', err); }
+      });
+    }
+    function init() {
+      loadPipVideo();
+      var btn = document.getElementById('close-btn');
+      if (btn) btn.addEventListener('click', closeWindow);
+      var dragEl = document.querySelector('.drag');
+      if (dragEl) {
+        dragEl.addEventListener('mousedown', function (e) {
+          if (e.button !== 0) return;
+          tauriInvoke('start_pip_drag').catch(function (err) {
+            console.warn('start_pip_drag failed', err);
+          });
+        });
+      }
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeWindow();
+      });
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  </script>
+</body>
+</html>

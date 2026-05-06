@@ -524,6 +524,22 @@ const isAsciiArt = (html: string): boolean => {
   return aaLineCount / lines.length >= 0.4;
 };
 
+const YOUTUBE_VIDEO_ID_RE = /(?:youtu\.be\/|youtube\.com\/(?:embed\/|shorts\/|watch\?[^"]*v=))([A-Za-z0-9_-]{11})/i;
+const extractYoutubeVideoId = (url: string): string | null => {
+  const m = url.match(YOUTUBE_VIDEO_ID_RE);
+  return m ? m[1] : null;
+};
+const launchYoutubePip = (videoId: string, fallbackUrl: string): void => {
+  if (isTauriRuntime()) {
+    void invoke("open_youtube_pip", { videoId }).catch((err) => {
+      console.warn("open_youtube_pip failed", err);
+      window.open(fallbackUrl, "_blank");
+    });
+  } else {
+    window.open(fallbackUrl, "_blank");
+  }
+};
+
 const renderResponseBody = (html: string, opts?: { hideImages?: boolean; imageSizeLimitKb?: number; youtubeThumbs?: boolean }): { __html: string } => {
   let safe = html
     .replace(/<br\s*\/?>/gi, "\n")
@@ -612,13 +628,11 @@ const renderResponseBody = (html: string, opts?: { hideImages?: boolean; imageSi
   if (opts?.youtubeThumbs) {
     const seenIds = new Set<string>();
     const linkRe = /<a class="body-link" href="([^"]+)"/g;
-    const idRe = /(?:youtu\.be\/|youtube\.com\/(?:embed\/|shorts\/|watch\?[^"]*v=))([A-Za-z0-9_-]{11})/i;
     let lm: RegExpExecArray | null;
     while ((lm = linkRe.exec(safe)) !== null) {
       const href = lm[1];
-      const im = href.match(idRe);
-      if (!im) continue;
-      const videoId = im[1];
+      const videoId = extractYoutubeVideoId(href);
+      if (!videoId) continue;
       if (seenIds.has(videoId)) continue;
       seenIds.add(videoId);
       const thumbUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
@@ -5358,7 +5372,13 @@ export default function App() {
               <div
                 key={tab.threadUrl}
                 className={`thread-tab ${i === activeTabIndex ? "active" : ""} ${tabDragIndex !== null && tabDragIndex !== i ? "drag-target" : ""}`}
-                onClick={() => { if (tabDragRef.current) return; onTabClick(i); }}
+                onClick={() => {
+                  if (tabDragRef.current) return;
+                  onTabClick(i);
+                  setTimeout(() => {
+                    responseScrollRef.current?.focus({ preventScroll: true });
+                  }, 60);
+                }}
                 onDoubleClick={() => {
                   void fetchResponsesFromCurrent(tab.threadUrl, { keepSelection: true }).then(() => {
                     setTimeout(() => {
@@ -5487,14 +5507,15 @@ export default function App() {
               onContextMenu={(e) => {
                 const target = e.target as HTMLElement;
                 const thumbImg = target.closest<HTMLImageElement>("img.response-thumb, img.image-gallery-thumb");
-                if (!thumbImg) return;
-                const wrap = thumbImg.closest<HTMLElement>("[data-lightbox-src]");
-                const url = wrap?.dataset.lightboxSrc ?? thumbImg.getAttribute("src") ?? "";
+                const playIcon = !thumbImg ? target.closest<HTMLElement>(".youtube-play-icon") : null;
+                const wrap = (thumbImg ?? playIcon)?.closest<HTMLElement>("[data-lightbox-src]");
+                if (!wrap) return;
+                const url = wrap.dataset.lightboxSrc ?? thumbImg?.getAttribute("src") ?? "";
                 if (!url || url.startsWith("data:")) return;
                 e.preventDefault();
                 e.stopPropagation();
-                if (wrap?.classList.contains("youtube-thumb")) {
-                  const p = clampMenuPosition(e.clientX, e.clientY, 200, 60);
+                if (wrap.classList.contains("youtube-thumb")) {
+                  const p = clampMenuPosition(e.clientX, e.clientY, 200, 80);
                   setYoutubeContextMenu({ x: p.x, y: p.y, url });
                   return;
                 }
@@ -5517,6 +5538,18 @@ export default function App() {
                     void invoke("open_external_url", { url }).catch(() => window.open(url, "_blank"));
                   } else if (url) {
                     window.open(url, "_blank");
+                  }
+                  return;
+                }
+                // YouTube ▶ icon: launch PiP window
+                if (target.classList.contains("youtube-play-icon")) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const wrap = target.closest<HTMLElement>(".youtube-thumb");
+                  const url = wrap?.dataset.lightboxSrc ?? "";
+                  const videoId = url ? extractYoutubeVideoId(url) : null;
+                  if (videoId) {
+                    launchYoutubePip(videoId, url);
                   }
                   return;
                 }
@@ -6387,6 +6420,15 @@ export default function App() {
       )}
       {youtubeContextMenu && (
         <div className="thread-menu image-context-menu" style={{ left: youtubeContextMenu.x, top: youtubeContextMenu.y }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => {
+            const url = youtubeContextMenu.url;
+            const videoId = extractYoutubeVideoId(url);
+            if (videoId) {
+              launchYoutubePip(videoId, url);
+              setStatus("PiPで再生中");
+            }
+            setYoutubeContextMenu(null);
+          }}>PiPで再生</button>
           <button onClick={() => {
             const url = youtubeContextMenu.url;
             void navigator.clipboard.writeText(url).catch((err) => console.warn("clipboard.writeText failed", err));
