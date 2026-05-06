@@ -51,7 +51,7 @@
       var player = document.getElementById('player');
       if (!player) return;
       if (v && /^[A-Za-z0-9_-]{11}$/.test(v)) {
-        player.src = 'https://www.youtube.com/embed/' + v + '?autoplay=1&playsinline=1';
+        player.src = 'https://www.youtube-nocookie.com/embed/' + v + '?autoplay=1&playsinline=1&rel=0';
         document.title = 'YouTube PiP';
       } else {
         player.style.display = 'none';
