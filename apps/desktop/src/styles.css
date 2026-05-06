@@ -509,6 +509,11 @@ li.fav-drag-over {
   overflow-x: hidden;
 }
 
+.threads-table-wrap:focus,
+.threads-table-wrap:focus-visible {
+  outline: none;
+}
+
 .threads th:nth-child(3) { width: auto; }
 
 .col-resizable {

@@ -1694,7 +1694,11 @@ export default function App() {
     lastBoardUrlRef.current = board.url;
     setLocationInput(board.url);
     setThreadUrl(board.url);
+    setFocusedPane("threads");
     void fetchThreadListFromCurrent(board.url);
+    setTimeout(() => {
+      threadListScrollRef.current?.focus({ preventScroll: true });
+    }, 60);
   };
 
   const checkAuthEnv = async () => {
@@ -5221,7 +5225,7 @@ export default function App() {
             : { gridTemplateRows: `${threadPanePx}px ${SPLITTER_PX}px 1fr` }}
         >
         <section className="pane threads" onMouseDown={() => setFocusedPane("threads")} style={{ '--fs-delta': `${threadsFontSize - 12}px` } as React.CSSProperties}>
-          <div className="threads-table-wrap" ref={threadListScrollRef} onScroll={hideThreadTitlePopup}>
+          <div className="threads-table-wrap" ref={threadListScrollRef} tabIndex={-1} onScroll={hideThreadTitlePopup}>
           <table>
             <thead>
               <tr>
