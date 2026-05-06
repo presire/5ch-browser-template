@@ -3186,7 +3186,11 @@ export default function App() {
 
   const fetchNewResponses = () => {
     runOnActiveThread((url) => {
-      void fetchResponsesFromCurrent(url, { keepSelection: true });
+      void fetchResponsesFromCurrent(url, { keepSelection: true }).then(() => {
+        setTimeout(() => {
+          responseScrollRef.current?.focus({ preventScroll: true });
+        }, 60);
+      });
     });
   };
 
@@ -5355,7 +5359,13 @@ export default function App() {
                 key={tab.threadUrl}
                 className={`thread-tab ${i === activeTabIndex ? "active" : ""} ${tabDragIndex !== null && tabDragIndex !== i ? "drag-target" : ""}`}
                 onClick={() => { if (tabDragRef.current) return; onTabClick(i); }}
-                onDoubleClick={() => { void fetchResponsesFromCurrent(tab.threadUrl, { keepSelection: true }); }}
+                onDoubleClick={() => {
+                  void fetchResponsesFromCurrent(tab.threadUrl, { keepSelection: true }).then(() => {
+                    setTimeout(() => {
+                      responseScrollRef.current?.focus({ preventScroll: true });
+                    }, 60);
+                  });
+                }}
                 onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(i); } }}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -5434,6 +5444,7 @@ export default function App() {
             <div
               className="response-scroll"
               ref={responseScrollRef}
+              tabIndex={-1}
               onScroll={onResponseScroll}
               onCopy={(e) => {
                 const selection = window.getSelection();

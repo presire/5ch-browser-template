@@ -759,6 +759,11 @@ li.fav-drag-over {
   overflow-anchor: none;
 }
 
+.response-scroll:focus,
+.response-scroll:focus-visible {
+  outline: none;
+}
+
 .response-loading {
   padding: 12px;
   text-align: center;
