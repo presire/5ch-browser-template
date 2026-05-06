@@ -1365,11 +1365,15 @@ async fn open_youtube_pip(app: tauri::AppHandle, video_id: String) -> Result<(),
     // Windows: keep the pip.html + iframe wrapper with our custom titlebar.
     #[cfg(target_os = "macos")]
     {
+        // Use the regular youtube.com/embed/ URL — youtube-nocookie.com/embed
+        // refuses top-level loads. Combined with a full Safari user agent so
+        // YouTube does not flag WKWebView as an unsupported browser.
         let url_str = format!(
-            "https://www.youtube-nocookie.com/embed/{}?autoplay=1&playsinline=1&rel=0",
+            "https://www.youtube.com/embed/{}?autoplay=1&playsinline=1&rel=0",
             video_id
         );
         let url = tauri::Url::parse(&url_str).map_err(|e| e.to_string())?;
+        let safari_ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15";
 
         if let Some(existing) = app.get_webview_window(label) {
             existing.navigate(url).map_err(|e| e.to_string())?;
@@ -1387,6 +1391,7 @@ async fn open_youtube_pip(app: tauri::AppHandle, video_id: String) -> Result<(),
             .decorations(true)
             .resizable(true)
             .skip_taskbar(true)
+            .user_agent(safari_ua)
             .inner_size(width, height);
 
         if let Some(b) = saved.as_ref() {
