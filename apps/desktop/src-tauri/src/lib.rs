@@ -1359,57 +1359,19 @@ async fn open_youtube_pip(app: tauri::AppHandle, video_id: String) -> Result<(),
 
     let label = "youtube-pip";
 
-    // macOS: load YouTube directly as the top-level page (decorations on, no
-    //   pip.html iframe). Avoids the `tauri://localhost` parent origin which
-    //   YouTube rejects in release builds (error 153).
-    // Windows: keep the pip.html + iframe wrapper with our custom titlebar.
+    // macOS: WKWebView + Tauri 2 release では YouTube embed が「エラー153」で
+    //   再生できないため、PiP は提供せず標準ブラウザで開くフォールバックに
+    //   する。フロント側でも Mac は launchYoutubePip 内で直接ブラウザを開くが、
+    //   防衛的にここでも振り分ける。
     #[cfg(target_os = "macos")]
     {
-        // Use the regular youtube.com/embed/ URL — youtube-nocookie.com/embed
-        // refuses top-level loads. Combined with a full Safari user agent so
-        // YouTube does not flag WKWebView as an unsupported browser.
-        let url_str = format!(
-            "https://www.youtube.com/embed/{}?autoplay=1&playsinline=1&rel=0",
-            video_id
-        );
-        let url = tauri::Url::parse(&url_str).map_err(|e| e.to_string())?;
-        let safari_ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15";
-
-        if let Some(existing) = app.get_webview_window(label) {
-            existing.navigate(url).map_err(|e| e.to_string())?;
-            let _ = existing.set_focus();
-            return Ok(());
-        }
-
-        let saved = core_store::load_json::<YoutubePipBounds>("youtube_pip_bounds.json").ok();
-        let width = saved.as_ref().map(|b| b.width).filter(|w| *w >= 200.0).unwrap_or(480.0);
-        let height = saved.as_ref().map(|b| b.height).filter(|h| *h >= 150.0).unwrap_or(310.0);
-
-        let mut builder = WebviewWindowBuilder::new(&app, label, WebviewUrl::External(url))
-            .title("YouTube PiP")
-            .always_on_top(true)
-            .decorations(true)
-            .resizable(true)
-            .skip_taskbar(true)
-            .user_agent(safari_ua)
-            .inner_size(width, height);
-
-        if let Some(b) = saved.as_ref() {
-            if let (Some(px), Some(py)) = (b.x, b.y) {
-                if position_visible_on_any_monitor(&app, px, py, width, height) {
-                    builder = builder.position(px, py);
-                }
-            }
-        }
-
-        let window = builder.build().map_err(|e| e.to_string())?;
-
-        let app_handle = app.clone();
-        window.on_window_event(move |event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                persist_youtube_pip_bounds(&app_handle);
-            }
-        });
+        let _ = app;
+        let url_str = format!("https://www.youtube.com/watch?v={}", video_id);
+        Command::new("open")
+            .arg(&url_str)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
     }
 
     #[cfg(not(target_os = "macos"))]

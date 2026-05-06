@@ -529,7 +529,18 @@ const extractYoutubeVideoId = (url: string): string | null => {
   const m = url.match(YOUTUBE_VIDEO_ID_RE);
   return m ? m[1] : null;
 };
+const isMacPlatform =
+  typeof navigator !== "undefined" && /Macintosh|Mac OS X/.test(navigator.userAgent);
 const launchYoutubePip = (videoId: string, fallbackUrl: string): void => {
+  if (isMacPlatform) {
+    // Mac (WKWebView) では YouTube embed が動かないため標準ブラウザで開く
+    if (isTauriRuntime()) {
+      void invoke("open_external_url", { url: fallbackUrl }).catch(() => window.open(fallbackUrl, "_blank"));
+    } else {
+      window.open(fallbackUrl, "_blank");
+    }
+    return;
+  }
   if (isTauriRuntime()) {
     void invoke("open_youtube_pip", { videoId }).catch((err) => {
       console.warn("open_youtube_pip failed", err);
@@ -6420,15 +6431,17 @@ export default function App() {
       )}
       {youtubeContextMenu && (
         <div className="thread-menu image-context-menu" style={{ left: youtubeContextMenu.x, top: youtubeContextMenu.y }} onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => {
-            const url = youtubeContextMenu.url;
-            const videoId = extractYoutubeVideoId(url);
-            if (videoId) {
-              launchYoutubePip(videoId, url);
-              setStatus("PiPで再生中");
-            }
-            setYoutubeContextMenu(null);
-          }}>PiPで再生</button>
+          {!isMacPlatform && (
+            <button onClick={() => {
+              const url = youtubeContextMenu.url;
+              const videoId = extractYoutubeVideoId(url);
+              if (videoId) {
+                launchYoutubePip(videoId, url);
+                setStatus("PiPで再生中");
+              }
+              setYoutubeContextMenu(null);
+            }}>PiPで再生</button>
+          )}
           <button onClick={() => {
             const url = youtubeContextMenu.url;
             void navigator.clipboard.writeText(url).catch((err) => console.warn("clipboard.writeText failed", err));
