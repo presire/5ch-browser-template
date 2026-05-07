@@ -52,21 +52,23 @@ jobs:
       - name: Sync main from upstream
         if: steps.check.outputs.changed == 'true'
         run: |
-          # release.yml をupstreamマージから保護
-          cp .github/workflows/release.yml /tmp/our-release.yml
+          # .github/workflows/ ディレクトリ全体をupstreamマージから保護
+          # (Windows release.yml / sync-upstream.yml の維持 + ci.yml削除の維持)
+          cp -r .github/workflows /tmp/our-workflows
 
           git merge upstream/main --no-edit || {
-            # コンフリクト時はupstream側を優先（release.yml以外）
+            # コンフリクト時はupstream側を優先 (workflowsは後で復元)
             git checkout --theirs . 2>/dev/null || true
             git add -A
             git commit --no-edit
           }
 
-          # release.yml を復元
-          cp /tmp/our-release.yml .github/workflows/release.yml
-          if ! git diff --quiet -- .github/workflows/release.yml; then
-            git add .github/workflows/release.yml
-            git commit -m "chore: preserve release.yml (Windows) after upstream sync"
+          # workflows/ を完全に復元 (upstream版の追加ファイル含めて駆逐)
+          rm -rf .github/workflows
+          cp -r /tmp/our-workflows .github/workflows
+          if ! git diff --quiet HEAD -- .github/workflows/; then
+            git add -A .github/workflows/
+            git commit -m "chore: preserve workflows (Windows-only) after upstream sync"
           fi
 
           git push origin main
