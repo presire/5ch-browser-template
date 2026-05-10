@@ -304,11 +304,31 @@ fn extract_input_value(html: &str, name: &str) -> Option<String> {
 }
 
 fn detect_post_form_action(html: &str) -> Option<String> {
-    let bbs_idx = html.find("bbs.cgi")?;
-    let form_idx = html[..bbs_idx].rfind("<form").unwrap_or(0);
-    let end = (bbs_idx + 300).min(html.len());
-    let snippet = &html[form_idx..end];
-    extract_attr(snippet, "action")
+    // 書き込み form は name="MESSAGE" の textarea を含む — これを最優先で探す。
+    // 見つからない場合のフォールバックとして、action 属性に "bbs.cgi" を含む form を選ぶ。
+    // どんぐり認証等の別 form がページ HTML 上書き込み form より前に出現するケースを避けるため。
+    let mut cursor = 0;
+    let mut bbs_cgi_action: Option<String> = None;
+    while let Some(rel) = html[cursor..].find("<form") {
+        let form_start = cursor + rel;
+        let form_end = html[form_start..]
+            .find("</form>")
+            .map(|i| form_start + i + "</form>".len())
+            .unwrap_or(html.len());
+        let form_html = &html[form_start..form_end];
+        if form_html.contains("name=\"MESSAGE\"") || form_html.contains("name='MESSAGE'") {
+            return extract_attr(form_html, "action");
+        }
+        if bbs_cgi_action.is_none() {
+            if let Some(action) = extract_attr(form_html, "action") {
+                if action.contains("bbs.cgi") {
+                    bbs_cgi_action = Some(action);
+                }
+            }
+        }
+        cursor = form_end;
+    }
+    bbs_cgi_action
 }
 
 fn resolve_post_url(thread_url: &str, action: &str) -> Result<String, FetchError> {
@@ -463,6 +483,28 @@ fn url_encode_sjis_bytes(bytes: &[u8]) -> String {
     out
 }
 
+fn curl_exit_code_hint(code: i32) -> String {
+    let label = match code {
+        2 => "init failed",
+        3 => "URL malformed",
+        5 => "couldn't resolve proxy",
+        6 => "couldn't resolve host (DNS)",
+        7 => "couldn't connect to host",
+        22 => "HTTP error",
+        28 => "operation timed out",
+        35 => "SSL/TLS handshake error (security software, proxy, system clock, or root CA may be at fault)",
+        47 => "too many redirects",
+        51 => "peer certificate verification failed",
+        52 => "empty reply from server",
+        56 => "failure receiving network data",
+        58 => "client certificate problem",
+        60 => "SSL CA cert verification failed",
+        77 => "SSL CA cert read problem",
+        _ => "no detail (curl wrote nothing to stderr)",
+    };
+    format!("(curl exit {}: {})", code, label)
+}
+
 /// Execute a curl request with a shared cookie jar. Returns (status, content_type, redirect_url, body).
 fn curl_exec(
     method: &str,
@@ -480,7 +522,7 @@ fn curl_exec(
     let jar_str = cookie_jar.to_str().unwrap_or("");
 
     let mut args: Vec<String> = vec![
-        "-s".into(),
+        "-sS".into(),
         "--max-time".into(), "30".into(),
         "--connect-timeout".into(), "10".into(),
         "-b".into(), jar_str.into(),
@@ -522,11 +564,20 @@ fn curl_exec(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let code_str = output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".into());
+        let detail = stderr.trim();
+        let detail = if detail.is_empty() {
+            curl_exit_code_hint(output.status.code().unwrap_or(0))
+        } else {
+            detail.chars().take(200).collect::<String>()
+        };
         return Err(FetchError::Parse(format!(
             "curl {} exit {}: {}",
-            method,
-            output.status,
-            stderr.chars().take(200).collect::<String>()
+            method, code_str, detail
         )));
     }
 
