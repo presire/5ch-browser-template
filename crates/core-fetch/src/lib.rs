@@ -304,11 +304,31 @@ fn extract_input_value(html: &str, name: &str) -> Option<String> {
 }
 
 fn detect_post_form_action(html: &str) -> Option<String> {
-    let bbs_idx = html.find("bbs.cgi")?;
-    let form_idx = html[..bbs_idx].rfind("<form").unwrap_or(0);
-    let end = (bbs_idx + 300).min(html.len());
-    let snippet = &html[form_idx..end];
-    extract_attr(snippet, "action")
+    // 書き込み form は name="MESSAGE" の textarea を含む — これを最優先で探す。
+    // 見つからない場合のフォールバックとして、action 属性に "bbs.cgi" を含む form を選ぶ。
+    // どんぐり認証等の別 form がページ HTML 上書き込み form より前に出現するケースを避けるため。
+    let mut cursor = 0;
+    let mut bbs_cgi_action: Option<String> = None;
+    while let Some(rel) = html[cursor..].find("<form") {
+        let form_start = cursor + rel;
+        let form_end = html[form_start..]
+            .find("</form>")
+            .map(|i| form_start + i + "</form>".len())
+            .unwrap_or(html.len());
+        let form_html = &html[form_start..form_end];
+        if form_html.contains("name=\"MESSAGE\"") || form_html.contains("name='MESSAGE'") {
+            return extract_attr(form_html, "action");
+        }
+        if bbs_cgi_action.is_none() {
+            if let Some(action) = extract_attr(form_html, "action") {
+                if action.contains("bbs.cgi") {
+                    bbs_cgi_action = Some(action);
+                }
+            }
+        }
+        cursor = form_end;
+    }
+    bbs_cgi_action
 }
 
 fn resolve_post_url(thread_url: &str, action: &str) -> Result<String, FetchError> {
