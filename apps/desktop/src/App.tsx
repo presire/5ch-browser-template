@@ -6589,7 +6589,7 @@ export default function App() {
         return (
           <div
             className="anchor-popup"
-            style={{ ...posStyle, zIndex: anchorPopup.z }}
+            style={{ ...posStyle, zIndex: anchorPopup.z, '--fs-delta': `${responsesFontSize - 12}px` } as unknown as React.CSSProperties}
             onMouseEnter={() => {
               if (anchorPopupCloseTimer.current) {
                 clearTimeout(anchorPopupCloseTimer.current);
@@ -6625,7 +6625,7 @@ export default function App() {
         return (
           <div
             className="anchor-popup back-ref-popup"
-            style={{ left: backRefPopup.x, bottom: window.innerHeight - backRefPopup.y, zIndex: backRefPopup.z }}
+            style={{ left: backRefPopup.x, bottom: window.innerHeight - backRefPopup.y, zIndex: backRefPopup.z, '--fs-delta': `${responsesFontSize - 12}px` } as React.CSSProperties}
             onMouseLeave={(ev) => {
               const next = ev.relatedTarget as HTMLElement | null;
               if (next?.closest(".anchor-popup") || next?.closest(".id-popup")) return;
@@ -6663,7 +6663,7 @@ export default function App() {
           <div
             key={`${np.responseIds[0]}-${i}`}
             className="anchor-popup nested-popup"
-            style={{ ...nPosStyle, zIndex: np.z }}
+            style={{ ...nPosStyle, zIndex: np.z, '--fs-delta': `${responsesFontSize - 12}px` } as unknown as React.CSSProperties}
             onMouseEnter={() => {
               if (anchorPopupCloseTimer.current) {
                 clearTimeout(anchorPopupCloseTimer.current);
@@ -6706,7 +6706,7 @@ export default function App() {
         return (
           <div
             className="id-popup"
-            style={{ ...idPosStyle, zIndex: idPopup.z }}
+            style={{ ...idPosStyle, zIndex: idPopup.z, '--fs-delta': `${responsesFontSize - 12}px` } as unknown as React.CSSProperties}
             onMouseEnter={() => { if (idPopupCloseTimer.current) { clearTimeout(idPopupCloseTimer.current); idPopupCloseTimer.current = null; } }}
             onMouseLeave={(ev) => {
               const next = ev.relatedTarget as HTMLElement | null;
