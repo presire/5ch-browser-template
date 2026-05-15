@@ -763,6 +763,9 @@ export default function App() {
   const [threadNgInput, setThreadNgInput] = useState("");
   const [ngPanelOpen, setNgPanelOpen] = useState(false);
   const [showBoardButtons, setShowBoardButtons] = useState(false);
+  const [toolBarVisible, setToolBarVisible] = useState(true);
+  const [responseNavBarVisible, setResponseNavBarVisible] = useState(true);
+  const [statusBarVisible, setStatusBarVisible] = useState(true);
   const [keepSortOnRefresh, setKeepSortOnRefresh] = useState(false);
   const keepSortOnRefreshRef = useRef(keepSortOnRefresh);
   keepSortOnRefreshRef.current = keepSortOnRefresh;
@@ -3689,6 +3692,9 @@ export default function App() {
           fontFamily?: string;
           threadColWidths?: Record<string, number>;
           showBoardButtons?: boolean;
+          toolBarVisible?: boolean;
+          responseNavBarVisible?: boolean;
+          statusBarVisible?: boolean;
           keepSortOnRefresh?: boolean;
           composeSubmitKey?: "shift" | "ctrl";
           typingConfettiEnabled?: boolean;
@@ -3736,6 +3742,9 @@ export default function App() {
           setThreadColWidths((prev) => ({ ...prev, ...parsed.threadColWidths }));
         }
         if (typeof parsed.showBoardButtons === "boolean") setShowBoardButtons(parsed.showBoardButtons);
+        if (typeof parsed.toolBarVisible === "boolean") setToolBarVisible(parsed.toolBarVisible);
+        if (typeof parsed.responseNavBarVisible === "boolean") setResponseNavBarVisible(parsed.responseNavBarVisible);
+        if (typeof parsed.statusBarVisible === "boolean") setStatusBarVisible(parsed.statusBarVisible);
         if (typeof parsed.keepSortOnRefresh === "boolean") setKeepSortOnRefresh(parsed.keepSortOnRefresh);
         if (parsed.composeSubmitKey === "shift" || parsed.composeSubmitKey === "ctrl") setComposeSubmitKey(parsed.composeSubmitKey);
         if (typeof parsed.typingConfettiEnabled === "boolean") setTypingConfettiEnabled(parsed.typingConfettiEnabled);
@@ -4398,6 +4407,9 @@ export default function App() {
       fontFamily,
       threadColWidths,
       showBoardButtons,
+      toolBarVisible,
+      responseNavBarVisible,
+      statusBarVisible,
       keepSortOnRefresh,
       composeSubmitKey,
       typingConfettiEnabled,
@@ -4426,7 +4438,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -4545,7 +4557,13 @@ export default function App() {
   return (
     <div
       className={`shell${darkMode ? " dark" : ""}${glassMode ? " glass" : ""}${glassMode && glassUltraLite ? " glass-ultra-lite" : ""}${glassMode && !glassUltraLite && glassLite ? " glass-lite" : ""}${thumbMaskEnabled ? " thumb-masked" : ""}`}
-      style={{ fontFamily: fontFamily ? `"Backslash", ${fontFamily}` : undefined, gridTemplateRows: showBoardButtons && favorites.boards.length > 0 ? "26px 32px auto 1fr 22px" : undefined, "--thumb-size": `${thumbSize}px`, "--thumb-mask-blur": `${(thumbMaskStrength / 100) * 20}px`, "--thumb-mask-brightness": `${1 - (thumbMaskStrength / 100) * 0.25}` } as React.CSSProperties}
+      style={{ fontFamily: fontFamily ? `"Backslash", ${fontFamily}` : undefined, gridTemplateRows: [
+        "26px",
+        toolBarVisible ? "32px" : null,
+        (showBoardButtons && favorites.boards.length > 0) ? "auto" : null,
+        "1fr",
+        statusBarVisible ? "22px" : null,
+      ].filter(Boolean).join(" "), "--thumb-size": `${thumbSize}px`, "--thumb-mask-blur": `${(thumbMaskStrength / 100) * 20}px`, "--thumb-mask-brightness": `${1 - (thumbMaskStrength / 100) * 0.25}` } as React.CSSProperties}
       onClick={() => {
         setThreadMenu(null);
         setResponseMenu(null);
@@ -4676,6 +4694,7 @@ export default function App() {
           </div>
         ))}
       </header>
+      {toolBarVisible && (
       <div className="tool-bar">
         <button onClick={() => { void fetchMenu(); void fetchBoardCategories(); }} title="板更新"><ClipboardList size={14} /></button>
         <span className="tool-sep" />
@@ -4901,6 +4920,7 @@ export default function App() {
           title="スレ一覧NGワード"
         ><Ban size={14} />{ngFilters.thread_words.length > 0 ? ngFilters.thread_words.length : ""}</button>
       </div>
+      )}
       {showBoardButtons && favorites.boards.length > 0 && (
         <div className="board-button-bar" ref={boardBtnBarRef}>
           {favorites.boards.map((b, i) => (
@@ -5871,6 +5891,7 @@ export default function App() {
               </div>
             )}
             </div>
+            {responseNavBarVisible && (
             <div className="response-nav-bar">
               <span className="nav-info">
                 着:{visibleResponseItems.length}{ngFilteredCount > 0 ? `(NG${ngFilteredCount})` : ""}
@@ -5951,10 +5972,12 @@ export default function App() {
                 />
               </span>
             </div>
+            )}
           </div>
         </section>
         </div>
       </main>
+      {statusBarVisible && (
       <footer className="status-bar">
         <span className="status-main">{status}</span>
         <span className="status-sep">|</span>
@@ -5980,6 +6003,7 @@ export default function App() {
         <span className="status-sep">|</span>
         <span>Runtime:{runtimeState}</span>
       </footer>
+      )}
       {composeOpen && (
         <section
           className="compose-window"
@@ -6986,6 +7010,18 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={showBoardButtons} onChange={(e) => setShowBoardButtons(e.target.checked)} />
                   <span>板ボタンバー</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={toolBarVisible} onChange={(e) => setToolBarVisible(e.target.checked)} />
+                  <span>ツールバー</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={responseNavBarVisible} onChange={(e) => setResponseNavBarVisible(e.target.checked)} />
+                  <span>レスナビバー</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={statusBarVisible} onChange={(e) => setStatusBarVisible(e.target.checked)} />
+                  <span>ステータスバー</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={keepSortOnRefresh} onChange={(e) => setKeepSortOnRefresh(e.target.checked)} />
