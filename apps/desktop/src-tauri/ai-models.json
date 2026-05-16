@@ -39,6 +39,58 @@
       "promptTemplate": "qwen",
       "languages": ["ja", "en", "zh"],
       "recommendedFor": ["summary", "reply"]
+    },
+    {
+      "id": "qwen3-8b-q4km",
+      "name": "Qwen3-8B",
+      "description": "中大型・日本語品質高め。4B より明確に賢い。標準的なノートPCでも実用域。",
+      "sizeBytes": 5027784512,
+      "quantization": "Q4_K_M",
+      "url": "https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
+      "sha256": "120307ba529eb2439d6c430d94104dabd578497bc7bfe7e322b5d9933b449bd4",
+      "contextLength": 32768,
+      "promptTemplate": "qwen",
+      "languages": ["ja", "en", "zh"],
+      "recommendedFor": ["summary", "reply"]
+    },
+    {
+      "id": "gemma3-12b-it-q4km",
+      "name": "Gemma3-12B-IT",
+      "description": "大型・要約向きの硬めの文体。CPU 推論は重め、GPU / Metal 環境推奨。",
+      "sizeBytes": 7300778336,
+      "quantization": "Q4_K_M",
+      "url": "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-Q4_K_M.gguf",
+      "sha256": "15b8fd9d8672cd4240c178c217ca781409291f34e353d2e913b29c7602ceb3ff",
+      "contextLength": 32768,
+      "promptTemplate": "gemma",
+      "languages": ["ja", "en"],
+      "recommendedFor": ["summary", "reply"]
+    },
+    {
+      "id": "qwen3-14b-q4km",
+      "name": "Qwen3-14B",
+      "description": "大型・賢さ重視。要約 1 本で数十秒〜分かかることも。メモリ/VRAM に余裕のある環境向け。",
+      "sizeBytes": 9001753984,
+      "quantization": "Q4_K_M",
+      "url": "https://huggingface.co/unsloth/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf",
+      "sha256": "5eaa0870bd81ed3b58a630a271234cfa604e43ffb3a19cd68e54a80dd9d52a66",
+      "contextLength": 32768,
+      "promptTemplate": "qwen",
+      "languages": ["ja", "en", "zh"],
+      "recommendedFor": ["summary", "reply"]
+    },
+    {
+      "id": "qwen3-30b-a3b-q4km",
+      "name": "Qwen3-30B-A3B (MoE)",
+      "description": "MoE。30B 級の賢さで活性パラメータ 3B のため推論は中型並みに速い。ただし DL 容量は約 17 GB。",
+      "sizeBytes": 18556686912,
+      "quantization": "Q4_K_M",
+      "url": "https://huggingface.co/unsloth/Qwen3-30B-A3B-GGUF/resolve/main/Qwen3-30B-A3B-Q4_K_M.gguf",
+      "sha256": "9f1a24700a339b09c06009b729b5c809e0b64c213b8af5b711b3dbdfd0c5ba48",
+      "contextLength": 32768,
+      "promptTemplate": "qwen",
+      "languages": ["ja", "en", "zh"],
+      "recommendedFor": ["summary", "reply"]
     }
   ]
 }
