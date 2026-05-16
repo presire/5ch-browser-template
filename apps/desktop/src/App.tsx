@@ -3544,6 +3544,13 @@ export default function App() {
         return;
       }
       if (isTypingTarget(e.target)) return;
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "1" || e.key === "2" || e.key === "3")) {
+        e.preventDefault();
+        if (e.key === "1") setToolBarVisible((v) => !v);
+        else if (e.key === "2") setResponseNavBarVisible((v) => !v);
+        else setStatusBarVisible((v) => !v);
+        return;
+      }
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "r") {
         e.preventDefault();
         void fetchThreadListFromCurrent();
@@ -6858,6 +6865,9 @@ export default function App() {
                 ["Ctrl+Alt+←/→", "スレペイン幅の調整"],
                 ["Ctrl+Alt+↑/↓", "レス分割比の調整"],
                 ["Ctrl+E", "書き込みウィンドウを開く"],
+                ["Ctrl+1", "ツールバーの表示/非表示"],
+                ["Ctrl+2", "レスナビバーの表示/非表示"],
+                ["Ctrl+3", "ステータスバーの表示/非表示"],
                 ["R", "選択レスを引用して書き込み"],
                 ["A", "オートスクロールのオン/オフ"],
                 ["Escape", "ライトボックス/ダイアログを閉じる"],
