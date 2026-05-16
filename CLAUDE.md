@@ -11,6 +11,7 @@
 │   │   └── src-tauri/    # Rustバックエンド (Tauriコマンド定義)
 │   └── landing/          # 公式サイト (Cloudflare Pages)
 ├── crates/
+│   ├── core-ai/          # ローカル LLM (llama-cpp-2) / モデル管理 / ストリーミング推論
 │   ├── core-auth/        # BE / UPLIFT / どんぐり認証
 │   ├── core-fetch/       # HTTP取得・投稿フロー (core-parseに依存)
 │   ├── core-parse/       # dat / subject.txt / bbsmenuパーサ (依存なし)
@@ -23,6 +24,7 @@
 
 ```
 Tauri App (ember)
+├── core-ai     (LLM推論: llama-cpp-2 [metal], sha2, reqwest)
 ├── core-auth   (認証: reqwest, thiserror)
 ├── core-fetch  (HTTP取得: reqwest, encoding_rs) → core-parse
 ├── core-store  (永続化: rusqlite, dirs)
@@ -30,6 +32,8 @@ Tauri App (ember)
 ```
 
 ## 開発コマンド
+
+**事前要件 (core-ai のビルドに必要)**: LLVM (libclang) + CMake が PATH 通っていること。Windows: `winget install LLVM.LLVM Kitware.CMake` + 環境変数 `LIBCLANG_PATH=C:/Program Files/LLVM/bin`。macOS: `brew install llvm cmake` + `LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib`。詳細は `docs/AI_INTEGRATION_PLAN.md` 参照。
 
 ```bash
 # --- セットアップ ---
@@ -87,12 +91,13 @@ cd apps/desktop && npx tsc --noEmit      # TypeScript型チェック
 
 - **フロントエンド**: `App.tsx` 単一ファイルモノリス。状態は `useState`/`useEffect` で完結。外部UIライブラリ不使用
 - **スタイル**: `styles.css` 単一ファイル。`.dark` クラスでダークモード切替
-- **ランタイム依存**: react, react-dom, @tauri-apps/api, lucide-react のみ
+- **ランタイム依存**: react, react-dom, @tauri-apps/api, lucide-react, react-markdown
 - **Tauri IPC**: `invoke()` は `isTauriRuntime()` チェックで囲む。コマンド名は snake_case、パラメータはcamelCase
 - **Rust crate**: 各crateは単一 `lib.rs` を維持 (2000行超まで分割しない)
 - **エラー処理**: Tauriコマンドは `Result<T, String>`、ライブラリcrateは `thiserror` カスタム型
 - **5ch固有**: レスポンスは Shift_JIS デコード必須、URLは `normalize_5ch_url()` を通す
 - **永続化**: localStorage (`desktop.*` プレフィックス) + JSON/SQLite (core-store 経由)
+- **AI**: モデルカタログは `apps/desktop/src-tauri/ai-models.json` に同梱、`include_str!` でバイナリ埋め込み。モデルファイルは `<app_data_dir>/models/` に DL、SHA256 検証必須。詳細は [`docs/AI_INTEGRATION_PLAN.md`](docs/AI_INTEGRATION_PLAN.md)
 
 ## コード規約
 
@@ -116,6 +121,7 @@ cd apps/desktop && npx tsc --noEmit      # TypeScript型チェック
 | `docs/DEVELOPER_GUIDE.md` | 技術仕様・アーキテクチャ・開発手順 |
 | `docs/DEPLOYMENT_RUNBOOK.md` | リリース・デプロイ手順 |
 | `docs/PROGRESS_TRACKER.md` | 実装進捗・未実装タスク |
+| `docs/AI_INTEGRATION_PLAN.md` | AI 統合設計・Phase 進捗・ビルド要件 |
 
 ## リリース
 

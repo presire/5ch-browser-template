@@ -1,6 +1,6 @@
 [package]
 name = "ember"
-version = "0.0.156"
+version = "0.0.159"
 description = "5ちゃんねる専用ブラウザ"
 homepage = "https://ember-5ch.pages.dev"
 repository = "https://github.com/kiyohken2000/5ch-browser-template"
@@ -15,6 +15,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 base64 = { workspace = true }
+chrono = { workspace = true }
+core-ai = { path = "../../../crates/core-ai" }
 core-auth = { path = "../../../crates/core-auth" }
 core-fetch = { path = "../../../crates/core-fetch" }
 core-store = { path = "../../../crates/core-store" }

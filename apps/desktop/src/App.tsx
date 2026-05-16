@@ -10,10 +10,64 @@ import {
   type UIEventHandler,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import ReactMarkdown from "react-markdown";
+
+type AiModelEntry = {
+  id: string;
+  name: string;
+  description: string;
+  sizeBytes: number;
+  quantization: string;
+  url: string;
+  sha256: string;
+  contextLength: number;
+  promptTemplate: string;
+  languages: string[];
+  recommendedFor: string[];
+};
+type AiCatalog = { version: number; models: AiModelEntry[] };
+type AiInstalled = {
+  id: string;
+  filename: string;
+  sizeBytes: number;
+  sha256: string;
+  downloadedAt: string;
+};
+type AiStatus = {
+  activeModelId: string | null;
+  installed: AiInstalled[];
+  totalSizeBytes: number;
+  modelsDir: string;
+  engineVersion: string;
+};
+
+function formatAiBytes(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
+function aiWrapTurn(template: string, role: "user" | "assistant", content: string): string {
+  if (template === "qwen" || template === "chatml") {
+    return `<|im_start|>${role}\n${content}<|im_end|>\n`;
+  }
+  // default: gemma
+  const r = role === "user" ? "user" : "model";
+  return `<start_of_turn>${r}\n${content}<end_of_turn>\n`;
+}
+
+function aiOpenAssistantTurn(template: string): string {
+  if (template === "qwen" || template === "chatml") {
+    return `<|im_start|>assistant\n`;
+  }
+  return `<start_of_turn>model\n`;
+}
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon, Sparkles,
+  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon, Sparkles, BrainCircuit,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -877,6 +931,23 @@ export default function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [threadColumnsOpen, setThreadColumnsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [aiCatalog, setAiCatalog] = useState<AiCatalog | null>(null);
+  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
+  const [aiDownloads, setAiDownloads] = useState<Record<string, { downloaded: number; total: number | null }>>({});
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiSubpaneOpen, setAiSubpaneOpen] = useState(false);
+  const [aiSubpaneTab, setAiSubpaneTab] = useState<"summary" | "chat">("summary");
+  const [aiSummary, setAiSummary] = useState("");
+  const [aiChatMessages, setAiChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [aiChatInput, setAiChatInput] = useState("");
+  const [aiInferenceBusy, setAiInferenceBusy] = useState(false);
+  const [aiTokenProgress, setAiTokenProgress] = useState<{ received: number; max: number } | null>(null);
+  const [aiCanContinue, setAiCanContinue] = useState<"summary" | "chat" | null>(null);
+  const aiSessionIdRef = useRef<string | null>(null);
+  const aiTokenTargetRef = useRef<"summary" | "chat" | null>(null);
+  const aiMaxTokensRef = useRef<number>(400);
+  const aiLastPromptRef = useRef<string>("");
   const [boardsFontSize, setBoardsFontSize] = useState(12);
   const [threadsFontSize, setThreadsFontSize] = useState(12);
   const [responsesFontSize, setResponsesFontSize] = useState(12);
@@ -3544,6 +3615,13 @@ export default function App() {
         return;
       }
       if (isTypingTarget(e.target)) return;
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "1" || e.key === "2" || e.key === "3")) {
+        e.preventDefault();
+        if (e.key === "1") setToolBarVisible((v) => !v);
+        else if (e.key === "2") setResponseNavBarVisible((v) => !v);
+        else setStatusBarVisible((v) => !v);
+        return;
+      }
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "r") {
         e.preventDefault();
         void fetchThreadListFromCurrent();
@@ -4554,6 +4632,345 @@ export default function App() {
     };
   }, [autoScrollEnabled, autoScrollSpeed, activeTabIndex]);
 
+  // --- AI: catalog / status loading -------------------------------------
+  const refreshAiStatus = async () => {
+    if (!isTauriRuntime()) return;
+    try {
+      const st = await invoke<AiStatus>("ai_status");
+      setAiStatus(st);
+    } catch (e) {
+      console.warn("ai_status failed", e);
+    }
+  };
+
+  useEffect(() => {
+    if (!aiSettingsOpen || !isTauriRuntime()) return;
+    void (async () => {
+      try {
+        const cat = await invoke<AiCatalog>("ai_list_models");
+        setAiCatalog(cat);
+      } catch (e) {
+        console.warn("ai_list_models failed", e);
+      }
+      await refreshAiStatus();
+    })();
+  }, [aiSettingsOpen]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let cancelled = false;
+    let u1: UnlistenFn | null = null;
+    let u2: UnlistenFn | null = null;
+    void (async () => {
+      try {
+        const v1 = await listen<{ modelId: string; downloaded: number; total: number | null }>(
+          "ai-download-progress",
+          (e) => {
+            setAiDownloads((prev) => ({
+              ...prev,
+              [e.payload.modelId]: { downloaded: e.payload.downloaded, total: e.payload.total },
+            }));
+          },
+        );
+        if (cancelled) { v1(); return; }
+        u1 = v1;
+        const v2 = await listen<{ modelId: string; ok: boolean; error: string | null }>(
+          "ai-download-finished",
+          (e) => {
+            setAiDownloads((prev) => {
+              const next = { ...prev };
+              delete next[e.payload.modelId];
+              return next;
+            });
+            if (!e.payload.ok && e.payload.error) {
+              setAiError(`ダウンロード失敗 (${e.payload.modelId}): ${e.payload.error}`);
+            }
+            void refreshAiStatus();
+          },
+        );
+        if (cancelled) { v2(); return; }
+        u2 = v2;
+      } catch (e) {
+        console.warn("ai event listen failed", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      try { u1?.(); } catch { /* ignore */ }
+      try { u2?.(); } catch { /* ignore */ }
+    };
+  }, []);
+
+  const aiDownloadModel = async (id: string) => {
+    setAiError(null);
+    setAiDownloads((prev) => ({ ...prev, [id]: { downloaded: 0, total: null } }));
+    try {
+      await invoke("ai_download_model", { modelId: id });
+    } catch (e) {
+      // ai-download-finished event will fire with error; nothing more to do here.
+      console.warn("ai_download_model rejected", e);
+    }
+  };
+  const aiCancelDownload = async (id: string) => {
+    try { await invoke("ai_cancel_download", { modelId: id }); }
+    catch (e) { console.warn("ai_cancel_download failed", e); }
+  };
+  const aiDeleteModel = async (id: string) => {
+    try {
+      await invoke("ai_delete_model", { modelId: id });
+      await refreshAiStatus();
+    } catch (e) {
+      setAiError(`削除失敗: ${String(e)}`);
+    }
+  };
+  const aiActivateModel = async (id: string) => {
+    try {
+      await invoke("ai_activate_model", { modelId: id });
+      await refreshAiStatus();
+    } catch (e) {
+      setAiError(`有効化失敗: ${String(e)}`);
+    }
+  };
+  const aiDeactivateModel = async () => {
+    try {
+      await invoke("ai_deactivate_model");
+      await refreshAiStatus();
+    } catch (e) {
+      setAiError(`無効化失敗: ${String(e)}`);
+    }
+  };
+
+  // --- AI sub-pane: streaming inference --------------------------------
+  // Reset per-thread AI state on thread change.
+  const currentAiThreadUrl = threadTabs[activeTabIndex]?.threadUrl;
+  useEffect(() => {
+    setAiSummary("");
+    setAiChatMessages([]);
+    setAiChatInput("");
+    setAiInferenceBusy(false);
+    setAiTokenProgress(null);
+    setAiCanContinue(null);
+    aiSessionIdRef.current = null;
+    aiTokenTargetRef.current = null;
+    aiLastPromptRef.current = "";
+  }, [currentAiThreadUrl]);
+
+  // Auto-close subpane when no model is active.
+  useEffect(() => {
+    if (!aiStatus?.activeModelId) {
+      setAiSubpaneOpen(false);
+    }
+  }, [aiStatus?.activeModelId]);
+
+  // Status is loaded when AI settings dialog opens; also fetch once at startup
+  // so the toggle button can reflect activation state immediately.
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    void refreshAiStatus();
+  }, []);
+
+  // Streaming token events.
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let cancelled = false;
+    let u1: UnlistenFn | null = null;
+    let u2: UnlistenFn | null = null;
+    void (async () => {
+      try {
+        const v1 = await listen<{ sessionId: string; token: string }>(
+          "ai-inference-token",
+          (e) => {
+            if (e.payload.sessionId !== aiSessionIdRef.current) return;
+            const target = aiTokenTargetRef.current;
+            if (target === "summary") {
+              setAiSummary((prev) => prev + e.payload.token);
+            } else if (target === "chat") {
+              setAiChatMessages((prev) => {
+                if (prev.length === 0) return prev;
+                const last = prev[prev.length - 1];
+                if (last.role !== "assistant") return prev;
+                const next = prev.slice(0, -1);
+                next.push({ role: "assistant", content: last.content + e.payload.token });
+                return next;
+              });
+            }
+            setAiTokenProgress((prev) => {
+              const max = aiMaxTokensRef.current;
+              const received = (prev?.received ?? 0) + 1;
+              return { received, max };
+            });
+          },
+        );
+        if (cancelled) { v1(); return; }
+        u1 = v1;
+        const v2 = await listen<{ sessionId: string; ok: boolean; error: string | null; truncated: boolean }>(
+          "ai-inference-finished",
+          (e) => {
+            if (e.payload.sessionId !== aiSessionIdRef.current) return;
+            const target = aiTokenTargetRef.current;
+            setAiInferenceBusy(false);
+            setAiTokenProgress(null);
+            aiSessionIdRef.current = null;
+            aiTokenTargetRef.current = null;
+            if (!e.payload.ok && e.payload.error) {
+              setAiError(`推論失敗: ${e.payload.error}`);
+              setAiCanContinue(null);
+            } else if (e.payload.truncated && target) {
+              setAiCanContinue(target);
+            } else {
+              setAiCanContinue(null);
+            }
+          },
+        );
+        if (cancelled) { v2(); return; }
+        u2 = v2;
+      } catch (e) {
+        console.warn("ai inference listen failed", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      try { u1?.(); } catch { /* ignore */ }
+      try { u2?.(); } catch { /* ignore */ }
+    };
+  }, []);
+
+  // Format thread responses for the model prompt, truncating to fit context.
+  const buildThreadContext = (maxChars: number): string => {
+    const title = threadTabs[activeTabIndex]?.title ?? "";
+    const lines: string[] = [`タイトル: ${title}`, ""];
+    let used = lines.join("\n").length;
+    for (const r of responseItems) {
+      const plain = stripHtmlForMatch(r.text);
+      const line = `>>${r.id} ${r.name} ${r.time}\n${plain}\n`;
+      if (used + line.length > maxChars) break;
+      lines.push(line);
+      used += line.length;
+    }
+    return lines.join("\n");
+  };
+
+  const aiActiveTemplate = (): string => {
+    const id = aiStatus?.activeModelId;
+    if (!id) return "gemma";
+    return aiCatalog?.models.find((m) => m.id === id)?.promptTemplate ?? "gemma";
+  };
+
+  const aiStartSummary = () => {
+    if (aiInferenceBusy || !aiStatus?.activeModelId || responseItems.length === 0) return;
+    const ctx = buildThreadContext(8000);
+    const template = aiActiveTemplate();
+    const userMsg = [
+      "以下の5ちゃんねるスレッドを日本語で要約してください。",
+      "",
+      "形式:",
+      "- 冒頭1行で全体テーマを述べる",
+      "- 主な論点や流れを箇条書き (3〜6項目)",
+      "- 盛り上がったレスや特徴的な発言があれば >>N の形で言及",
+      "- 推測や創作はしない。スレッド内の発言だけを根拠にする",
+      "",
+      "【スレッド】",
+      ctx,
+    ].join("\n");
+    const prompt = aiWrapTurn(template, "user", userMsg) + aiOpenAssistantTurn(template);
+    const sid = `sum-${Date.now()}`;
+    const maxTokens = 400;
+    aiSessionIdRef.current = sid;
+    aiTokenTargetRef.current = "summary";
+    aiMaxTokensRef.current = maxTokens;
+    aiLastPromptRef.current = prompt;
+    setAiSummary("");
+    setAiInferenceBusy(true);
+    setAiTokenProgress({ received: 0, max: maxTokens });
+    setAiCanContinue(null);
+    setAiError(null);
+    void invoke("ai_run_inference", { sessionId: sid, prompt, maxTokens }).catch((e) => {
+      console.warn("ai_run_inference failed", e);
+    });
+  };
+
+  const aiSendChat = () => {
+    if (aiInferenceBusy || !aiStatus?.activeModelId) return;
+    const message = aiChatInput.trim();
+    if (!message) return;
+    const newMessages: { role: "user" | "assistant"; content: string }[] = [
+      ...aiChatMessages,
+      { role: "user", content: message },
+      { role: "assistant", content: "" },
+    ];
+    setAiChatMessages(newMessages);
+    setAiChatInput("");
+
+    const ctx = buildThreadContext(6000);
+    const template = aiActiveTemplate();
+    const systemInstructions = [
+      "あなたは5ちゃんねるのスレッドを読み解くアシスタントです。以下のスレッドを踏まえて、ユーザーの質問に答えてください。",
+      "",
+      "回答ルール:",
+      "- 基本2〜4文で簡潔に。冗長な前置きや締めくくりは不要。",
+      "- レス番号 (>>15 など) を聞かれたら、そのレスの本文を実際に読んで、何を言っているかを直接答える。",
+      "- 必要なら関連レス番号を >>N の形式で引用する。",
+      "- スレッドに書かれていないことは「スレッドに記載なし」と答える。",
+      "- スレッド全体を要約しない。聞かれたことだけに答える。",
+    ].join("\n");
+    const completeMessages = newMessages.slice(0, -1); // omit the empty assistant placeholder
+    let prompt = "";
+    completeMessages.forEach((m, i) => {
+      if (m.role === "user") {
+        const body = i === 0
+          ? `${systemInstructions}\n\n【スレッド】\n${ctx}\n\n【ユーザーの質問】\n${m.content}`
+          : m.content;
+        prompt += aiWrapTurn(template, "user", body);
+      } else {
+        prompt += aiWrapTurn(template, "assistant", m.content);
+      }
+    });
+    prompt += aiOpenAssistantTurn(template);
+    const sid = `chat-${Date.now()}`;
+    const maxTokens = 400;
+    aiSessionIdRef.current = sid;
+    aiTokenTargetRef.current = "chat";
+    aiMaxTokensRef.current = maxTokens;
+    aiLastPromptRef.current = prompt;
+    setAiInferenceBusy(true);
+    setAiTokenProgress({ received: 0, max: maxTokens });
+    setAiCanContinue(null);
+    setAiError(null);
+    void invoke("ai_run_inference", { sessionId: sid, prompt, maxTokens }).catch((e) => {
+      console.warn("ai_run_inference failed", e);
+    });
+  };
+
+  const aiCancelInference = () => {
+    void invoke("ai_cancel_inference").catch((e) => console.warn("ai_cancel_inference failed", e));
+  };
+
+  const aiContinueGenerate = () => {
+    if (aiInferenceBusy || !aiCanContinue || !aiLastPromptRef.current) return;
+    const target = aiCanContinue;
+    let generatedSoFar = "";
+    if (target === "summary") {
+      generatedSoFar = aiSummary;
+    } else {
+      const last = aiChatMessages[aiChatMessages.length - 1];
+      if (last?.role === "assistant") generatedSoFar = last.content;
+    }
+    const newPrompt = aiLastPromptRef.current + generatedSoFar;
+    const sid = `cont-${Date.now()}`;
+    const maxTokens = 400;
+    aiSessionIdRef.current = sid;
+    aiTokenTargetRef.current = target;
+    aiMaxTokensRef.current = maxTokens;
+    aiLastPromptRef.current = newPrompt;
+    setAiInferenceBusy(true);
+    setAiTokenProgress({ received: 0, max: maxTokens });
+    setAiCanContinue(null);
+    setAiError(null);
+    void invoke("ai_run_inference", { sessionId: sid, prompt: newPrompt, maxTokens }).catch((e) => {
+      console.warn("ai_run_inference (continue) failed", e);
+    });
+  };
+
   return (
     <div
       className={`shell${darkMode ? " dark" : ""}${glassMode ? " glass" : ""}${glassMode && glassUltraLite ? " glass-ultra-lite" : ""}${glassMode && !glassUltraLite && glassLite ? " glass-lite" : ""}${thumbMaskEnabled ? " thumb-masked" : ""}`}
@@ -4647,6 +5064,8 @@ export default function App() {
             { text: "すべてのタブを閉じる", action: closeAllTabs },
           ]},
           { label: "ツール", items: [
+            { text: "AI 設定", action: () => setAiSettingsOpen(true) },
+            { text: "sep" },
             { text: "認証状態", action: checkAuthEnv },
             { text: "認証テスト", action: probeAuth },
           ]},
@@ -5390,6 +5809,14 @@ export default function App() {
                 <button className="title-action-btn" onClick={downloadAllThreadImages} title="画像を一括ダウンロード"><Download size={14} /></button>
                 <button className={`title-action-btn ${imageGalleryOpen ? "active-toggle" : ""}`} onClick={() => setImageGalleryOpen((v) => !v)} title="画像一覧"><Images size={14} /></button>
                 <button
+                  className={`title-action-btn ${aiSubpaneOpen ? "active-toggle" : ""}`}
+                  onClick={() => setAiSubpaneOpen((v) => !v)}
+                  disabled={!aiStatus?.activeModelId}
+                  title={aiStatus?.activeModelId ? "AI" : "AI (モデル未有効 - ツール → AI 設定)"}
+                >
+                  <BrainCircuit size={14} />
+                </button>
+                <button
                   className={`title-action-btn ${thumbMaskEnabled ? "active-toggle" : ""}`}
                   onClick={() => setThumbMaskEnabled((v) => !v)}
                   title={thumbMaskEnabled ? "サムネイルマスク解除" : "サムネイルをマスク"}
@@ -5888,6 +6315,129 @@ export default function App() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+            {aiSubpaneOpen && aiStatus?.activeModelId && (
+              <div className="ai-subpane">
+                <div className="ai-subpane-header">
+                  <div className="ai-subpane-tabs">
+                    <button
+                      className={`ai-subpane-tab ${aiSubpaneTab === "summary" ? "active" : ""}`}
+                      onClick={() => setAiSubpaneTab("summary")}
+                    >
+                      要約
+                    </button>
+                    <button
+                      className={`ai-subpane-tab ${aiSubpaneTab === "chat" ? "active" : ""}`}
+                      onClick={() => setAiSubpaneTab("chat")}
+                    >
+                      チャット
+                    </button>
+                  </div>
+                  <button className="title-action-btn" onClick={() => setAiSubpaneOpen(false)} title="閉じる"><X size={12} /></button>
+                </div>
+                {aiSubpaneTab === "summary" ? (
+                  <div className="ai-subpane-body">
+                    <div className="ai-subpane-toolbar">
+                      <button
+                        onClick={aiStartSummary}
+                        disabled={aiInferenceBusy || responseItems.length === 0}
+                      >
+                        {aiInferenceBusy && aiTokenTargetRef.current === "summary" ? "生成中..." : "要約する"}
+                      </button>
+                      {aiInferenceBusy && aiTokenTargetRef.current === "summary" && (
+                        <button onClick={aiCancelInference}>停止</button>
+                      )}
+                      {!aiInferenceBusy && aiCanContinue === "summary" && (
+                        <button onClick={aiContinueGenerate}>続きを生成</button>
+                      )}
+                      {aiSummary && !aiInferenceBusy && (
+                        <button onClick={() => { setAiSummary(""); setAiCanContinue(null); }}>クリア</button>
+                      )}
+                    </div>
+                    {aiInferenceBusy && aiTokenTargetRef.current === "summary" && aiTokenProgress && (
+                      <div className="ai-progress">
+                        <div className="ai-progress-bar" style={{ width: `${Math.min(100, (aiTokenProgress.received / aiTokenProgress.max) * 100)}%` }} />
+                        <span className="ai-progress-label">
+                          {aiTokenProgress.received} / {aiTokenProgress.max} トークン ({Math.round((aiTokenProgress.received / aiTokenProgress.max) * 100)}%)
+                        </span>
+                      </div>
+                    )}
+                    <div className="ai-summary-content ai-markdown">
+                      {aiSummary ? (
+                        <ReactMarkdown>{aiSummary}</ReactMarkdown>
+                      ) : (
+                        <div className="ai-placeholder">
+                          「要約する」ボタンを押すと、現在のスレを要約します。
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="ai-subpane-body">
+                    <div className="ai-chat-history">
+                      {aiChatMessages.length === 0 && (
+                        <div className="ai-placeholder">
+                          このスレについて質問してください (例:「論点をまとめて」「&gt;&gt;50 の意図は？」)。
+                        </div>
+                      )}
+                      {aiChatMessages.map((m, i) => (
+                        <div key={i} className={`ai-chat-msg ai-chat-msg-${m.role}`}>
+                          <div className="ai-chat-msg-role">{m.role === "user" ? "あなた" : "AI"}</div>
+                          <div className={`ai-chat-msg-content ${m.role === "assistant" ? "ai-markdown" : ""}`}>
+                            {m.role === "assistant" && m.content
+                              ? <ReactMarkdown>{m.content}</ReactMarkdown>
+                              : m.content || (m.role === "assistant" && aiInferenceBusy ? "..." : "")}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {aiInferenceBusy && aiTokenTargetRef.current === "chat" && aiTokenProgress && (
+                      <div className="ai-progress">
+                        <div className="ai-progress-bar" style={{ width: `${Math.min(100, (aiTokenProgress.received / aiTokenProgress.max) * 100)}%` }} />
+                        <span className="ai-progress-label">
+                          {aiTokenProgress.received} / {aiTokenProgress.max} トークン ({Math.round((aiTokenProgress.received / aiTokenProgress.max) * 100)}%)
+                        </span>
+                      </div>
+                    )}
+                    {!aiInferenceBusy && aiCanContinue === "chat" && (
+                      <div className="ai-subpane-toolbar">
+                        <button onClick={aiContinueGenerate}>続きを生成</button>
+                      </div>
+                    )}
+                    <div className="ai-chat-input-row">
+                      <textarea
+                        className="ai-chat-input"
+                        value={aiChatInput}
+                        onChange={(e) => setAiChatInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (aiInferenceBusy) return;
+                          const submitMatch =
+                            e.key === "Enter" &&
+                            ((composeSubmitKey === "shift" && e.shiftKey) ||
+                              (composeSubmitKey === "ctrl" && (e.ctrlKey || e.metaKey)));
+                          if (submitMatch) {
+                            e.preventDefault();
+                            aiSendChat();
+                          }
+                        }}
+                        placeholder={`メッセージ (${composeSubmitKey === "shift" ? "Shift" : "Ctrl"}+Enter で送信)`}
+                        rows={2}
+                        disabled={aiInferenceBusy}
+                      />
+                      {aiInferenceBusy && aiTokenTargetRef.current === "chat" ? (
+                        <button onClick={aiCancelInference}>停止</button>
+                      ) : (
+                        <button
+                          onClick={aiSendChat}
+                          disabled={aiInferenceBusy || !aiChatInput.trim()}
+                        >
+                          送信
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             </div>
@@ -6858,6 +7408,9 @@ export default function App() {
                 ["Ctrl+Alt+←/→", "スレペイン幅の調整"],
                 ["Ctrl+Alt+↑/↓", "レス分割比の調整"],
                 ["Ctrl+E", "書き込みウィンドウを開く"],
+                ["Ctrl+1", "ツールバーの表示/非表示"],
+                ["Ctrl+2", "レスナビバーの表示/非表示"],
+                ["Ctrl+3", "ステータスバーの表示/非表示"],
                 ["R", "選択レスを引用して書き込み"],
                 ["A", "オートスクロールのオン/オフ"],
                 ["Escape", "ライトボックス/ダイアログを閉じる"],
@@ -7169,6 +7722,109 @@ export default function App() {
                 <legend>情報</legend>
                 <div className="settings-row"><span>バージョン</span><span>{currentVersion}</span></div>
                 <div className="settings-row"><span>スモークテスト</span><span>67項目</span></div>
+              </fieldset>
+            </div>
+          </div>
+        </div>
+      )}
+      {aiSettingsOpen && (
+        <div className="lightbox-overlay" onClick={() => setAiSettingsOpen(false)}>
+          <div className="settings-panel ai-settings-panel" onClick={(e) => e.stopPropagation()}>
+            <header className="settings-header">
+              <strong>AI 設定 (ローカル LLM)</strong>
+              <button onClick={() => setAiSettingsOpen(false)}>閉じる</button>
+            </header>
+            <div className="settings-body">
+              {aiError && (
+                <div className="ai-error">
+                  {aiError}
+                  <button className="ai-error-close" onClick={() => setAiError(null)}>×</button>
+                </div>
+              )}
+              <fieldset>
+                <legend>状態</legend>
+                <div className="settings-row">
+                  <span>有効モデル</span>
+                  <span>
+                    {aiStatus?.activeModelId
+                      ? (aiCatalog?.models.find((m) => m.id === aiStatus.activeModelId)?.name ?? aiStatus.activeModelId)
+                      : "なし (AI 機能は無効)"}
+                  </span>
+                </div>
+                <div className="settings-row">
+                  <span>ストレージ使用量</span>
+                  <span>{aiStatus ? formatAiBytes(aiStatus.totalSizeBytes) : "—"}</span>
+                </div>
+                <div className="settings-row">
+                  <span>エンジン</span>
+                  <span>core-ai v{aiStatus?.engineVersion ?? "—"}</span>
+                </div>
+                {aiStatus && (
+                  <div className="settings-row">
+                    <span>保存先</span>
+                    <span style={{ fontSize: "0.8em", opacity: 0.7, wordBreak: "break-all" }}>{aiStatus.modelsDir}</span>
+                  </div>
+                )}
+              </fieldset>
+              <fieldset>
+                <legend>利用可能なモデル</legend>
+                <div className="ai-models-list">
+                  {!aiCatalog && <div className="ai-loading">読み込み中...</div>}
+                  {aiCatalog && aiCatalog.models.length === 0 && (
+                    <div className="ai-loading">利用可能なモデルがありません</div>
+                  )}
+                  {aiCatalog?.models.map((m) => {
+                    const installed = aiStatus?.installed.find((i) => i.id === m.id);
+                    const active = aiStatus?.activeModelId === m.id;
+                    const progress = aiDownloads[m.id];
+                    const downloading = !!progress;
+                    const pct = progress && progress.total
+                      ? Math.min(100, (progress.downloaded / progress.total) * 100)
+                      : 0;
+                    return (
+                      <div key={m.id} className={`ai-model-card${active ? " active" : ""}`}>
+                        <div className="ai-model-card-header">
+                          <strong>{m.name}</strong>
+                          {active && <span className="ai-model-badge">● 有効</span>}
+                          {installed && !active && <span className="ai-model-badge installed">DL済</span>}
+                        </div>
+                        <div className="ai-model-meta">
+                          {formatAiBytes(m.sizeBytes)} / {m.quantization} / ctx {m.contextLength.toLocaleString()}
+                        </div>
+                        <div className="ai-model-desc">{m.description}</div>
+                        {downloading && (
+                          <div className="ai-download-progress">
+                            <div className="ai-download-progress-bar" style={{ width: `${pct}%` }} />
+                            <span className="ai-download-progress-label">
+                              {formatAiBytes(progress.downloaded)}
+                              {progress.total ? ` / ${formatAiBytes(progress.total)}` : ""}
+                            </span>
+                          </div>
+                        )}
+                        <div className="ai-model-actions">
+                          {!installed && !downloading && (
+                            <button onClick={() => void aiDownloadModel(m.id)}>ダウンロード</button>
+                          )}
+                          {downloading && (
+                            <button onClick={() => void aiCancelDownload(m.id)}>キャンセル</button>
+                          )}
+                          {installed && !active && !downloading && (
+                            <>
+                              <button onClick={() => void aiActivateModel(m.id)}>有効化</button>
+                              <button onClick={() => void aiDeleteModel(m.id)}>削除</button>
+                            </>
+                          )}
+                          {installed && active && !downloading && (
+                            <>
+                              <button onClick={() => void aiDeactivateModel()}>無効化</button>
+                              <button onClick={() => void aiDeleteModel(m.id)}>削除</button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </fieldset>
             </div>
           </div>

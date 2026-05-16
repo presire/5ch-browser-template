@@ -7,9 +7,11 @@ use core_fetch::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::Command;
-use tauri::Manager;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// (cookie_name, cookie_value, provider)
 static LOGIN_COOKIES: Mutex<Vec<(String, String, String)>> = Mutex::new(Vec::new());
@@ -1599,6 +1601,325 @@ async fn download_images(urls: Vec<String>, dest_dir: String) -> Result<Download
     Ok(DownloadResult { success_count, fail_count })
 }
 
+// =====================================================================
+// AI (local LLM) commands
+// =====================================================================
+
+const AI_BUNDLED_CATALOG: &str = include_str!("../ai-models.json");
+const AI_REMOTE_CATALOG_URL: &str = "https://ember-5ch.pages.dev/ai-models.json";
+
+/// Try to fetch the remote ai-models.json (with a short timeout). Returns
+/// the body on HTTP 2xx, or None on any error so the caller can fall back to
+/// the bundled catalog.
+async fn ai_fetch_remote_catalog() -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let resp = client.get(AI_REMOTE_CATALOG_URL).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.text().await.ok()
+}
+
+static AI_CANCEL_FLAGS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+static AI_INFERENCE_CANCEL: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new();
+
+fn ai_cancel_flags() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    AI_CANCEL_FLAGS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn ai_inference_cancel() -> &'static Mutex<Option<Arc<AtomicBool>>> {
+    AI_INFERENCE_CANCEL.get_or_init(|| Mutex::new(None))
+}
+
+fn ai_models_dir() -> Result<PathBuf, String> {
+    let base = core_store::portable_data_dir().map_err(|e| e.to_string())?;
+    let dir = base.join("models");
+    Ok(dir)
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AiDownloadProgress {
+    model_id: String,
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AiDownloadFinished {
+    model_id: String,
+    ok: bool,
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiStatus {
+    active_model_id: Option<String>,
+    installed: Vec<core_ai::InstalledModel>,
+    total_size_bytes: u64,
+    models_dir: String,
+    engine_version: String,
+}
+
+#[tauri::command]
+async fn ai_list_models() -> Result<core_ai::ModelCatalog, String> {
+    // Prefer the remote catalog so we can publish new model entries without
+    // shipping a new app version. Fall back to the bundled copy on any
+    // network or parse failure (incl. offline use).
+    if let Some(body) = ai_fetch_remote_catalog().await {
+        if let Ok(catalog) = core_ai::parse_catalog(&body) {
+            return Ok(catalog);
+        }
+    }
+    core_ai::parse_catalog(AI_BUNDLED_CATALOG).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_status() -> Result<AiStatus, String> {
+    let dir = ai_models_dir()?;
+    let manifest = core_ai::load_manifest(&dir).map_err(|e| e.to_string())?;
+    Ok(AiStatus {
+        active_model_id: manifest.active_model_id.clone(),
+        total_size_bytes: manifest.total_size_bytes(),
+        installed: manifest.installed,
+        models_dir: dir.to_string_lossy().into_owned(),
+        engine_version: core_ai::version().to_string(),
+    })
+}
+
+#[tauri::command]
+async fn ai_download_model(app: AppHandle, model_id: String) -> Result<(), String> {
+    let catalog = core_ai::parse_catalog(AI_BUNDLED_CATALOG).map_err(|e| e.to_string())?;
+    let entry = catalog
+        .find(&model_id)
+        .ok_or_else(|| format!("model not in catalog: {model_id}"))?
+        .clone();
+    let dir = ai_models_dir()?;
+    let dest = core_ai::model_path(&dir, &entry.id);
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut flags = ai_cancel_flags().lock().map_err(|e| e.to_string())?;
+        flags.insert(model_id.clone(), cancel.clone());
+    }
+
+    let progress_app = app.clone();
+    let progress_id = model_id.clone();
+    let url = entry.url.clone();
+    let sha = entry.sha256.clone();
+    let id_for_thread = entry.id.clone();
+    let cancel_thread = cancel.clone();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        core_ai::download_model_to_path(
+            &url,
+            &dest,
+            &sha,
+            &id_for_thread,
+            |downloaded, total| {
+                let _ = progress_app.emit(
+                    "ai-download-progress",
+                    AiDownloadProgress {
+                        model_id: progress_id.clone(),
+                        downloaded,
+                        total,
+                    },
+                );
+            },
+            &cancel_thread,
+        )
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?;
+
+    // Remove cancel flag regardless of outcome.
+    {
+        let mut flags = ai_cancel_flags().lock().map_err(|e| e.to_string())?;
+        flags.remove(&model_id);
+    }
+
+    match result {
+        Ok(size) => {
+            let record = core_ai::InstalledModel {
+                id: entry.id.clone(),
+                filename: core_ai::model_filename(&entry.id),
+                size_bytes: size,
+                sha256: entry.sha256.clone(),
+                downloaded_at: chrono::Utc::now().to_rfc3339(),
+            };
+            core_ai::register_installed_model(&dir, record).map_err(|e| e.to_string())?;
+            let _ = app.emit(
+                "ai-download-finished",
+                AiDownloadFinished {
+                    model_id: model_id.clone(),
+                    ok: true,
+                    error: None,
+                },
+            );
+            Ok(())
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            let _ = app.emit(
+                "ai-download-finished",
+                AiDownloadFinished {
+                    model_id: model_id.clone(),
+                    ok: false,
+                    error: Some(msg.clone()),
+                },
+            );
+            Err(msg)
+        }
+    }
+}
+
+#[tauri::command]
+fn ai_cancel_download(model_id: String) -> Result<(), String> {
+    let flags = ai_cancel_flags().lock().map_err(|e| e.to_string())?;
+    if let Some(flag) = flags.get(&model_id) {
+        flag.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn ai_delete_model(model_id: String) -> Result<(), String> {
+    let dir = ai_models_dir()?;
+    core_ai::delete_installed_model(&dir, &model_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_activate_model(model_id: String) -> Result<(), String> {
+    let dir = ai_models_dir()?;
+    let manifest = core_ai::load_manifest(&dir).map_err(|e| e.to_string())?;
+    if !manifest.is_installed(&model_id) {
+        return Err(format!("model not installed: {model_id}"));
+    }
+    core_ai::set_active_model(&dir, Some(&model_id)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_deactivate_model() -> Result<(), String> {
+    let dir = ai_models_dir()?;
+    core_ai::set_active_model(&dir, None).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AiInferenceToken {
+    session_id: String,
+    token: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AiInferenceFinished {
+    session_id: String,
+    ok: bool,
+    error: Option<String>,
+    truncated: bool,
+}
+
+#[tauri::command]
+async fn ai_run_inference(
+    app: AppHandle,
+    session_id: String,
+    prompt: String,
+    max_tokens: Option<u32>,
+) -> Result<(), String> {
+    let dir = ai_models_dir()?;
+    let manifest = core_ai::load_manifest(&dir).map_err(|e| e.to_string())?;
+    let active_id = manifest
+        .active_model_id
+        .clone()
+        .ok_or_else(|| "no active model".to_string())?;
+    let installed = manifest
+        .find(&active_id)
+        .ok_or_else(|| format!("active model not installed: {active_id}"))?;
+    let path = dir.join(&installed.filename);
+    let max = max_tokens.unwrap_or(512);
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut slot = ai_inference_cancel().lock().map_err(|e| e.to_string())?;
+        // Cancel any previous in-flight inference before starting a new one.
+        if let Some(prev) = slot.take() {
+            prev.store(true, Ordering::Relaxed);
+        }
+        *slot = Some(cancel.clone());
+    }
+
+    let token_app = app.clone();
+    let token_session = session_id.clone();
+    let cancel_thread = cancel.clone();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        core_ai::complete_streaming(&path, &prompt, max, &cancel_thread, |piece| {
+            let _ = token_app.emit(
+                "ai-inference-token",
+                AiInferenceToken {
+                    session_id: token_session.clone(),
+                    token: piece.to_string(),
+                },
+            );
+        })
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?;
+
+    // Clear the in-flight cancel slot if it's still ours.
+    {
+        let mut slot = ai_inference_cancel().lock().map_err(|e| e.to_string())?;
+        if let Some(curr) = slot.as_ref() {
+            if Arc::ptr_eq(curr, &cancel) {
+                *slot = None;
+            }
+        }
+    }
+
+    match result {
+        Ok(reason) => {
+            let _ = app.emit(
+                "ai-inference-finished",
+                AiInferenceFinished {
+                    session_id: session_id.clone(),
+                    ok: true,
+                    error: None,
+                    truncated: reason == core_ai::StopReason::MaxTokensReached,
+                },
+            );
+            Ok(())
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            let _ = app.emit(
+                "ai-inference-finished",
+                AiInferenceFinished {
+                    session_id: session_id.clone(),
+                    ok: false,
+                    error: Some(msg.clone()),
+                    truncated: false,
+                },
+            );
+            Err(msg)
+        }
+    }
+}
+
+#[tauri::command]
+fn ai_cancel_inference() -> Result<(), String> {
+    let slot = ai_inference_cancel().lock().map_err(|e| e.to_string())?;
+    if let Some(flag) = slot.as_ref() {
+        flag.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Disable WebKit2GTK's DMA-BUF renderer and GPU compositing on Wayland
@@ -1750,7 +2071,16 @@ pub fn run() {
             open_youtube_pip,
             close_youtube_pip,
             start_pip_drag,
-            download_images
+            download_images,
+            ai_list_models,
+            ai_status,
+            ai_download_model,
+            ai_cancel_download,
+            ai_delete_model,
+            ai_activate_model,
+            ai_deactivate_model,
+            ai_run_inference,
+            ai_cancel_inference
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

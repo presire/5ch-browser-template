@@ -93,6 +93,36 @@
 4. `invoke("download_images", { urls, destDir })` 呼び出し
 5. ステータスバーに結果表示（「12枚ダウンロード完了」等）
 
+### AI 統合 (オンデバイス LLM)
+
+スレ要約とチャット (および将来のレス返信案生成) を、ローカル LLM 推論 (llama-cpp-2) で実現する。Ollama 等の外部依存なしで完結し、ユーザーは AI 設定ダイアログからモデルをダウンロード・有効化することで AI 機能を解禁する。
+
+詳細設計: [docs/AI_INTEGRATION_PLAN.md](AI_INTEGRATION_PLAN.md)
+
+**実装済 Phase**
+- ✅ Phase 1 PoC (commit `82001a1`) — llama-cpp-2 Win ビルド、TinyLlama / Gemma3-1B 推論検証
+- ✅ Phase 1.5 macOS ビルド検証 (commit `d7ad9c8`) — Mac M2 / Metal 自動有効化、~33 tok/s @ Gemma3-1B
+- ✅ Phase 2 モデル管理基盤 (commit `9508a74`) — DL / SHA256 検証 / マニフェスト / AI 設定ダイアログ
+- ✅ Phase 3 要約・チャット (commit `12d3d4a`) — サブペイン / ストリーミング / Markdown / 続き生成 / 4B モデル追加
+
+**残タスク**
+- ⏳ Phase 4 レス返信案 (右クリックメニューから生成 → 書き込みダイアログ)
+- ⏳ Phase 5 仕上げ (ショートカット / keep-loaded 最適化 / smoke test / リモートカタログ fetch ✅ v0.0.159)
+- ⏳ Phase 6 Vulkan GPU 推論 (Windows / Linux 用、NVIDIA / AMD / Intel Arc / 内蔵 GPU 対応)
+
+**新規 crate**
+- `crates/core-ai/` — llama-cpp-2 ラップ、モデル管理、ストリーミング推論
+
+**新規 Tauri コマンド (apps/desktop/src-tauri/src/lib.rs)**
+- 管理系: `ai_list_models` / `ai_status` / `ai_download_model` / `ai_cancel_download` / `ai_delete_model` / `ai_activate_model` / `ai_deactivate_model`
+- 推論系: `ai_run_inference` / `ai_cancel_inference`
+- イベント: `ai-download-progress` / `ai-download-finished` / `ai-inference-token` / `ai-inference-finished`
+
+**ビルド要件 (開発者向け)**
+- Windows: LLVM (`winget install LLVM.LLVM`) + CMake (`winget install Kitware.CMake`) + MSVC
+- macOS: `brew install llvm cmake` (Metal は cmake が自動検出)
+- 環境変数: `LIBCLANG_PATH` を LLVM の `bin` ディレクトリに設定
+
 ## 未実装（検討中）
 
 ### 外部板対応
