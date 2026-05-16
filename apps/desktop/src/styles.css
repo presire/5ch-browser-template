@@ -4937,3 +4937,119 @@ button.search-history-btn:hover {
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
 }
+
+/* AI settings panel ----------------------------------------------------- */
+.ai-settings-panel {
+  width: 520px;
+  max-width: 92vw;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+.ai-settings-panel .settings-body {
+  overflow-y: auto;
+}
+
+.ai-error {
+  background: rgba(255, 80, 80, 0.12);
+  color: #c33;
+  padding: 6px 8px;
+  border-radius: 3px;
+  margin-bottom: 6px;
+  font-size: 0.9em;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.ai-error-close {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1.1em;
+  padding: 0 4px;
+}
+.ai-models-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ai-loading {
+  opacity: 0.6;
+  font-size: 0.9em;
+  padding: 4px 8px;
+}
+.ai-model-card {
+  border: 1px solid rgba(127, 127, 127, 0.25);
+  border-radius: 4px;
+  padding: 8px 10px;
+  background: rgba(127, 127, 127, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ai-model-card.active {
+  border-color: #4a90e2;
+  background: rgba(74, 144, 226, 0.08);
+}
+.ai-model-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.ai-model-badge {
+  font-size: 0.8em;
+  color: #4a90e2;
+  background: rgba(74, 144, 226, 0.12);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+.ai-model-badge.installed {
+  color: #888;
+  background: rgba(127, 127, 127, 0.15);
+}
+.ai-model-meta {
+  font-size: 0.8em;
+  opacity: 0.7;
+}
+.ai-model-desc {
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+.ai-model-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.ai-download-progress {
+  position: relative;
+  height: 18px;
+  background: rgba(127, 127, 127, 0.2);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+.ai-download-progress-bar {
+  height: 100%;
+  background: #4a90e2;
+  transition: width 120ms linear;
+}
+.ai-download-progress-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8em;
+  color: #fff;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+}
+.dark .ai-model-card {
+  background: rgba(255, 255, 255, 0.04);
+}
+.dark .ai-model-card.active {
+  background: rgba(74, 144, 226, 0.15);
+}

@@ -7,9 +7,11 @@ use core_fetch::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::Command;
-use tauri::Manager;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// (cookie_name, cookie_value, provider)
 static LOGIN_COOKIES: Mutex<Vec<(String, String, String)>> = Mutex::new(Vec::new());
@@ -1599,6 +1601,185 @@ async fn download_images(urls: Vec<String>, dest_dir: String) -> Result<Download
     Ok(DownloadResult { success_count, fail_count })
 }
 
+// =====================================================================
+// AI (local LLM) commands
+// =====================================================================
+
+const AI_BUNDLED_CATALOG: &str = include_str!("../ai-models.json");
+
+static AI_CANCEL_FLAGS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+
+fn ai_cancel_flags() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
+    AI_CANCEL_FLAGS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn ai_models_dir() -> Result<PathBuf, String> {
+    let base = core_store::portable_data_dir().map_err(|e| e.to_string())?;
+    let dir = base.join("models");
+    Ok(dir)
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AiDownloadProgress {
+    model_id: String,
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AiDownloadFinished {
+    model_id: String,
+    ok: bool,
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiStatus {
+    active_model_id: Option<String>,
+    installed: Vec<core_ai::InstalledModel>,
+    total_size_bytes: u64,
+    models_dir: String,
+    engine_version: String,
+}
+
+#[tauri::command]
+fn ai_list_models() -> Result<core_ai::ModelCatalog, String> {
+    core_ai::parse_catalog(AI_BUNDLED_CATALOG).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_status() -> Result<AiStatus, String> {
+    let dir = ai_models_dir()?;
+    let manifest = core_ai::load_manifest(&dir).map_err(|e| e.to_string())?;
+    Ok(AiStatus {
+        active_model_id: manifest.active_model_id.clone(),
+        total_size_bytes: manifest.total_size_bytes(),
+        installed: manifest.installed,
+        models_dir: dir.to_string_lossy().into_owned(),
+        engine_version: core_ai::version().to_string(),
+    })
+}
+
+#[tauri::command]
+async fn ai_download_model(app: AppHandle, model_id: String) -> Result<(), String> {
+    let catalog = core_ai::parse_catalog(AI_BUNDLED_CATALOG).map_err(|e| e.to_string())?;
+    let entry = catalog
+        .find(&model_id)
+        .ok_or_else(|| format!("model not in catalog: {model_id}"))?
+        .clone();
+    let dir = ai_models_dir()?;
+    let dest = core_ai::model_path(&dir, &entry.id);
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut flags = ai_cancel_flags().lock().map_err(|e| e.to_string())?;
+        flags.insert(model_id.clone(), cancel.clone());
+    }
+
+    let progress_app = app.clone();
+    let progress_id = model_id.clone();
+    let url = entry.url.clone();
+    let sha = entry.sha256.clone();
+    let id_for_thread = entry.id.clone();
+    let cancel_thread = cancel.clone();
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        core_ai::download_model_to_path(
+            &url,
+            &dest,
+            &sha,
+            &id_for_thread,
+            |downloaded, total| {
+                let _ = progress_app.emit(
+                    "ai-download-progress",
+                    AiDownloadProgress {
+                        model_id: progress_id.clone(),
+                        downloaded,
+                        total,
+                    },
+                );
+            },
+            &cancel_thread,
+        )
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?;
+
+    // Remove cancel flag regardless of outcome.
+    {
+        let mut flags = ai_cancel_flags().lock().map_err(|e| e.to_string())?;
+        flags.remove(&model_id);
+    }
+
+    match result {
+        Ok(size) => {
+            let record = core_ai::InstalledModel {
+                id: entry.id.clone(),
+                filename: core_ai::model_filename(&entry.id),
+                size_bytes: size,
+                sha256: entry.sha256.clone(),
+                downloaded_at: chrono::Utc::now().to_rfc3339(),
+            };
+            core_ai::register_installed_model(&dir, record).map_err(|e| e.to_string())?;
+            let _ = app.emit(
+                "ai-download-finished",
+                AiDownloadFinished {
+                    model_id: model_id.clone(),
+                    ok: true,
+                    error: None,
+                },
+            );
+            Ok(())
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            let _ = app.emit(
+                "ai-download-finished",
+                AiDownloadFinished {
+                    model_id: model_id.clone(),
+                    ok: false,
+                    error: Some(msg.clone()),
+                },
+            );
+            Err(msg)
+        }
+    }
+}
+
+#[tauri::command]
+fn ai_cancel_download(model_id: String) -> Result<(), String> {
+    let flags = ai_cancel_flags().lock().map_err(|e| e.to_string())?;
+    if let Some(flag) = flags.get(&model_id) {
+        flag.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn ai_delete_model(model_id: String) -> Result<(), String> {
+    let dir = ai_models_dir()?;
+    core_ai::delete_installed_model(&dir, &model_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_activate_model(model_id: String) -> Result<(), String> {
+    let dir = ai_models_dir()?;
+    let manifest = core_ai::load_manifest(&dir).map_err(|e| e.to_string())?;
+    if !manifest.is_installed(&model_id) {
+        return Err(format!("model not installed: {model_id}"));
+    }
+    core_ai::set_active_model(&dir, Some(&model_id)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_deactivate_model() -> Result<(), String> {
+    let dir = ai_models_dir()?;
+    core_ai::set_active_model(&dir, None).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Disable WebKit2GTK's DMA-BUF renderer and GPU compositing on Wayland
@@ -1750,7 +1931,14 @@ pub fn run() {
             open_youtube_pip,
             close_youtube_pip,
             start_pip_drag,
-            download_images
+            download_images,
+            ai_list_models,
+            ai_status,
+            ai_download_model,
+            ai_cancel_download,
+            ai_delete_model,
+            ai_activate_model,
+            ai_deactivate_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

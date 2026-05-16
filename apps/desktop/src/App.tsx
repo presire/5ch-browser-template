@@ -10,6 +10,43 @@ import {
   type UIEventHandler,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+type AiModelEntry = {
+  id: string;
+  name: string;
+  description: string;
+  sizeBytes: number;
+  quantization: string;
+  url: string;
+  sha256: string;
+  contextLength: number;
+  promptTemplate: string;
+  languages: string[];
+  recommendedFor: string[];
+};
+type AiCatalog = { version: number; models: AiModelEntry[] };
+type AiInstalled = {
+  id: string;
+  filename: string;
+  sizeBytes: number;
+  sha256: string;
+  downloadedAt: string;
+};
+type AiStatus = {
+  activeModelId: string | null;
+  installed: AiInstalled[];
+  totalSizeBytes: number;
+  modelsDir: string;
+  engineVersion: string;
+};
+
+function formatAiBytes(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)} KB`;
+  return `${n} B`;
+}
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
@@ -877,6 +914,11 @@ export default function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [threadColumnsOpen, setThreadColumnsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
+  const [aiCatalog, setAiCatalog] = useState<AiCatalog | null>(null);
+  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
+  const [aiDownloads, setAiDownloads] = useState<Record<string, { downloaded: number; total: number | null }>>({});
+  const [aiError, setAiError] = useState<string | null>(null);
   const [boardsFontSize, setBoardsFontSize] = useState(12);
   const [threadsFontSize, setThreadsFontSize] = useState(12);
   const [responsesFontSize, setResponsesFontSize] = useState(12);
@@ -4561,6 +4603,109 @@ export default function App() {
     };
   }, [autoScrollEnabled, autoScrollSpeed, activeTabIndex]);
 
+  // --- AI: catalog / status loading -------------------------------------
+  const refreshAiStatus = async () => {
+    if (!isTauriRuntime()) return;
+    try {
+      const st = await invoke<AiStatus>("ai_status");
+      setAiStatus(st);
+    } catch (e) {
+      console.warn("ai_status failed", e);
+    }
+  };
+
+  useEffect(() => {
+    if (!aiSettingsOpen || !isTauriRuntime()) return;
+    void (async () => {
+      try {
+        const cat = await invoke<AiCatalog>("ai_list_models");
+        setAiCatalog(cat);
+      } catch (e) {
+        console.warn("ai_list_models failed", e);
+      }
+      await refreshAiStatus();
+    })();
+  }, [aiSettingsOpen]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    const unlisteners: UnlistenFn[] = [];
+    void (async () => {
+      try {
+        const u1 = await listen<{ modelId: string; downloaded: number; total: number | null }>(
+          "ai-download-progress",
+          (e) => {
+            setAiDownloads((prev) => ({
+              ...prev,
+              [e.payload.modelId]: { downloaded: e.payload.downloaded, total: e.payload.total },
+            }));
+          },
+        );
+        const u2 = await listen<{ modelId: string; ok: boolean; error: string | null }>(
+          "ai-download-finished",
+          (e) => {
+            setAiDownloads((prev) => {
+              const next = { ...prev };
+              delete next[e.payload.modelId];
+              return next;
+            });
+            if (!e.payload.ok && e.payload.error) {
+              setAiError(`ダウンロード失敗 (${e.payload.modelId}): ${e.payload.error}`);
+            }
+            void refreshAiStatus();
+          },
+        );
+        unlisteners.push(u1, u2);
+      } catch (e) {
+        console.warn("ai event listen failed", e);
+      }
+    })();
+    return () => {
+      for (const u of unlisteners) {
+        try { u(); } catch { /* ignore */ }
+      }
+    };
+  }, []);
+
+  const aiDownloadModel = async (id: string) => {
+    setAiError(null);
+    setAiDownloads((prev) => ({ ...prev, [id]: { downloaded: 0, total: null } }));
+    try {
+      await invoke("ai_download_model", { modelId: id });
+    } catch (e) {
+      // ai-download-finished event will fire with error; nothing more to do here.
+      console.warn("ai_download_model rejected", e);
+    }
+  };
+  const aiCancelDownload = async (id: string) => {
+    try { await invoke("ai_cancel_download", { modelId: id }); }
+    catch (e) { console.warn("ai_cancel_download failed", e); }
+  };
+  const aiDeleteModel = async (id: string) => {
+    try {
+      await invoke("ai_delete_model", { modelId: id });
+      await refreshAiStatus();
+    } catch (e) {
+      setAiError(`削除失敗: ${String(e)}`);
+    }
+  };
+  const aiActivateModel = async (id: string) => {
+    try {
+      await invoke("ai_activate_model", { modelId: id });
+      await refreshAiStatus();
+    } catch (e) {
+      setAiError(`有効化失敗: ${String(e)}`);
+    }
+  };
+  const aiDeactivateModel = async () => {
+    try {
+      await invoke("ai_deactivate_model");
+      await refreshAiStatus();
+    } catch (e) {
+      setAiError(`無効化失敗: ${String(e)}`);
+    }
+  };
+
   return (
     <div
       className={`shell${darkMode ? " dark" : ""}${glassMode ? " glass" : ""}${glassMode && glassUltraLite ? " glass-ultra-lite" : ""}${glassMode && !glassUltraLite && glassLite ? " glass-lite" : ""}${thumbMaskEnabled ? " thumb-masked" : ""}`}
@@ -4654,6 +4799,8 @@ export default function App() {
             { text: "すべてのタブを閉じる", action: closeAllTabs },
           ]},
           { label: "ツール", items: [
+            { text: "AI 設定", action: () => setAiSettingsOpen(true) },
+            { text: "sep" },
             { text: "認証状態", action: checkAuthEnv },
             { text: "認証テスト", action: probeAuth },
           ]},
@@ -7179,6 +7326,109 @@ export default function App() {
                 <legend>情報</legend>
                 <div className="settings-row"><span>バージョン</span><span>{currentVersion}</span></div>
                 <div className="settings-row"><span>スモークテスト</span><span>67項目</span></div>
+              </fieldset>
+            </div>
+          </div>
+        </div>
+      )}
+      {aiSettingsOpen && (
+        <div className="lightbox-overlay" onClick={() => setAiSettingsOpen(false)}>
+          <div className="settings-panel ai-settings-panel" onClick={(e) => e.stopPropagation()}>
+            <header className="settings-header">
+              <strong>AI 設定 (ローカル LLM)</strong>
+              <button onClick={() => setAiSettingsOpen(false)}>閉じる</button>
+            </header>
+            <div className="settings-body">
+              {aiError && (
+                <div className="ai-error">
+                  {aiError}
+                  <button className="ai-error-close" onClick={() => setAiError(null)}>×</button>
+                </div>
+              )}
+              <fieldset>
+                <legend>状態</legend>
+                <div className="settings-row">
+                  <span>有効モデル</span>
+                  <span>
+                    {aiStatus?.activeModelId
+                      ? (aiCatalog?.models.find((m) => m.id === aiStatus.activeModelId)?.name ?? aiStatus.activeModelId)
+                      : "なし (AI 機能は無効)"}
+                  </span>
+                </div>
+                <div className="settings-row">
+                  <span>ストレージ使用量</span>
+                  <span>{aiStatus ? formatAiBytes(aiStatus.totalSizeBytes) : "—"}</span>
+                </div>
+                <div className="settings-row">
+                  <span>エンジン</span>
+                  <span>core-ai v{aiStatus?.engineVersion ?? "—"}</span>
+                </div>
+                {aiStatus && (
+                  <div className="settings-row">
+                    <span>保存先</span>
+                    <span style={{ fontSize: "0.8em", opacity: 0.7, wordBreak: "break-all" }}>{aiStatus.modelsDir}</span>
+                  </div>
+                )}
+              </fieldset>
+              <fieldset>
+                <legend>利用可能なモデル</legend>
+                <div className="ai-models-list">
+                  {!aiCatalog && <div className="ai-loading">読み込み中...</div>}
+                  {aiCatalog && aiCatalog.models.length === 0 && (
+                    <div className="ai-loading">利用可能なモデルがありません</div>
+                  )}
+                  {aiCatalog?.models.map((m) => {
+                    const installed = aiStatus?.installed.find((i) => i.id === m.id);
+                    const active = aiStatus?.activeModelId === m.id;
+                    const progress = aiDownloads[m.id];
+                    const downloading = !!progress;
+                    const pct = progress && progress.total
+                      ? Math.min(100, (progress.downloaded / progress.total) * 100)
+                      : 0;
+                    return (
+                      <div key={m.id} className={`ai-model-card${active ? " active" : ""}`}>
+                        <div className="ai-model-card-header">
+                          <strong>{m.name}</strong>
+                          {active && <span className="ai-model-badge">● 有効</span>}
+                          {installed && !active && <span className="ai-model-badge installed">DL済</span>}
+                        </div>
+                        <div className="ai-model-meta">
+                          {formatAiBytes(m.sizeBytes)} / {m.quantization} / ctx {m.contextLength.toLocaleString()}
+                        </div>
+                        <div className="ai-model-desc">{m.description}</div>
+                        {downloading && (
+                          <div className="ai-download-progress">
+                            <div className="ai-download-progress-bar" style={{ width: `${pct}%` }} />
+                            <span className="ai-download-progress-label">
+                              {formatAiBytes(progress.downloaded)}
+                              {progress.total ? ` / ${formatAiBytes(progress.total)}` : ""}
+                            </span>
+                          </div>
+                        )}
+                        <div className="ai-model-actions">
+                          {!installed && !downloading && (
+                            <button onClick={() => void aiDownloadModel(m.id)}>ダウンロード</button>
+                          )}
+                          {downloading && (
+                            <button onClick={() => void aiCancelDownload(m.id)}>キャンセル</button>
+                          )}
+                          {installed && !active && !downloading && (
+                            <>
+                              <button onClick={() => void aiActivateModel(m.id)}>有効化</button>
+                              <button onClick={() => void aiDeleteModel(m.id)}>削除</button>
+                            </>
+                          )}
+                          {installed && active && !downloading && (
+                            <>
+                              <button onClick={() => void aiDeactivateModel()}>無効化</button>
+                              <button onClick={() => void aiDeleteModel(m.id)}>削除</button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </fieldset>
             </div>
           </div>
