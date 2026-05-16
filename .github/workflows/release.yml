@@ -21,7 +21,9 @@ jobs:
             librsvg2-dev \
             patchelf \
             rpm \
-            fcitx5-frontend-gtk3
+            fcitx5-frontend-gtk3 \
+            libclang-dev \
+            cmake
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -154,7 +156,9 @@ jobs:
             librsvg2-dev \
             patchelf \
             rpm \
-            fcitx5-frontend-gtk3
+            fcitx5-frontend-gtk3 \
+            libclang-dev \
+            cmake
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
