@@ -371,28 +371,50 @@ macOS Metal (M2) vs Windows CPU 比較: Gemma3-1B で **≈14% 高速** (33 vs 2
 3. ✅ TinyLlama / Gemma3-1B どちらも推論成功、日本語出力品質を確認
 4. ✅ Metal vs CPU 速度比較: Mac Metal ≈33 tok/s vs Windows CPU ≈29 tok/s (Gemma3-1B)
 
-### Phase 2: モデル管理基盤 (1-2 週)
-1. `ai-models.json` フォーマット確定、初期 3 モデル分の URL/SHA256 登録
-2. ダウンロード進捗ストリーミング (Tauri event)
-3. モデルファイル管理 (配置、削除、マニフェスト)
-4. AI 設定パネル UI 実装
+### Phase 2: モデル管理基盤 ✅ 完了 (commit `9508a74`)
+1. ✅ `ai-models.json` フォーマット確定、初期は Gemma3-1B のみ (HF LFS ポインタから SHA256 取得)
+2. ✅ ダウンロード進捗ストリーミング (`ai-download-progress` / `ai-download-finished` イベント)
+3. ✅ モデルファイル管理 (配置、削除、マニフェスト、SHA256 検証、アトミック rename)
+4. ✅ AI 設定ダイアログ (ツールメニュー → AI 設定、メイン設定とは独立)
 
-### Phase 3: 要約機能 (1-2 週)
-1. チャンク分割 + 階層要約ロジック
-2. ストリーミング描画 UI (AiSummaryPanel)
-3. キャッシュ機構
-4. 自動要約しきい値設定
+**Tauri コマンド**: `ai_list_models` / `ai_status` / `ai_download_model` / `ai_cancel_download` / `ai_delete_model` / `ai_activate_model` / `ai_deactivate_model`
 
-### Phase 4: レス返信案 (1 週)
+### Phase 3: 要約・チャット機能 ✅ 完了 (commit `12d3d4a`)
+1. ✅ ストリーミング推論 (`complete_streaming` + `StopReason` enum)
+2. ✅ AI サブペイン (画像一覧の隣、要約/チャットのタブ切替、スレ切替でリセット)
+3. ✅ 要約タブ: 「要約する」ボタン → スレ全文プロンプト → ストリーミング描画
+4. ✅ チャットタブ: スレ文脈 + 履歴ベースの会話、送信キーは composeSubmitKey 設定に追従
+5. ✅ Markdown レンダリング (`react-markdown`、テーマ追従スタイル)
+6. ✅ 進捗バー (受信トークン / max トークン %)
+7. ✅ 「続きを生成」ボタン (max_tokens 到達時のみ、prompt + 既存出力で再投入)
+8. ✅ プロンプトテンプレ切替 (Gemma `<start_of_turn>` / Qwen ChatML)
+9. ✅ 4B モデル追加 (Gemma3-4B-IT / Qwen3-4B-Instruct-2507)
+10. ✅ ライト/ダーク + ガラス効果対応
+11. ✅ BrainCircuit アイコンのトグルボタン (モデル未有効時 disabled)
+
+**Tauri コマンド**: `ai_run_inference` / `ai_cancel_inference`
+**Tauri イベント**: `ai-inference-token` / `ai-inference-finished` (`truncated` フラグ付き)
+
+**未実装 (Phase 3 から繰り越し)**:
+- スレキャッシュ (同一スレ・同一最終レス ID なら推論結果を再利用)
+- チャンク分割 + 階層要約 (現状は 8000 文字でトランケート、~4000 トークン超は切り捨て)
+- 自動要約しきい値 (N レス超で自動実行)
+
+### Phase 4: レス返信案 (未着手)
 1. 返信案生成プロンプト設計 (トーン別)
-2. 書き込みダイアログとの統合
-3. キャンセル/再生成
+2. レス右クリックメニューに「AI 返信案を生成」項目追加
+3. 書き込みダイアログを自動オープン + 本文欄にストリーミング描画
+4. ユーザー編集前提 (全自動投稿 API は提供しない)
+5. キャンセル/再生成
 
-### Phase 5: 仕上げ (1 週)
-1. キーボードショートカット追加
-2. ドキュメント整備 (DEVELOPER_GUIDE 更新)
-3. スモークテスト/E2E 追加
+### Phase 5: 仕上げ (未着手)
+1. キーボードショートカット (Ctrl+Shift+S 要約 / Ctrl+Shift+G 返信案)
+2. ドキュメント整備 (DEVELOPER_GUIDE 更新、AI セットアップ手順)
+3. スモークテスト / E2E (AI 設定 UI の描画確認)
 4. PROGRESS_TRACKER 更新
+5. モデルを keep-loaded にする最適化 (毎回ロード/破棄を排除)
+6. ai-models.json をランディングサイトから fetch する remote update 対応
+7. AI 設定パネルに「max_tokens」「自動要約しきい値」「返信トーン」項目追加
 
 ## リスク・未確定事項
 
