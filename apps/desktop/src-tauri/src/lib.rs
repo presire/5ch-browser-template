@@ -1606,6 +1606,22 @@ async fn download_images(urls: Vec<String>, dest_dir: String) -> Result<Download
 // =====================================================================
 
 const AI_BUNDLED_CATALOG: &str = include_str!("../ai-models.json");
+const AI_REMOTE_CATALOG_URL: &str = "https://ember-5ch.pages.dev/ai-models.json";
+
+/// Try to fetch the remote ai-models.json (with a short timeout). Returns
+/// the body on HTTP 2xx, or None on any error so the caller can fall back to
+/// the bundled catalog.
+async fn ai_fetch_remote_catalog() -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let resp = client.get(AI_REMOTE_CATALOG_URL).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.text().await.ok()
+}
 
 static AI_CANCEL_FLAGS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 static AI_INFERENCE_CANCEL: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new();
@@ -1651,7 +1667,15 @@ struct AiStatus {
 }
 
 #[tauri::command]
-fn ai_list_models() -> Result<core_ai::ModelCatalog, String> {
+async fn ai_list_models() -> Result<core_ai::ModelCatalog, String> {
+    // Prefer the remote catalog so we can publish new model entries without
+    // shipping a new app version. Fall back to the bundled copy on any
+    // network or parse failure (incl. offline use).
+    if let Some(body) = ai_fetch_remote_catalog().await {
+        if let Ok(catalog) = core_ai::parse_catalog(&body) {
+            return Ok(catalog);
+        }
+    }
     core_ai::parse_catalog(AI_BUNDLED_CATALOG).map_err(|e| e.to_string())
 }
 
