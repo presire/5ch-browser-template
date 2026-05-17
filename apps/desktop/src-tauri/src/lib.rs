@@ -1664,7 +1664,17 @@ struct AiStatus {
     total_size_bytes: u64,
     models_dir: String,
     engine_version: String,
+    /// GPU backend compiled into llama-cpp-2 for this platform. The user can
+    /// still force CPU inference via the `backend` parameter of `ai_run_inference`.
+    /// `"metal"` on macOS, `"vulkan"` on Windows / Linux, `"cpu"` if no GPU
+    /// backend was enabled at build time.
+    compiled_backend: &'static str,
 }
+
+#[cfg(target_os = "macos")]
+const COMPILED_BACKEND: &str = "metal";
+#[cfg(not(target_os = "macos"))]
+const COMPILED_BACKEND: &str = "vulkan";
 
 #[tauri::command]
 async fn ai_list_models() -> Result<core_ai::ModelCatalog, String> {
@@ -1689,6 +1699,7 @@ fn ai_status() -> Result<AiStatus, String> {
         installed: manifest.installed,
         models_dir: dir.to_string_lossy().into_owned(),
         engine_version: core_ai::version().to_string(),
+        compiled_backend: COMPILED_BACKEND,
     })
 }
 
@@ -1825,12 +1836,20 @@ struct AiInferenceFinished {
     truncated: bool,
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AiInferencePhaseEvent {
+    session_id: String,
+    phase: core_ai::InferencePhase,
+}
+
 #[tauri::command]
 async fn ai_run_inference(
     app: AppHandle,
     session_id: String,
     prompt: String,
     max_tokens: Option<u32>,
+    backend: Option<core_ai::InferenceBackend>,
 ) -> Result<(), String> {
     let dir = ai_models_dir()?;
     let manifest = core_ai::load_manifest(&dir).map_err(|e| e.to_string())?;
@@ -1843,6 +1862,7 @@ async fn ai_run_inference(
         .ok_or_else(|| format!("active model not installed: {active_id}"))?;
     let path = dir.join(&installed.filename);
     let max = max_tokens.unwrap_or(512);
+    let inference_backend = backend.unwrap_or_default();
 
     let cancel = Arc::new(AtomicBool::new(false));
     {
@@ -1856,18 +1876,36 @@ async fn ai_run_inference(
 
     let token_app = app.clone();
     let token_session = session_id.clone();
+    let phase_app = app.clone();
+    let phase_session = session_id.clone();
     let cancel_thread = cancel.clone();
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        core_ai::complete_streaming(&path, &prompt, max, &cancel_thread, |piece| {
-            let _ = token_app.emit(
-                "ai-inference-token",
-                AiInferenceToken {
-                    session_id: token_session.clone(),
-                    token: piece.to_string(),
-                },
-            );
-        })
+        core_ai::complete_streaming(
+            &path,
+            &prompt,
+            max,
+            inference_backend,
+            &cancel_thread,
+            |piece| {
+                let _ = token_app.emit(
+                    "ai-inference-token",
+                    AiInferenceToken {
+                        session_id: token_session.clone(),
+                        token: piece.to_string(),
+                    },
+                );
+            },
+            |phase| {
+                let _ = phase_app.emit(
+                    "ai-inference-phase",
+                    AiInferencePhaseEvent {
+                        session_id: phase_session.clone(),
+                        phase,
+                    },
+                );
+            },
+        )
     })
     .await
     .map_err(|e| format!("join: {e}"))?;
@@ -1920,6 +1958,45 @@ fn ai_cancel_inference() -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn ai_list_backend_devices() -> Result<Vec<core_ai::BackendDevice>, String> {
+    core_ai::list_backend_devices().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_cache_state() -> core_ai::CacheStateSnapshot {
+    core_ai::cache_state()
+}
+
+#[tauri::command]
+async fn ai_preload_model(backend: Option<core_ai::InferenceBackend>) -> Result<(), String> {
+    let dir = ai_models_dir()?;
+    let manifest = core_ai::load_manifest(&dir).map_err(|e| e.to_string())?;
+    let active_id = manifest
+        .active_model_id
+        .clone()
+        .ok_or_else(|| "no active model".to_string())?;
+    let installed = manifest
+        .find(&active_id)
+        .ok_or_else(|| format!("active model not installed: {active_id}"))?;
+    let path = dir.join(&installed.filename);
+    let inference_backend = backend.unwrap_or_default();
+    // Loading is slow disk + GPU init; keep it off the async runtime.
+    tauri::async_runtime::spawn_blocking(move || {
+        core_ai::preload_model(&path, inference_backend)
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_unload_model() -> Result<(), String> {
+    core_ai::unload_model();
+    Ok(())
+}
+
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Disable WebKit2GTK's DMA-BUF renderer and GPU compositing on Wayland
@@ -1938,6 +2015,27 @@ pub fn run() {
 
     let _ = core_store::init_portable_layout();
     let _ = core_store::append_log("app started");
+
+    // Safe-mode toggle (v0.0.164–v0.0.166 attempt) was removed in v0.0.167:
+    // none of env var / DLL rename approaches could prevent the crash, because
+    // vulkan-1.dll is a PE import (vkGetInstanceProcAddr) and is loaded by the
+    // OS process loader before main() runs. Old GPUs with broken Vulkan ICDs
+    // (e.g. NVIDIA Kepler / GeForce 700) are documented as unsupported for AI
+    // features on the landing page. Any leftover `ai_safe_mode.json` and
+    // `vulkan-1.dll.safe-mode-disabled` files from previous versions are
+    // restored / cleaned up below.
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let active = exe_dir.join("vulkan-1.dll");
+            let disabled = exe_dir.join("vulkan-1.dll.safe-mode-disabled");
+            if disabled.exists() && !active.exists() {
+                let _ = std::fs::rename(&disabled, &active);
+            } else if disabled.exists() && active.exists() {
+                let _ = std::fs::remove_file(&disabled);
+            }
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -2080,7 +2178,11 @@ pub fn run() {
             ai_activate_model,
             ai_deactivate_model,
             ai_run_inference,
-            ai_cancel_inference
+            ai_cancel_inference,
+            ai_list_backend_devices,
+            ai_cache_state,
+            ai_preload_model,
+            ai_unload_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

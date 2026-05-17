@@ -420,7 +420,7 @@ macOS Metal (M2) vs Windows CPU 比較: Gemma3-1B で **≈14% 高速** (33 vs 2
 6. ai-models.json をランディングサイトから fetch する remote update 対応 ✅ 完了 (v0.0.159)
 7. AI 設定パネルに「max_tokens」「自動要約しきい値」「返信トーン」項目追加
 
-### Phase 6: Vulkan GPU 推論サポート (未着手)
+### Phase 6: Vulkan GPU 推論サポート ✅ 実装完了 (動作検証待ち)
 
 現状 Windows / Linux は CPU 推論のみで、GeForce / Radeon / Intel Arc 等の GPU 搭載環境でも GPU が活用されない。Vulkan バックエンドを有効化することで、ベンダ非依存で幅広い GPU に対応する。
 
@@ -437,28 +437,33 @@ macOS Metal (M2) vs Windows CPU 比較: Gemma3-1B で **≈14% 高速** (33 vs 2
 
 #### 実装タスク
 
-1. **Cargo feature 切替**: `crates/core-ai/Cargo.toml` の `llama-cpp-2` を OS で出し分け
-   - macOS: 引き続き `features = ["metal"]`
+1. ✅ **Cargo feature 切替**: `crates/core-ai/Cargo.toml` の `llama-cpp-2` を OS で出し分け
+   - macOS: `features = ["metal"]`
    - Windows / Linux: `features = ["vulkan"]`
-   - `[target.'cfg(...)'.dependencies]` で実現
-2. **ビルド環境の前提追加**:
-   - Windows: `winget install KhronosGroup.VulkanSDK` + `VULKAN_SDK` 環境変数
-   - Linux: `apt install libvulkan-dev vulkan-tools glslang-tools`
-3. **GitHub Actions 整備**: `.github/workflows/ci.yml` と `release.yml` に Vulkan SDK 導入ステップを追加
-4. **ランタイムフォールバック確認**: Vulkan ドライバ未導入環境で llama.cpp が CPU にフォールバックするか実機検証
-5. **CPU / GPU 実行時切替** (重要): `llama-cpp-2` の `with_n_gpu_layers()` を設定値から制御
-   - Vulkan ビルド一本のまま、**ビルドを分けずに実行時で CPU / GPU を切替可能**
-   - 設定値の保持: `desktop.aiPrefs.v1` に `inferenceBackend: "auto" | "gpu" | "cpu"` を追加
-   - `auto`: GPU 検出時は全レイヤー GPU、未検出時 CPU
-   - `gpu`: `n_gpu_layers = i32::MAX` (全レイヤー GPU、未検出時はエラーにせず CPU フォールバック)
-   - `cpu`: `n_gpu_layers = 0` (貧弱な GPU・GPU を他用途で使いたいケース・推論結果検証目的等)
-6. **AI 設定パネルにバックエンド選択**: ラジオまたはセレクトボックスで上記 3 モード切替
-   - 検出 GPU 名・現在の動作モードを表示: 「現在: Vulkan (GeForce GTX 1050, 35/35 layers)」「現在: CPU only」
-   - `ai_status` に `backend` / `device` / `gpuLayersUsed` / `gpuLayersTotal` フィールド追加
-7. **配布バイナリサイズ計測**: 現状 ZIP 約 8 MB → Vulkan 有効化での増加分を確認 (許容ライン: ZIP 20 MB 以下)
-8. **性能ベンチ**: Gemma3-4B / Qwen3-8B あたりで Windows CPU vs Vulkan の tok/s を実測 (期待: 3〜10x 高速化)、CPU モード強制時に GPU レイヤーが本当に 0 か llama.cpp ログで確認
-9. **CUDA フォールバック検討余地**: Vulkan で性能が CUDA に大きく劣る場合、NVIDIA 環境向け cuda feature を別ビルドとして提供する選択肢を残す (現時点では非採用)
-10. **ドキュメント更新**: CLAUDE.md / DEVELOPER_GUIDE.md にビルド前提と Vulkan SDK インストール手順、推論バックエンド設定の説明を追記
+   - `[target.'cfg(target_os = "macos")'.dependencies]` で実現
+2. ✅ **ビルド環境の前提追加**:
+   - Windows: `winget install KhronosGroup.VulkanSDK` (~600 MB) + `VULKAN_SDK` 環境変数 (インストーラが自動設定)
+   - Linux: `apt install libvulkan-dev glslang-tools` (CI / release.yml 反映済み)
+3. ✅ **GitHub Actions 整備**: `.github/workflows/ci.yml` Windows ジョブに Vulkan SDK 導入 (chocolatey) + Long Path 有効化、Linux 両ジョブに libvulkan-dev / glslang-tools 追加。release.yml の Linux ジョブも同様
+4. ⏳ **ランタイムフォールバック確認**: Vulkan ドライバ未導入環境で llama.cpp が CPU にフォールバックするか実機検証 (動作検証フェーズで実施)
+5. ✅ **CPU / GPU 実行時切替**: `core-ai::InferenceBackend` enum (Auto / Gpu / Cpu) を追加、`complete_streaming` の引数として受け取り `LlamaModelParams::with_n_gpu_layers()` を制御
+   - Vulkan ビルド一本のまま、ビルドを分けずに実行時で CPU / GPU を切替可能
+   - 設定値の保持: `desktop.aiPrefs.v1` に `inferenceBackend: "auto" | "gpu" | "cpu"` で localStorage 永続化
+   - `auto` / `gpu`: `n_gpu_layers = 999` (全レイヤー GPU、llama.cpp 内部で CPU フォールバック)
+   - `cpu`: `n_gpu_layers = 0` (CPU 強制)
+6. ✅ **AI 設定パネルにバックエンド選択**: ラジオ 3 つで上記モード切替、`AiStatus.compiledBackend` でプラットフォーム情報表示
+   - `ai_status` に `compiledBackend: "metal" | "vulkan" | "cpu"` フィールド追加 (静的)
+   - GPU デバイス名・実際の layers 使用数の動的取得は llama-cpp-2 が公開していないため未対応 (将来検討)
+7. ⏳ **配布バイナリサイズ計測**: 動作検証時に Windows ZIP サイズを計測 (許容ライン: 20 MB)
+8. ⏳ **性能ベンチ**: Gemma3-4B / Qwen3-8B あたりで Windows CPU vs Vulkan の tok/s を実測 (動作検証フェーズ)
+9. **CUDA フォールバック検討余地**: Vulkan で性能が CUDA に大きく劣る場合に検討 (現時点では非採用)
+10. ✅ **ドキュメント更新**: CLAUDE.md / AI_INTEGRATION_PLAN.md / PROGRESS_TRACKER.md に反映
+
+#### Windows ビルド時の追加注意点 (実装中に判明)
+
+- **Long Path 必須**: llama.cpp の `vulkan-shaders-gen` ExternalProject の生成パスが 260 文字を超え、MSVC `cl.exe` が `C1083: Invalid argument` でコケる。`HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled = 1` を **admin 権限で** レジストリ設定する (要 UAC、新規プロセスから有効)
+- **CARGO_TARGET_DIR 短縮推奨**: Long Path 有効化後も MSVC ツール側が長パス非対応のため、`CARGO_TARGET_DIR=C:\t` 等の短いパスにビルド成果物を逃がすのが確実 (プロジェクトパスが浅ければ不要だが推奨)
+- **`llama-cpp-sys-2` ビルドの初回フレーク**: vulkan-shaders-gen の install 段階で初回ビルドが失敗することがある (タイミング問題)。再実行で通る。CI ではリトライ機構を検討要検討
 
 #### 設計判断: なぜ実行時切替 (3 モード)
 

@@ -13,6 +13,10 @@ import emberGlassOffLight from "./assets/images/ember-windows-glass-off-light.jp
 import emberGlassOffDark from "./assets/images/ember-windows-glass-off-dark.jpg";
 import emberGlassOnLight from "./assets/images/ember-windows-glass-on-light.jpg";
 import emberGlassOnDark from "./assets/images/ember-windows-glass-on-dark.jpg";
+import aiSettings from "./assets/images/ai-settings.png";
+import aiSummarize from "./assets/images/ai-summarize.png";
+import aiChat from "./assets/images/ai-chat.png";
+import aiStatus from "./assets/images/ai-status.png";
 
 const REPO_RELEASES_URL = "https://github.com/kiyohken2000/5ch-browser-template/releases";
 const GITHUB_URL = "https://github.com/kiyohken2000/5ch-browser-template";
@@ -46,6 +50,14 @@ type ZoomImage = {
 type PlatformKey = "windows" | "mac";
 type ThemeKey = "light" | "dark";
 type GlassKey = "on" | "off";
+type AiTabKey = "settings" | "summarize" | "chat" | "status";
+
+const aiShowcase: Record<AiTabKey, { src: string; alt: string; caption: string }> = {
+  settings: { src: aiSettings, alt: "AI 設定 - モデル選択と推論バックエンド", caption: "モデルをワンクリックでダウンロードして有効化。GPU / CPU の切替も可能。" },
+  summarize: { src: aiSummarize, alt: "AI スレッド要約", caption: "長いスレッドを開いたまま、サイドパネルで要約。読みどころが一目で分かる。" },
+  chat: { src: aiChat, alt: "AI チャット", caption: "現在開いているスレッドの内容を前提にチャット。気になる流れを掘り下げる。" },
+  status: { src: aiStatus, alt: "AI ステータス", caption: "ロード中のモデル、推論バックエンド、検出 GPU/CPU デバイスを一目で確認。" },
+};
 
 const THEME_STORAGE_KEY = "ember.landing.theme";
 
@@ -95,6 +107,7 @@ export default function App() {
   const [theme, setTheme] = useState<ThemeKey>("light");
   const [glass, setGlass] = useState<GlassKey>("on");
   const [glassTheme, setGlassTheme] = useState<ThemeKey>("light");
+  const [aiTab, setAiTab] = useState<AiTabKey>("settings");
   const [colorScheme, setColorScheme] = useState<ThemeKey>(() => readInitialColorScheme());
   const windowsAsset = meta?.platforms["windows-x64"] ?? null;
   const macAsset = meta?.platforms["macos-arm64"] ?? null;
@@ -433,6 +446,77 @@ export default function App() {
             </div>
           </div>
 
+          <div className="feature-big reveal">
+            <div className="feature-big-text">
+              <p className="kicker">AI</p>
+              <h3>ローカル LLM で、要約と対話。</h3>
+              <p>
+                スレッドの要約・チャットを <b>完全ローカルの LLM</b> で実行。
+                クラウドにデータを送らないので、プライバシーを保ったまま長いスレッドを素早く把握できます。
+                Gemma3 / Qwen3 など複数モデルから選択可能、初回ダウンロード後はオフラインでも利用できます。
+              </p>
+              <p>
+                Apple Silicon は Metal、Windows / Linux は Vulkan で GPU 推論。
+                推論バックエンドは自動 / GPU / CPU から選択でき、環境に合わせて柔軟に切替えられます。
+              </p>
+              <div className="toggle-group">
+                <div className="toggle-set" role="tablist" aria-label="AI 機能">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={aiTab === "settings"}
+                    className={`toggle-pill ${aiTab === "settings" ? "is-active" : ""}`}
+                    onClick={() => setAiTab("settings")}
+                  >
+                    モデル管理
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={aiTab === "summarize"}
+                    className={`toggle-pill ${aiTab === "summarize" ? "is-active" : ""}`}
+                    onClick={() => setAiTab("summarize")}
+                  >
+                    スレッド要約
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={aiTab === "chat"}
+                    className={`toggle-pill ${aiTab === "chat" ? "is-active" : ""}`}
+                    onClick={() => setAiTab("chat")}
+                  >
+                    チャット
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={aiTab === "status"}
+                    className={`toggle-pill ${aiTab === "status" ? "is-active" : ""}`}
+                    onClick={() => setAiTab("status")}
+                  >
+                    ステータス
+                  </button>
+                </div>
+              </div>
+              <p className="ai-caption">{aiShowcase[aiTab].caption}</p>
+              <p className="note">
+                ※ AI 機能には Vulkan 1.2+ 対応 GPU が必要です。動作環境は<a href="#install">インストール手順</a>を参照。
+              </p>
+            </div>
+            <div className="feature-big-shot">
+              <button
+                type="button"
+                className="shot-button tilt"
+                data-tilt="5"
+                onClick={() => openZoom(aiShowcase[aiTab].src, aiShowcase[aiTab].alt)}
+                aria-label="スクリーンショットを拡大"
+              >
+                <img src={aiShowcase[aiTab].src} alt={aiShowcase[aiTab].alt} />
+              </button>
+            </div>
+          </div>
+
           <div className="feature-grid">
             <article className="card feature-card reveal" data-delay="1">
               <div className="feature-icon"><LayoutIcon /></div>
@@ -540,6 +624,25 @@ export default function App() {
                   <li>「<strong>アクション</strong>」→「<strong>許可</strong>」または「<strong>復元</strong>」を選択</li>
                   <li>再度ダウンロードして展開 (今後は同じファイルが削除されなくなります)</li>
                 </ol>
+              </details>
+              <details className="install-warning">
+                <summary>
+                  AI 機能の動作環境 (要約・チャット利用時)
+                  <span className="install-warning-hint">クリックで展開</span>
+                </summary>
+                <p className="note">
+                  AI 機能 (スレッド要約・チャット) は GPU の <strong>Vulkan</strong> ドライバを利用します。
+                  比較的新しい GPU が必要です:
+                </p>
+                <ul className="install-steps">
+                  <li><strong>推奨:</strong> NVIDIA GeForce 900 シリーズ以降 / AMD Radeon (GCN 2.0 以降) / Intel HD Graphics 500 シリーズ以降</li>
+                  <li><strong>非対応:</strong> NVIDIA GeForce 700 シリーズ以前 (Kepler 世代、ドライバサポートが 2024 年 10 月に終了)</li>
+                </ul>
+                <p className="note">
+                  非対応 GPU 環境では、AI 機能を起動した時点 (要約開始・モデルロード・AI ステータスタブ表示など) でアプリがクラッシュすることが確認されています。
+                  恐れ入りますが当該環境では AI 機能のご利用はお控えください。
+                  通常のスレッドビューア機能 (板一覧・スレッド表示・画像プレビュー・NG / 検索 / お気に入りなど) はそのままお使いいただけます。
+                </p>
               </details>
             </article>
 
