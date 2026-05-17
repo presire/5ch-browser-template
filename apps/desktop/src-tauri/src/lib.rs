@@ -1862,7 +1862,7 @@ async fn ai_run_inference(
         .ok_or_else(|| format!("active model not installed: {active_id}"))?;
     let path = dir.join(&installed.filename);
     let max = max_tokens.unwrap_or(512);
-    let inference_backend = backend.unwrap_or_default();
+    let inference_backend = resolve_backend(backend.unwrap_or_default());
 
     let cancel = Arc::new(AtomicBool::new(false));
     {
@@ -1980,7 +1980,7 @@ async fn ai_preload_model(backend: Option<core_ai::InferenceBackend>) -> Result<
         .find(&active_id)
         .ok_or_else(|| format!("active model not installed: {active_id}"))?;
     let path = dir.join(&installed.filename);
-    let inference_backend = backend.unwrap_or_default();
+    let inference_backend = resolve_backend(backend.unwrap_or_default());
     // Loading is slow disk + GPU init; keep it off the async runtime.
     tauri::async_runtime::spawn_blocking(move || {
         core_ai::preload_model(&path, inference_backend)
@@ -2011,6 +2011,20 @@ fn ai_get_safe_mode() -> AiSafeMode {
     core_store::load_json::<AiSafeMode>("ai_safe_mode.json").unwrap_or_default()
 }
 
+/// When safe mode is on, override the user's backend choice with CPU.
+/// Belt-and-suspenders alongside the Vulkan loader env var: even if the loader
+/// somehow enumerates a broken ICD, llama.cpp will not try to use it.
+fn resolve_backend(requested: core_ai::InferenceBackend) -> core_ai::InferenceBackend {
+    if core_store::load_json::<AiSafeMode>("ai_safe_mode.json")
+        .map(|sm| sm.disable_gpu)
+        .unwrap_or(false)
+    {
+        core_ai::InferenceBackend::Cpu
+    } else {
+        requested
+    }
+}
+
 #[tauri::command]
 fn ai_set_safe_mode(disable: bool) -> Result<(), String> {
     let sm = AiSafeMode { disable_gpu: disable };
@@ -2036,14 +2050,23 @@ pub fn run() {
     let _ = core_store::init_portable_layout();
     let _ = core_store::append_log("app started");
 
-    // If the user has enabled "GPU を無効化" (AI 安全モード), tell the Vulkan
-    // loader to skip ICD enumeration entirely. Must run BEFORE LlamaBackend::init()
-    // is ever called — once the loader has probed a broken ICD (e.g. NVIDIA
-    // Kepler, driver support dropped Oct 2024) the process is already dead.
+    // If the user has enabled "GPU を無効化" (AI 安全モード), prevent the Vulkan
+    // loader from loading ANY ICD. Must run BEFORE LlamaBackend::init() is ever
+    // called — once the loader has probed a broken ICD (e.g. NVIDIA Kepler,
+    // driver support dropped Oct 2024) the process is already dead.
+    //
+    // Two env vars are set for redundancy:
+    // - VK_LOADER_DRIVERS_DISABLE=~all~ : filter env var (loader 1.3.234+).
+    //   The special value is "~all~", NOT "*" (v0.0.164 bug — `*` was treated
+    //   as a literal manifest pattern and matched nothing).
+    // - VK_DRIVER_FILES=<nonexistent> : overrides system discovery entirely
+    //   (older loaders, formerly named VK_ICD_FILENAMES).
     // See: https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderEnvVars.md
     if let Ok(sm) = core_store::load_json::<AiSafeMode>("ai_safe_mode.json") {
         if sm.disable_gpu {
-            std::env::set_var("VK_LOADER_DRIVERS_DISABLE", "*");
+            std::env::set_var("VK_LOADER_DRIVERS_DISABLE", "~all~");
+            std::env::set_var("VK_DRIVER_FILES", "ember_no_vulkan_drivers_marker.json");
+            std::env::set_var("VK_ICD_FILENAMES", "ember_no_vulkan_drivers_marker.json");
             let _ = core_store::append_log("AI safe mode active: Vulkan drivers disabled");
         }
     }
