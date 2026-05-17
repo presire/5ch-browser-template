@@ -17,6 +17,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DESKTOP_DIR="$ROOT_DIR/apps/desktop"
 TAURI_DIR="$DESKTOP_DIR/src-tauri"
 OUT_DIR="$ROOT_DIR/out"
+# Honor CARGO_TARGET_DIR so the post-build zip step finds the binary cargo
+# actually wrote. Without this we'd zip a stale ember.exe under
+# $ROOT_DIR/target/release (bug hit on v0.0.161 — CARGO_TARGET_DIR=C:\t was
+# used as a MAX_PATH workaround for the Vulkan build).
+TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}"
 
 if [[ $# -lt 2 ]]; then
   echo "Usage: $0 <version> <release-notes>"
@@ -111,8 +116,8 @@ echo ""
 echo "[5/5] Create Windows ZIP"
 
 mkdir -p "$OUT_DIR"
-(cd "$ROOT_DIR/target/release" && powershell -Command "Compress-Archive -Path ember.exe -DestinationPath ember-win-x64.zip -Force")
-cp "$ROOT_DIR/target/release/ember-win-x64.zip" "$OUT_DIR/ember-win-x64.zip"
+(cd "$TARGET_DIR/release" && powershell -Command "Compress-Archive -Path ember.exe -DestinationPath ember-win-x64.zip -Force")
+cp "$TARGET_DIR/release/ember-win-x64.zip" "$OUT_DIR/ember-win-x64.zip"
 
 WIN_SHA256=$(sha256sum "$OUT_DIR/ember-win-x64.zip" | awk '{print $1}')
 WIN_SIZE=$(wc -c < "$OUT_DIR/ember-win-x64.zip" | tr -d ' ')
