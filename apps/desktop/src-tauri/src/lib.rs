@@ -1996,6 +1996,27 @@ fn ai_unload_model() -> Result<(), String> {
     Ok(())
 }
 
+/// Persistent flag controlling whether the Vulkan loader is disabled at startup.
+/// Stored in `ai_safe_mode.json` under the portable data dir so it can be read
+/// before Tauri starts.
+#[derive(Serialize, Deserialize, Default, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+struct AiSafeMode {
+    #[serde(default)]
+    disable_gpu: bool,
+}
+
+#[tauri::command]
+fn ai_get_safe_mode() -> AiSafeMode {
+    core_store::load_json::<AiSafeMode>("ai_safe_mode.json").unwrap_or_default()
+}
+
+#[tauri::command]
+fn ai_set_safe_mode(disable: bool) -> Result<(), String> {
+    let sm = AiSafeMode { disable_gpu: disable };
+    core_store::save_json("ai_safe_mode.json", &sm).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Disable WebKit2GTK's DMA-BUF renderer and GPU compositing on Wayland
@@ -2014,6 +2035,19 @@ pub fn run() {
 
     let _ = core_store::init_portable_layout();
     let _ = core_store::append_log("app started");
+
+    // If the user has enabled "GPU を無効化" (AI 安全モード), tell the Vulkan
+    // loader to skip ICD enumeration entirely. Must run BEFORE LlamaBackend::init()
+    // is ever called — once the loader has probed a broken ICD (e.g. NVIDIA
+    // Kepler, driver support dropped Oct 2024) the process is already dead.
+    // See: https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderEnvVars.md
+    if let Ok(sm) = core_store::load_json::<AiSafeMode>("ai_safe_mode.json") {
+        if sm.disable_gpu {
+            std::env::set_var("VK_LOADER_DRIVERS_DISABLE", "*");
+            let _ = core_store::append_log("AI safe mode active: Vulkan drivers disabled");
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -2160,7 +2194,9 @@ pub fn run() {
             ai_list_backend_devices,
             ai_cache_state,
             ai_preload_model,
-            ai_unload_model
+            ai_unload_model,
+            ai_get_safe_mode,
+            ai_set_safe_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
