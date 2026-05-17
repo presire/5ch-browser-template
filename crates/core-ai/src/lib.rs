@@ -385,6 +385,31 @@ pub enum StopReason {
     MaxTokensReached,
 }
 
+/// Inference backend selection (CPU vs GPU).
+///
+/// Maps to `LlamaModelParams::with_n_gpu_layers`:
+/// - `Auto` / `Gpu`: offload all layers to GPU (Vulkan on Win/Linux, Metal on macOS).
+///   llama.cpp silently falls back to CPU when no compatible GPU is detected.
+/// - `Cpu`: force CPU-only inference. Useful for weak GPUs, conserving GPU for other apps,
+///   or when the GPU driver is unstable.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum InferenceBackend {
+    #[default]
+    Auto,
+    Gpu,
+    Cpu,
+}
+
+impl InferenceBackend {
+    fn n_gpu_layers(self) -> u32 {
+        match self {
+            Self::Auto | Self::Gpu => 999,
+            Self::Cpu => 0,
+        }
+    }
+}
+
 /// Stream a greedy completion, calling `on_token` with each decoded text fragment.
 ///
 /// Stateless PoC API: load + complete + drop on every call. Returns
@@ -394,6 +419,7 @@ pub fn complete_streaming<F>(
     model_path: &Path,
     prompt: &str,
     max_new_tokens: u32,
+    inference_backend: InferenceBackend,
     cancel: &AtomicBool,
     mut on_token: F,
 ) -> Result<StopReason, AiError>
@@ -402,7 +428,16 @@ where
 {
     let backend = backend()?;
 
-    let model_params = LlamaModelParams::default();
+    // n_gpu_layers alone is not enough: with GGML_VULKAN compiled in, llama.cpp
+    // still picks a Vulkan compute backend for graph scheduling, causing many
+    // CPU<->GPU copies even when no layers are offloaded. Restrict the device
+    // list to an empty set (= CPU/ACCEL only) when the user forces CPU mode.
+    let mut model_params = LlamaModelParams::default().with_n_gpu_layers(inference_backend.n_gpu_layers());
+    if matches!(inference_backend, InferenceBackend::Cpu) {
+        model_params = model_params
+            .with_devices(&[])
+            .map_err(|e| AiError::ModelLoadFailed(format!("with_devices(&[]): {e}")))?;
+    }
     let model = LlamaModel::load_from_file(backend, model_path, &model_params)
         .map_err(|e| AiError::ModelLoadFailed(e.to_string()))?;
 
@@ -478,9 +513,16 @@ pub fn complete(
 ) -> Result<String, AiError> {
     let cancel = AtomicBool::new(false);
     let mut output = String::new();
-    complete_streaming(model_path, prompt, max_new_tokens, &cancel, |piece| {
-        output.push_str(piece);
-    })?;
+    complete_streaming(
+        model_path,
+        prompt,
+        max_new_tokens,
+        InferenceBackend::default(),
+        &cancel,
+        |piece| {
+            output.push_str(piece);
+        },
+    )?;
     Ok(output)
 }
 

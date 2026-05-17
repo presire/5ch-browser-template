@@ -25,6 +25,22 @@ jobs:
           # windows-latest ships LLVM + CMake; we only need to expose libclang.dll to bindgen.
           echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Enable Windows long paths (llama.cpp vulkan-shaders-gen build)
+        shell: pwsh
+        run: |
+          # llama.cpp's vulkan-shaders-gen ExternalProject builds paths that exceed
+          # MAX_PATH (260 chars); MSVC cl.exe fails with C1083 without this.
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\FileSystem" /v LongPathsEnabled /t REG_DWORD /d 1 /f
+
+      - name: Install Vulkan SDK (core-ai GGML_VULKAN backend)
+        shell: pwsh
+        run: |
+          choco install vulkan-sdk -y --no-progress
+          $vk = (Get-ChildItem 'C:\VulkanSDK' -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          echo "VULKAN_SDK=$vk" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "$vk\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "Installed Vulkan SDK at $vk"
+
       - name: Install desktop deps
         run: npm ci
         working-directory: apps/desktop
@@ -59,7 +75,9 @@ jobs:
             librsvg2-dev \
             patchelf \
             libclang-dev \
-            cmake
+            cmake \
+            libvulkan-dev \
+            glslang-tools
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -103,7 +121,9 @@ jobs:
             librsvg2-dev \
             patchelf \
             libclang-dev \
-            cmake
+            cmake \
+            libvulkan-dev \
+            glslang-tools
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

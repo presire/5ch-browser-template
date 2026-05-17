@@ -40,7 +40,26 @@ type AiStatus = {
   totalSizeBytes: number;
   modelsDir: string;
   engineVersion: string;
+  compiledBackend: string;
 };
+
+type AiInferenceBackend = "auto" | "gpu" | "cpu";
+
+const AI_PREFS_KEY = "desktop.aiPrefs.v1";
+function loadAiInferenceBackend(): AiInferenceBackend {
+  try {
+    const raw = localStorage.getItem(AI_PREFS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.inferenceBackend === "auto" || parsed?.inferenceBackend === "gpu" || parsed?.inferenceBackend === "cpu") {
+        return parsed.inferenceBackend;
+      }
+    }
+  } catch (e) {
+    console.warn("desktop.aiPrefs.v1 load failed", e);
+  }
+  return "auto";
+}
 
 function formatAiBytes(n: number): string {
   if (n >= 1e9) return `${(n / 1e9).toFixed(2)} GB`;
@@ -944,6 +963,14 @@ export default function App() {
   const [aiInferenceBusy, setAiInferenceBusy] = useState(false);
   const [aiTokenProgress, setAiTokenProgress] = useState<{ received: number; max: number } | null>(null);
   const [aiCanContinue, setAiCanContinue] = useState<"summary" | "chat" | null>(null);
+  const [aiInferenceBackend, setAiInferenceBackend] = useState<AiInferenceBackend>(loadAiInferenceBackend);
+  useEffect(() => {
+    try {
+      localStorage.setItem(AI_PREFS_KEY, JSON.stringify({ inferenceBackend: aiInferenceBackend }));
+    } catch (e) {
+      console.warn("desktop.aiPrefs.v1 save failed", e);
+    }
+  }, [aiInferenceBackend]);
   const aiSessionIdRef = useRef<string | null>(null);
   const aiTokenTargetRef = useRef<"summary" | "chat" | null>(null);
   const aiMaxTokensRef = useRef<number>(400);
@@ -4884,7 +4911,7 @@ export default function App() {
     setAiTokenProgress({ received: 0, max: maxTokens });
     setAiCanContinue(null);
     setAiError(null);
-    void invoke("ai_run_inference", { sessionId: sid, prompt, maxTokens }).catch((e) => {
+    void invoke("ai_run_inference", { sessionId: sid, prompt, maxTokens, backend: aiInferenceBackend }).catch((e) => {
       console.warn("ai_run_inference failed", e);
     });
   };
@@ -4936,7 +4963,7 @@ export default function App() {
     setAiTokenProgress({ received: 0, max: maxTokens });
     setAiCanContinue(null);
     setAiError(null);
-    void invoke("ai_run_inference", { sessionId: sid, prompt, maxTokens }).catch((e) => {
+    void invoke("ai_run_inference", { sessionId: sid, prompt, maxTokens, backend: aiInferenceBackend }).catch((e) => {
       console.warn("ai_run_inference failed", e);
     });
   };
@@ -4966,7 +4993,7 @@ export default function App() {
     setAiTokenProgress({ received: 0, max: maxTokens });
     setAiCanContinue(null);
     setAiError(null);
-    void invoke("ai_run_inference", { sessionId: sid, prompt: newPrompt, maxTokens }).catch((e) => {
+    void invoke("ai_run_inference", { sessionId: sid, prompt: newPrompt, maxTokens, backend: aiInferenceBackend }).catch((e) => {
       console.warn("ai_run_inference (continue) failed", e);
     });
   };
@@ -5010,6 +5037,7 @@ export default function App() {
             { text: "書き込み", action: () => { setComposeOpen(true); setComposePos(null); setComposeBody(""); setComposeResult(null); } },
             { text: "sep" },
             { text: "設定", action: () => setSettingsOpen(true) },
+            { text: "AI 設定", action: () => setAiSettingsOpen(true) },
             ...(navigator.userAgent.includes("Windows") ? [
               { text: "sep" },
               { text: "終了", action: () => { if (isTauriRuntime()) { void invoke("quit_app"); } } },
@@ -5064,8 +5092,6 @@ export default function App() {
             { text: "すべてのタブを閉じる", action: closeAllTabs },
           ]},
           { label: "ツール", items: [
-            { text: "AI 設定", action: () => setAiSettingsOpen(true) },
-            { text: "sep" },
             { text: "認証状態", action: checkAuthEnv },
             { text: "認証テスト", action: probeAuth },
           ]},
@@ -5812,7 +5838,7 @@ export default function App() {
                   className={`title-action-btn ${aiSubpaneOpen ? "active-toggle" : ""}`}
                   onClick={() => setAiSubpaneOpen((v) => !v)}
                   disabled={!aiStatus?.activeModelId}
-                  title={aiStatus?.activeModelId ? "AI" : "AI (モデル未有効 - ツール → AI 設定)"}
+                  title={aiStatus?.activeModelId ? "AI" : "AI (モデル未有効 - ファイル → AI 設定)"}
                 >
                   <BrainCircuit size={14} />
                 </button>
@@ -7767,6 +7793,48 @@ export default function App() {
                 )}
               </fieldset>
               <fieldset>
+                <legend>推論バックエンド</legend>
+                <div className="settings-row">
+                  <span>このプラットフォーム</span>
+                  <span>{aiStatus?.compiledBackend === "metal" ? "Metal (Apple Silicon)" : aiStatus?.compiledBackend === "vulkan" ? "Vulkan (NVIDIA / AMD / Intel)" : aiStatus?.compiledBackend ?? "—"}</span>
+                </div>
+                <div className="ai-backend-options">
+                  <label className="ai-backend-option">
+                    <input
+                      type="radio"
+                      name="aiInferenceBackend"
+                      value="auto"
+                      checked={aiInferenceBackend === "auto"}
+                      onChange={() => setAiInferenceBackend("auto")}
+                    />
+                    <span><strong>自動</strong> (推奨)<br /><span className="ai-backend-hint">GPU が使えれば GPU、無ければ CPU</span></span>
+                  </label>
+                  <label className="ai-backend-option">
+                    <input
+                      type="radio"
+                      name="aiInferenceBackend"
+                      value="gpu"
+                      checked={aiInferenceBackend === "gpu"}
+                      onChange={() => setAiInferenceBackend("gpu")}
+                    />
+                    <span><strong>GPU を使用</strong><br /><span className="ai-backend-hint">明示的に GPU を要求 (検出失敗時は CPU フォールバック)</span></span>
+                  </label>
+                  <label className="ai-backend-option">
+                    <input
+                      type="radio"
+                      name="aiInferenceBackend"
+                      value="cpu"
+                      checked={aiInferenceBackend === "cpu"}
+                      onChange={() => setAiInferenceBackend("cpu")}
+                    />
+                    <span><strong>CPU のみ</strong><br /><span className="ai-backend-hint">貧弱な GPU・GPU を他用途で使う場合・ドライバ不安定時など</span></span>
+                  </label>
+                </div>
+                <div className="settings-row" style={{ fontSize: "0.8em", opacity: 0.7 }}>
+                  <span>※ 設定変更は次回の推論実行から有効</span>
+                </div>
+              </fieldset>
+              <fieldset>
                 <legend>利用可能なモデル</legend>
                 <div className="ai-models-list">
                   {!aiCatalog && <div className="ai-loading">読み込み中...</div>}
@@ -7789,7 +7857,7 @@ export default function App() {
                           {installed && !active && <span className="ai-model-badge installed">DL済</span>}
                         </div>
                         <div className="ai-model-meta">
-                          {formatAiBytes(m.sizeBytes)} / {m.quantization} / ctx {m.contextLength.toLocaleString()}
+                          ファイル {formatAiBytes(m.sizeBytes)} / 実行時 ~{formatAiBytes(Math.round(m.sizeBytes * 1.3))} (RAM or VRAM) / {m.quantization} / ctx {m.contextLength.toLocaleString()}
                         </div>
                         <div className="ai-model-desc">{m.description}</div>
                         {downloading && (

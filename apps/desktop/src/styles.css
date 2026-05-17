@@ -5086,6 +5086,35 @@ button.search-history-btn:hover {
   background: rgba(74, 144, 226, 0.15);
 }
 
+/* AI backend selector --------------------------------------------------- */
+.ai-backend-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ai-backend-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+}
+.ai-backend-option:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+.ai-backend-option input[type="radio"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+.ai-backend-hint {
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
 /* AI sub-pane (next to image gallery) ----------------------------------- */
 .ai-subpane {
   width: 340px;

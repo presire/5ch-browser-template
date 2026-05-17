@@ -23,7 +23,9 @@ jobs:
             rpm \
             fcitx5-frontend-gtk3 \
             libclang-dev \
-            cmake
+            cmake \
+            libvulkan-dev \
+            glslang-tools
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -158,7 +160,9 @@ jobs:
             rpm \
             fcitx5-frontend-gtk3 \
             libclang-dev \
-            cmake
+            cmake \
+            libvulkan-dev \
+            glslang-tools
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
