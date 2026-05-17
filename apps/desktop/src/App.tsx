@@ -991,11 +991,6 @@ export default function App() {
       console.warn("desktop.aiPrefs.v1 save failed", e);
     }
   }, [aiInferenceBackend]);
-  // Persisted on disk (ai_safe_mode.json) so Rust can read it before Tauri starts.
-  // Toggling this flag requires an app restart to take effect because the
-  // Vulkan loader env var must be set before LlamaBackend::init() runs.
-  const [aiDisableGpu, setAiDisableGpu] = useState<boolean>(false);
-  const [aiDisableGpuPendingRestart, setAiDisableGpuPendingRestart] = useState<boolean>(false);
   const aiSessionIdRef = useRef<string | null>(null);
   const aiTokenTargetRef = useRef<"summary" | "chat" | null>(null);
   const aiMaxTokensRef = useRef<number>(400);
@@ -4881,14 +4876,6 @@ export default function App() {
     if (!isTauriRuntime()) return;
     void refreshAiStatus();
     void refreshAiCacheState();
-    void (async () => {
-      try {
-        const sm = await invoke<{ disableGpu: boolean }>("ai_get_safe_mode");
-        setAiDisableGpu(!!sm?.disableGpu);
-      } catch (e) {
-        console.warn("ai_get_safe_mode failed", e);
-      }
-    })();
   }, []);
 
   // Streaming token events.
@@ -8063,37 +8050,6 @@ export default function App() {
                 <div className="settings-row" style={{ fontSize: "0.8em", opacity: 0.7 }}>
                   <span>※ 設定変更は次回の推論実行から有効</span>
                 </div>
-              </fieldset>
-              <fieldset>
-                <legend>GPU 互換性</legend>
-                <label className="ai-backend-option">
-                  <input
-                    type="checkbox"
-                    checked={aiDisableGpu}
-                    onChange={(e) => {
-                      const v = e.target.checked;
-                      setAiDisableGpu(v);
-                      setAiDisableGpuPendingRestart(true);
-                      if (isTauriRuntime()) {
-                        void invoke("ai_set_safe_mode", { disable: v }).catch((err) =>
-                          console.warn("ai_set_safe_mode failed", err)
-                        );
-                      }
-                    }}
-                  />
-                  <span>
-                    <strong>GPU を無効化 (Vulkan loader を読み込まない)</strong>
-                    <br />
-                    <span className="ai-backend-hint">
-                      古い / 非対応 GPU (例: NVIDIA GeForce 700 系 Kepler) でモデルロードや推論時にクラッシュする場合に有効化。CPU 推論のみになります。
-                    </span>
-                  </span>
-                </label>
-                {aiDisableGpuPendingRestart && (
-                  <div className="settings-row" style={{ fontSize: "0.85em", color: "#c66" }}>
-                    <span>※ 反映にはアプリの再起動が必要です</span>
-                  </div>
-                )}
               </fieldset>
               <fieldset>
                 <legend>利用可能なモデル</legend>

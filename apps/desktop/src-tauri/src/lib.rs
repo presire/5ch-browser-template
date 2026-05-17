@@ -1862,7 +1862,7 @@ async fn ai_run_inference(
         .ok_or_else(|| format!("active model not installed: {active_id}"))?;
     let path = dir.join(&installed.filename);
     let max = max_tokens.unwrap_or(512);
-    let inference_backend = resolve_backend(backend.unwrap_or_default());
+    let inference_backend = backend.unwrap_or_default();
 
     let cancel = Arc::new(AtomicBool::new(false));
     {
@@ -1980,7 +1980,7 @@ async fn ai_preload_model(backend: Option<core_ai::InferenceBackend>) -> Result<
         .find(&active_id)
         .ok_or_else(|| format!("active model not installed: {active_id}"))?;
     let path = dir.join(&installed.filename);
-    let inference_backend = resolve_backend(backend.unwrap_or_default());
+    let inference_backend = backend.unwrap_or_default();
     // Loading is slow disk + GPU init; keep it off the async runtime.
     tauri::async_runtime::spawn_blocking(move || {
         core_ai::preload_model(&path, inference_backend)
@@ -1996,40 +1996,6 @@ fn ai_unload_model() -> Result<(), String> {
     Ok(())
 }
 
-/// Persistent flag controlling whether the Vulkan loader is disabled at startup.
-/// Stored in `ai_safe_mode.json` under the portable data dir so it can be read
-/// before Tauri starts.
-#[derive(Serialize, Deserialize, Default, Clone, Copy)]
-#[serde(rename_all = "camelCase")]
-struct AiSafeMode {
-    #[serde(default)]
-    disable_gpu: bool,
-}
-
-#[tauri::command]
-fn ai_get_safe_mode() -> AiSafeMode {
-    core_store::load_json::<AiSafeMode>("ai_safe_mode.json").unwrap_or_default()
-}
-
-/// When safe mode is on, override the user's backend choice with CPU.
-/// Belt-and-suspenders alongside the Vulkan loader env var: even if the loader
-/// somehow enumerates a broken ICD, llama.cpp will not try to use it.
-fn resolve_backend(requested: core_ai::InferenceBackend) -> core_ai::InferenceBackend {
-    if core_store::load_json::<AiSafeMode>("ai_safe_mode.json")
-        .map(|sm| sm.disable_gpu)
-        .unwrap_or(false)
-    {
-        core_ai::InferenceBackend::Cpu
-    } else {
-        requested
-    }
-}
-
-#[tauri::command]
-fn ai_set_safe_mode(disable: bool) -> Result<(), String> {
-    let sm = AiSafeMode { disable_gpu: disable };
-    core_store::save_json("ai_safe_mode.json", &sm).map_err(|e| e.to_string())
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -2050,48 +2016,24 @@ pub fn run() {
     let _ = core_store::init_portable_layout();
     let _ = core_store::append_log("app started");
 
-    // If the user has enabled "GPU を無効化" (AI 安全モード), hide the bundled
-    // Vulkan loader DLL so that `volkInitialize()` inside ggml-vulkan fails its
-    // `LoadLibrary("vulkan-1.dll")` call. ggml then registers only the CPU
-    // backend and never touches the broken ICD that would crash the process
-    // (NVIDIA Kepler / GeForce 700 series — driver support dropped Oct 2024).
-    //
-    // v0.0.164 tried VK_LOADER_DRIVERS_DISABLE="*" — wrong special value.
-    // v0.0.165 fixed to "~all~" but still crashed: env vars set in our main()
-    // are too late if the loader cached its filter state at DLL_PROCESS_ATTACH.
-    // Hiding the DLL itself is the only reliable defense.
-    //
-    // When safe mode is turned OFF (via the UI), the next launch restores the DLL.
-    let safe_mode = core_store::load_json::<AiSafeMode>("ai_safe_mode.json")
-        .map(|sm| sm.disable_gpu)
-        .unwrap_or(false);
+    // Safe-mode toggle (v0.0.164–v0.0.166 attempt) was removed in v0.0.167:
+    // none of env var / DLL rename approaches could prevent the crash, because
+    // vulkan-1.dll is a PE import (vkGetInstanceProcAddr) and is loaded by the
+    // OS process loader before main() runs. Old GPUs with broken Vulkan ICDs
+    // (e.g. NVIDIA Kepler / GeForce 700) are documented as unsupported for AI
+    // features on the landing page. Any leftover `ai_safe_mode.json` and
+    // `vulkan-1.dll.safe-mode-disabled` files from previous versions are
+    // restored / cleaned up below.
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             let active = exe_dir.join("vulkan-1.dll");
             let disabled = exe_dir.join("vulkan-1.dll.safe-mode-disabled");
-            if safe_mode {
-                if active.exists() && !disabled.exists() {
-                    let _ = std::fs::rename(&active, &disabled);
-                    let _ = core_store::append_log("AI safe mode: vulkan-1.dll hidden");
-                } else if active.exists() && disabled.exists() {
-                    let _ = std::fs::remove_file(&active);
-                    let _ = core_store::append_log("AI safe mode: stale vulkan-1.dll removed");
-                }
-            } else if disabled.exists() && !active.exists() {
+            if disabled.exists() && !active.exists() {
                 let _ = std::fs::rename(&disabled, &active);
-                let _ = core_store::append_log("AI safe mode off: vulkan-1.dll restored");
             } else if disabled.exists() && active.exists() {
                 let _ = std::fs::remove_file(&disabled);
             }
         }
-    }
-    // Belt-and-suspenders: also set the loader filter env vars in case any other
-    // vulkan-1.dll is discoverable via system PATH. Harmless when no loader runs.
-    // See: https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderEnvVars.md
-    if safe_mode {
-        std::env::set_var("VK_LOADER_DRIVERS_DISABLE", "~all~");
-        std::env::set_var("VK_DRIVER_FILES", "ember_no_vulkan_drivers_marker.json");
-        std::env::set_var("VK_ICD_FILENAMES", "ember_no_vulkan_drivers_marker.json");
     }
 
     tauri::Builder::default()
@@ -2240,9 +2182,7 @@ pub fn run() {
             ai_list_backend_devices,
             ai_cache_state,
             ai_preload_model,
-            ai_unload_model,
-            ai_get_safe_mode,
-            ai_set_safe_mode
+            ai_unload_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
