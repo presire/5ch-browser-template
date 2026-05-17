@@ -45,6 +45,22 @@ type AiStatus = {
 
 type AiInferenceBackend = "auto" | "gpu" | "cpu";
 
+type AiBackendDevice = {
+  index: number;
+  name: string;
+  description: string;
+  backend: string;
+  deviceType: string; // "Cpu" | "Gpu" | "IntegratedGpu" | "Accelerator" | "Unknown"
+  memoryTotal: number;
+  memoryFree: number;
+};
+
+type AiCacheState = {
+  loaded: boolean;
+  modelId: string | null;
+  backendKind: AiInferenceBackend | null;
+};
+
 const AI_PREFS_KEY = "desktop.aiPrefs.v1";
 function loadAiInferenceBackend(): AiInferenceBackend {
   try {
@@ -956,11 +972,15 @@ export default function App() {
   const [aiDownloads, setAiDownloads] = useState<Record<string, { downloaded: number; total: number | null }>>({});
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiSubpaneOpen, setAiSubpaneOpen] = useState(false);
-  const [aiSubpaneTab, setAiSubpaneTab] = useState<"summary" | "chat">("summary");
+  const [aiSubpaneTab, setAiSubpaneTab] = useState<"summary" | "chat" | "status">("summary");
+  const [aiBackendDevices, setAiBackendDevices] = useState<AiBackendDevice[] | null>(null);
+  const [aiCacheState, setAiCacheState] = useState<AiCacheState | null>(null);
+  const [aiPreloadBusy, setAiPreloadBusy] = useState(false);
   const [aiSummary, setAiSummary] = useState("");
   const [aiChatMessages, setAiChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [aiChatInput, setAiChatInput] = useState("");
   const [aiInferenceBusy, setAiInferenceBusy] = useState(false);
+  const [aiInferencePhase, setAiInferencePhase] = useState<"loadingModel" | "processingPrompt" | "generating" | null>(null);
   const [aiTokenProgress, setAiTokenProgress] = useState<{ received: number; max: number } | null>(null);
   const [aiCanContinue, setAiCanContinue] = useState<"summary" | "chat" | null>(null);
   const [aiInferenceBackend, setAiInferenceBackend] = useState<AiInferenceBackend>(loadAiInferenceBackend);
@@ -4670,6 +4690,51 @@ export default function App() {
     }
   };
 
+  const refreshAiCacheState = async () => {
+    if (!isTauriRuntime()) return;
+    try {
+      const s = await invoke<AiCacheState>("ai_cache_state");
+      setAiCacheState(s);
+    } catch (e) {
+      console.warn("ai_cache_state failed", e);
+    }
+  };
+
+  const refreshAiBackendDevices = async () => {
+    if (!isTauriRuntime()) return;
+    try {
+      const devs = await invoke<AiBackendDevice[]>("ai_list_backend_devices");
+      setAiBackendDevices(devs);
+    } catch (e) {
+      console.warn("ai_list_backend_devices failed", e);
+    }
+  };
+
+  const aiPreloadActiveModel = async () => {
+    if (!isTauriRuntime() || aiPreloadBusy) return;
+    setAiPreloadBusy(true);
+    try {
+      await invoke("ai_preload_model", { backend: aiInferenceBackend });
+      await refreshAiCacheState();
+    } catch (e) {
+      console.warn("ai_preload_model failed", e);
+      setAiError(`モデルロード失敗: ${String(e)}`);
+    } finally {
+      setAiPreloadBusy(false);
+    }
+  };
+
+  const aiUnloadCachedModel = async () => {
+    if (!isTauriRuntime()) return;
+    try {
+      await invoke("ai_unload_model");
+      await refreshAiCacheState();
+      await refreshAiBackendDevices();
+    } catch (e) {
+      console.warn("ai_unload_model failed", e);
+    }
+  };
+
   useEffect(() => {
     if (!aiSettingsOpen || !isTauriRuntime()) return;
     void (async () => {
@@ -4768,13 +4833,20 @@ export default function App() {
   };
 
   // --- AI sub-pane: streaming inference --------------------------------
-  // Reset per-thread AI state on thread change.
+  // Reset per-thread AI state on thread change. Also cancel any in-flight
+  // inference, otherwise the backend keeps running for tokens the user can no
+  // longer see (sessionId mismatch makes them silently ignored).
+  // Covers tab switch and active-tab close (both change currentAiThreadUrl).
   const currentAiThreadUrl = threadTabs[activeTabIndex]?.threadUrl;
   useEffect(() => {
+    if (isTauriRuntime()) {
+      void invoke("ai_cancel_inference").catch((e) => console.warn("ai_cancel_inference failed", e));
+    }
     setAiSummary("");
     setAiChatMessages([]);
     setAiChatInput("");
     setAiInferenceBusy(false);
+    setAiInferencePhase(null);
     setAiTokenProgress(null);
     setAiCanContinue(null);
     aiSessionIdRef.current = null;
@@ -4785,6 +4857,9 @@ export default function App() {
   // Auto-close subpane when no model is active.
   useEffect(() => {
     if (!aiStatus?.activeModelId) {
+      if (aiInferenceBusy && isTauriRuntime()) {
+        void invoke("ai_cancel_inference").catch((e) => console.warn("ai_cancel_inference failed", e));
+      }
       setAiSubpaneOpen(false);
     }
   }, [aiStatus?.activeModelId]);
@@ -4794,6 +4869,8 @@ export default function App() {
   useEffect(() => {
     if (!isTauriRuntime()) return;
     void refreshAiStatus();
+    void refreshAiBackendDevices();
+    void refreshAiCacheState();
   }, []);
 
   // Streaming token events.
@@ -4802,6 +4879,7 @@ export default function App() {
     let cancelled = false;
     let u1: UnlistenFn | null = null;
     let u2: UnlistenFn | null = null;
+    let u3: UnlistenFn | null = null;
     void (async () => {
       try {
         const v1 = await listen<{ sessionId: string; token: string }>(
@@ -4836,6 +4914,7 @@ export default function App() {
             if (e.payload.sessionId !== aiSessionIdRef.current) return;
             const target = aiTokenTargetRef.current;
             setAiInferenceBusy(false);
+            setAiInferencePhase(null);
             setAiTokenProgress(null);
             aiSessionIdRef.current = null;
             aiTokenTargetRef.current = null;
@@ -4847,10 +4926,22 @@ export default function App() {
             } else {
               setAiCanContinue(null);
             }
+            // Inference may have populated the model cache; refresh so the
+            // status tab reflects the new loaded state.
+            void refreshAiCacheState();
           },
         );
         if (cancelled) { v2(); return; }
         u2 = v2;
+        const v3 = await listen<{ sessionId: string; phase: "loadingModel" | "processingPrompt" | "generating" }>(
+          "ai-inference-phase",
+          (e) => {
+            if (e.payload.sessionId !== aiSessionIdRef.current) return;
+            setAiInferencePhase(e.payload.phase);
+          },
+        );
+        if (cancelled) { v3(); return; }
+        u3 = v3;
       } catch (e) {
         console.warn("ai inference listen failed", e);
       }
@@ -4859,6 +4950,7 @@ export default function App() {
       cancelled = true;
       try { u1?.(); } catch { /* ignore */ }
       try { u2?.(); } catch { /* ignore */ }
+      try { u3?.(); } catch { /* ignore */ }
     };
   }, []);
 
@@ -4908,6 +5000,7 @@ export default function App() {
     aiLastPromptRef.current = prompt;
     setAiSummary("");
     setAiInferenceBusy(true);
+    setAiInferencePhase(null);
     setAiTokenProgress({ received: 0, max: maxTokens });
     setAiCanContinue(null);
     setAiError(null);
@@ -4960,6 +5053,7 @@ export default function App() {
     aiMaxTokensRef.current = maxTokens;
     aiLastPromptRef.current = prompt;
     setAiInferenceBusy(true);
+    setAiInferencePhase(null);
     setAiTokenProgress({ received: 0, max: maxTokens });
     setAiCanContinue(null);
     setAiError(null);
@@ -4970,6 +5064,23 @@ export default function App() {
 
   const aiCancelInference = () => {
     void invoke("ai_cancel_inference").catch((e) => console.warn("ai_cancel_inference failed", e));
+  };
+
+  const aiPhaseLabel = (phase: typeof aiInferencePhase): string => {
+    switch (phase) {
+      case "loadingModel": return "モデル読み込み中...";
+      case "processingPrompt": return "プロンプト処理中...";
+      case "generating": return "生成中...";
+      default: return "準備中...";
+    }
+  };
+  // During load/prompt phases the cancel flag is set but won't take effect
+  // until the current uninterruptible step finishes. We still keep the button
+  // clickable so the user can request the cancel; we just message the delay.
+  const aiCancelHint = (phase: typeof aiInferencePhase): string | undefined => {
+    if (phase === "loadingModel") return "モデル読み込み完了後に停止します";
+    if (phase === "processingPrompt") return "プロンプト処理のチャンク完了後に停止します";
+    return undefined;
   };
 
   const aiContinueGenerate = () => {
@@ -4990,6 +5101,7 @@ export default function App() {
     aiMaxTokensRef.current = maxTokens;
     aiLastPromptRef.current = newPrompt;
     setAiInferenceBusy(true);
+    setAiInferencePhase(null);
     setAiTokenProgress({ received: 0, max: maxTokens });
     setAiCanContinue(null);
     setAiError(null);
@@ -5836,7 +5948,10 @@ export default function App() {
                 <button className={`title-action-btn ${imageGalleryOpen ? "active-toggle" : ""}`} onClick={() => setImageGalleryOpen((v) => !v)} title="画像一覧"><Images size={14} /></button>
                 <button
                   className={`title-action-btn ${aiSubpaneOpen ? "active-toggle" : ""}`}
-                  onClick={() => setAiSubpaneOpen((v) => !v)}
+                  onClick={() => {
+                    if (aiSubpaneOpen && aiInferenceBusy) aiCancelInference();
+                    setAiSubpaneOpen((v) => !v);
+                  }}
                   disabled={!aiStatus?.activeModelId}
                   title={aiStatus?.activeModelId ? "AI" : "AI (モデル未有効 - ファイル → AI 設定)"}
                 >
@@ -6349,30 +6464,42 @@ export default function App() {
                   <div className="ai-subpane-tabs">
                     <button
                       className={`ai-subpane-tab ${aiSubpaneTab === "summary" ? "active" : ""}`}
-                      onClick={() => setAiSubpaneTab("summary")}
+                      onClick={() => { if (aiSubpaneTab !== "summary" && aiInferenceBusy) aiCancelInference(); setAiSubpaneTab("summary"); }}
                     >
                       要約
                     </button>
                     <button
                       className={`ai-subpane-tab ${aiSubpaneTab === "chat" ? "active" : ""}`}
-                      onClick={() => setAiSubpaneTab("chat")}
+                      onClick={() => { if (aiSubpaneTab !== "chat" && aiInferenceBusy) aiCancelInference(); setAiSubpaneTab("chat"); }}
                     >
                       チャット
                     </button>
+                    <button
+                      className={`ai-subpane-tab ${aiSubpaneTab === "status" ? "active" : ""}`}
+                      onClick={() => {
+                        if (aiSubpaneTab !== "status" && aiInferenceBusy) aiCancelInference();
+                        setAiSubpaneTab("status");
+                        void refreshAiCacheState();
+                        void refreshAiBackendDevices();
+                      }}
+                    >
+                      ステータス
+                    </button>
                   </div>
-                  <button className="title-action-btn" onClick={() => setAiSubpaneOpen(false)} title="閉じる"><X size={12} /></button>
+                  <button className="title-action-btn" onClick={() => { if (aiInferenceBusy) aiCancelInference(); setAiSubpaneOpen(false); }} title="閉じる"><X size={12} /></button>
                 </div>
                 {aiSubpaneTab === "summary" ? (
+                  /* SUMMARY TAB */
                   <div className="ai-subpane-body">
                     <div className="ai-subpane-toolbar">
                       <button
                         onClick={aiStartSummary}
                         disabled={aiInferenceBusy || responseItems.length === 0}
                       >
-                        {aiInferenceBusy && aiTokenTargetRef.current === "summary" ? "生成中..." : "要約する"}
+                        {aiInferenceBusy && aiTokenTargetRef.current === "summary" ? aiPhaseLabel(aiInferencePhase) : "要約する"}
                       </button>
                       {aiInferenceBusy && aiTokenTargetRef.current === "summary" && (
-                        <button onClick={aiCancelInference}>停止</button>
+                        <button onClick={aiCancelInference} title={aiCancelHint(aiInferencePhase)}>停止</button>
                       )}
                       {!aiInferenceBusy && aiCanContinue === "summary" && (
                         <button onClick={aiContinueGenerate}>続きを生成</button>
@@ -6399,8 +6526,16 @@ export default function App() {
                       )}
                     </div>
                   </div>
-                ) : (
+                ) : aiSubpaneTab === "chat" ? (
+                  /* CHAT TAB */
                   <div className="ai-subpane-body">
+                    {aiChatMessages.length > 0 && !aiInferenceBusy && (
+                      <div className="ai-subpane-toolbar">
+                        <button onClick={() => { setAiChatMessages([]); setAiCanContinue(null); aiLastPromptRef.current = ""; }}>
+                          履歴クリア
+                        </button>
+                      </div>
+                    )}
                     <div className="ai-chat-history">
                       {aiChatMessages.length === 0 && (
                         <div className="ai-placeholder">
@@ -6452,7 +6587,9 @@ export default function App() {
                         disabled={aiInferenceBusy}
                       />
                       {aiInferenceBusy && aiTokenTargetRef.current === "chat" ? (
-                        <button onClick={aiCancelInference}>停止</button>
+                        <button onClick={aiCancelInference} title={aiCancelHint(aiInferencePhase)}>
+                          {aiInferencePhase && aiInferencePhase !== "generating" ? `停止 (${aiPhaseLabel(aiInferencePhase).replace("...", "")})` : "停止"}
+                        </button>
                       ) : (
                         <button
                           onClick={aiSendChat}
@@ -6461,6 +6598,81 @@ export default function App() {
                           送信
                         </button>
                       )}
+                    </div>
+                  </div>
+                ) : (
+                  /* STATUS TAB */
+                  <div className="ai-subpane-body ai-status-body">
+                    <div className="ai-status-section">
+                      <div className="ai-status-row">
+                        <span className="ai-status-label">アクティブモデル</span>
+                        <span className="ai-status-value">
+                          {aiStatus?.activeModelId ?? <em>(未有効)</em>}
+                        </span>
+                      </div>
+                      <div className="ai-status-row">
+                        <span className="ai-status-label">ロード状態</span>
+                        <span className="ai-status-value">
+                          {aiCacheState?.loaded
+                            ? <><strong style={{ color: "var(--accent, #4caf50)" }}>ロード済</strong> ({aiCacheState.modelId} / {aiCacheState.backendKind})</>
+                            : <span style={{ opacity: 0.7 }}>未ロード</span>}
+                        </span>
+                      </div>
+                      <div className="ai-status-row">
+                        <span className="ai-status-label">推論バックエンド (設定)</span>
+                        <span className="ai-status-value">
+                          {aiInferenceBackend === "auto" ? "自動" : aiInferenceBackend === "gpu" ? "GPU" : "CPU"}
+                          {aiStatus?.compiledBackend && <> <span style={{ opacity: 0.6 }}>(コンパイル時: {aiStatus.compiledBackend})</span></>}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="ai-subpane-toolbar">
+                      {aiCacheState?.loaded ? (
+                        <button onClick={() => void aiUnloadCachedModel()} disabled={aiInferenceBusy || aiPreloadBusy}>
+                          モデルを解放
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => void aiPreloadActiveModel()}
+                          disabled={!aiStatus?.activeModelId || aiPreloadBusy || aiInferenceBusy}
+                          title={!aiStatus?.activeModelId ? "アクティブなモデルがありません" : undefined}
+                        >
+                          {aiPreloadBusy ? "ロード中..." : "モデルをロード"}
+                        </button>
+                      )}
+                      <button onClick={() => { void refreshAiCacheState(); void refreshAiBackendDevices(); }} disabled={aiPreloadBusy}>
+                        更新
+                      </button>
+                    </div>
+                    <div className="ai-status-section">
+                      <div className="ai-status-section-title">検出デバイス</div>
+                      {aiBackendDevices === null && <div className="ai-placeholder">読み込み中...</div>}
+                      {aiBackendDevices && aiBackendDevices.length === 0 && <div className="ai-placeholder">デバイスが検出されませんでした</div>}
+                      {aiBackendDevices?.map((d) => (
+                        <div key={d.index} className="ai-status-device">
+                          <div className="ai-status-device-head">
+                            <span className={`ai-status-device-kind ai-status-device-kind-${d.deviceType.toLowerCase()}`}>
+                              {d.deviceType === "Cpu" ? "CPU" : d.deviceType === "Gpu" ? "GPU" : d.deviceType === "IntegratedGpu" ? "iGPU" : d.deviceType === "Accelerator" ? "ACCEL" : d.deviceType}
+                            </span>
+                            <span className="ai-status-device-name">{d.description || d.name || "(unknown)"}</span>
+                            <span className="ai-status-device-backend">{d.backend}</span>
+                          </div>
+                          {d.memoryTotal > 0 && (
+                            <div className="ai-status-device-mem">
+                              <div className="ai-status-device-mem-bar">
+                                <div
+                                  className="ai-status-device-mem-fill"
+                                  style={{ width: `${Math.min(100, ((d.memoryTotal - d.memoryFree) / d.memoryTotal) * 100)}%` }}
+                                />
+                              </div>
+                              <span className="ai-status-device-mem-label">
+                                使用 {formatAiBytes(d.memoryTotal - d.memoryFree)} / {formatAiBytes(d.memoryTotal)}
+                                {" "}(空き {formatAiBytes(d.memoryFree)})
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}

@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use llama_cpp_2::context::params::LlamaContextParams;
@@ -410,29 +410,112 @@ impl InferenceBackend {
     }
 }
 
-/// Stream a greedy completion, calling `on_token` with each decoded text fragment.
-///
-/// Stateless PoC API: load + complete + drop on every call. Returns
-/// [`AiError::InferenceFailed("cancelled")`] when `cancel` is set mid-generation.
-/// Returns [`StopReason`] indicating why generation stopped.
-pub fn complete_streaming<F>(
-    model_path: &Path,
-    prompt: &str,
-    max_new_tokens: u32,
-    inference_backend: InferenceBackend,
-    cancel: &AtomicBool,
-    mut on_token: F,
-) -> Result<StopReason, AiError>
-where
-    F: FnMut(&str),
-{
-    let backend = backend()?;
+/// Coarse phase of a streaming completion. Emitted via `on_phase` so the UI
+/// can show "モデル読み込み中..." vs "プロンプト処理中..." vs "生成中...".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum InferencePhase {
+    /// `LlamaModel::load_from_file` is in progress (uninterruptible — disk I/O).
+    LoadingModel,
+    /// Initial prompt is being decoded in chunks (interruptible between chunks).
+    ProcessingPrompt,
+    /// Token-by-token generation loop (interruptible between tokens).
+    Generating,
+}
 
-    // n_gpu_layers alone is not enough: with GGML_VULKAN compiled in, llama.cpp
-    // still picks a Vulkan compute backend for graph scheduling, causing many
-    // CPU<->GPU copies even when no layers are offloaded. Restrict the device
-    // list to an empty set (= CPU/ACCEL only) when the user forces CPU mode.
-    let mut model_params = LlamaModelParams::default().with_n_gpu_layers(inference_backend.n_gpu_layers());
+struct CachedModel {
+    path: PathBuf,
+    backend_kind: InferenceBackend,
+    model: LlamaModel,
+}
+
+static MODEL_CACHE: OnceLock<Mutex<Option<CachedModel>>> = OnceLock::new();
+
+fn model_cache() -> &'static Mutex<Option<CachedModel>> {
+    MODEL_CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Number of prompt tokens decoded per chunk. After each chunk the `cancel`
+/// flag is checked, so the worst-case stop latency during prompt processing
+/// is roughly the time to decode one chunk on the active backend.
+const PROMPT_CHUNK_TOKENS: usize = 256;
+
+/// One ggml backend device (CPU or GPU) exposed for the UI status panel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendDevice {
+    pub index: usize,
+    pub name: String,
+    pub description: String,
+    pub backend: String,
+    pub device_type: String,
+    pub memory_total: u64,
+    pub memory_free: u64,
+}
+
+/// List all ggml backend devices (CPU + GPUs). Initializes the backend on
+/// first call. Safe to call repeatedly.
+pub fn list_backend_devices() -> Result<Vec<BackendDevice>, AiError> {
+    let _ = backend()?;
+    let devs = llama_cpp_2::list_llama_ggml_backend_devices();
+    Ok(devs
+        .into_iter()
+        .map(|d| BackendDevice {
+            index: d.index,
+            name: d.name,
+            description: d.description,
+            backend: d.backend,
+            device_type: format!("{:?}", d.device_type),
+            memory_total: d.memory_total as u64,
+            memory_free: d.memory_free as u64,
+        })
+        .collect())
+}
+
+/// Snapshot of the global model cache for the UI status panel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheStateSnapshot {
+    pub loaded: bool,
+    pub model_id: Option<String>,
+    pub backend_kind: Option<InferenceBackend>,
+}
+
+/// Return whether a model is currently loaded in the global cache, and which.
+pub fn cache_state() -> CacheStateSnapshot {
+    let guard = model_cache()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    match guard.as_ref() {
+        Some(c) => CacheStateSnapshot {
+            loaded: true,
+            model_id: c.path.file_stem().map(|s| s.to_string_lossy().into_owned()),
+            backend_kind: Some(c.backend_kind),
+        },
+        None => CacheStateSnapshot {
+            loaded: false,
+            model_id: None,
+            backend_kind: None,
+        },
+    }
+}
+
+/// Eagerly load a model into the global cache, so the first inference can skip
+/// the load step. If a different model is already cached it is dropped first.
+/// If the same (path, backend) is already cached this is a no-op.
+pub fn preload_model(model_path: &Path, inference_backend: InferenceBackend) -> Result<(), AiError> {
+    let backend = backend()?;
+    let mut cache = model_cache()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if let Some(c) = cache.as_ref() {
+        if c.path == model_path && c.backend_kind == inference_backend {
+            return Ok(());
+        }
+    }
+    *cache = None;
+    let mut model_params =
+        LlamaModelParams::default().with_n_gpu_layers(inference_backend.n_gpu_layers());
     if matches!(inference_backend, InferenceBackend::Cpu) {
         model_params = model_params
             .with_devices(&[])
@@ -440,6 +523,89 @@ where
     }
     let model = LlamaModel::load_from_file(backend, model_path, &model_params)
         .map_err(|e| AiError::ModelLoadFailed(e.to_string()))?;
+    *cache = Some(CachedModel {
+        path: model_path.to_path_buf(),
+        backend_kind: inference_backend,
+        model,
+    });
+    Ok(())
+}
+
+/// Drop any cached model so its memory is freed. No-op if nothing is cached.
+pub fn unload_model() {
+    let mut cache = model_cache()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    *cache = None;
+}
+
+/// Stream a greedy completion, calling `on_token` with each decoded text fragment.
+///
+/// Reuses a globally cached `LlamaModel` when the same path+backend was loaded
+/// previously, so only the first inference per (model, backend) pays the disk
+/// I/O cost. The model cache mutex also serializes inference calls, so a new
+/// invocation will wait for the previous one to release before proceeding —
+/// callers should set the cancel flag on the previous session first.
+///
+/// `on_phase` is called when the inference moves between coarse phases so the
+/// UI can show "モデル読み込み中..." / "プロンプト処理中..." / "生成中...".
+///
+/// Cancellation: the prompt is decoded in chunks of [`PROMPT_CHUNK_TOKENS`]
+/// and the flag is checked between chunks, then again between every generated
+/// token. Model loading itself is uninterruptible. Returns
+/// [`AiError::InferenceFailed("cancelled")`] when `cancel` is set.
+pub fn complete_streaming<F, P>(
+    model_path: &Path,
+    prompt: &str,
+    max_new_tokens: u32,
+    inference_backend: InferenceBackend,
+    cancel: &AtomicBool,
+    mut on_token: F,
+    mut on_phase: P,
+) -> Result<StopReason, AiError>
+where
+    F: FnMut(&str),
+    P: FnMut(InferencePhase),
+{
+    let backend = backend()?;
+
+    let mut cache = model_cache()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+
+    let needs_load = match cache.as_ref() {
+        Some(c) => c.path != model_path || c.backend_kind != inference_backend,
+        None => true,
+    };
+    if needs_load {
+        on_phase(InferencePhase::LoadingModel);
+        // Drop the previous model first so its memory is freed before we
+        // allocate the new one — important for large (>10 GB) weights.
+        *cache = None;
+
+        // n_gpu_layers alone is not enough: with GGML_VULKAN compiled in, llama.cpp
+        // still picks a Vulkan compute backend for graph scheduling, causing many
+        // CPU<->GPU copies even when no layers are offloaded. Restrict the device
+        // list to an empty set (= CPU/ACCEL only) when the user forces CPU mode.
+        let mut model_params =
+            LlamaModelParams::default().with_n_gpu_layers(inference_backend.n_gpu_layers());
+        if matches!(inference_backend, InferenceBackend::Cpu) {
+            model_params = model_params
+                .with_devices(&[])
+                .map_err(|e| AiError::ModelLoadFailed(format!("with_devices(&[]): {e}")))?;
+        }
+        let model = LlamaModel::load_from_file(backend, model_path, &model_params)
+            .map_err(|e| AiError::ModelLoadFailed(e.to_string()))?;
+        *cache = Some(CachedModel {
+            path: model_path.to_path_buf(),
+            backend_kind: inference_backend,
+            model,
+        });
+    }
+    let model = &cache
+        .as_ref()
+        .expect("model cache populated above")
+        .model;
 
     let ctx_params = LlamaContextParams::default()
         .with_n_ctx(NonZeroU32::new(8192))
@@ -459,18 +625,38 @@ where
             "prompt too long: {n_prompt} tokens + {max_new_tokens} new > context {n_ctx}"
         )));
     }
-    let batch_cap = std::cmp::max(n_prompt, 64);
-    let mut batch = LlamaBatch::new(batch_cap, 1);
-    batch
-        .add_sequence(&prompt_tokens, 0, false)
-        .map_err(|e| AiError::InferenceFailed(format!("batch add_sequence: {e}")))?;
+    if n_prompt == 0 {
+        return Err(AiError::InferenceFailed("empty prompt".into()));
+    }
 
-    ctx.decode(&mut batch)
-        .map_err(|e| AiError::InferenceFailed(format!("decode prompt: {e}")))?;
+    let batch_cap = std::cmp::max(PROMPT_CHUNK_TOKENS, 64);
+    let mut batch = LlamaBatch::new(batch_cap, 1);
+
+    on_phase(InferencePhase::ProcessingPrompt);
+    let total_chunks = prompt_tokens.len().div_ceil(PROMPT_CHUNK_TOKENS);
+    for (chunk_idx, chunk) in prompt_tokens.chunks(PROMPT_CHUNK_TOKENS).enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(AiError::InferenceFailed("cancelled".into()));
+        }
+        let is_last_chunk = chunk_idx + 1 == total_chunks;
+        let chunk_start = chunk_idx * PROMPT_CHUNK_TOKENS;
+        batch.clear();
+        for (i, &token) in chunk.iter().enumerate() {
+            let is_final_token = is_last_chunk && i + 1 == chunk.len();
+            let pos = i32::try_from(chunk_start + i)
+                .map_err(|_| AiError::InferenceFailed("prompt position overflow".into()))?;
+            batch
+                .add(token, pos, &[0], is_final_token)
+                .map_err(|e| AiError::InferenceFailed(format!("batch add prompt: {e}")))?;
+        }
+        ctx.decode(&mut batch)
+            .map_err(|e| AiError::InferenceFailed(format!("decode prompt chunk {chunk_idx}: {e}")))?;
+    }
 
     let mut n_cur: i32 = i32::try_from(n_prompt)
         .map_err(|_| AiError::InferenceFailed("prompt length overflow".into()))?;
 
+    on_phase(InferencePhase::Generating);
     let mut stop_reason = StopReason::MaxTokensReached;
     for _ in 0..max_new_tokens {
         if cancel.load(Ordering::Relaxed) {
@@ -522,6 +708,7 @@ pub fn complete(
         |piece| {
             output.push_str(piece);
         },
+        |_phase| {},
     )?;
     Ok(output)
 }

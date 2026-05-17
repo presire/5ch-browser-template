@@ -1836,6 +1836,13 @@ struct AiInferenceFinished {
     truncated: bool,
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AiInferencePhaseEvent {
+    session_id: String,
+    phase: core_ai::InferencePhase,
+}
+
 #[tauri::command]
 async fn ai_run_inference(
     app: AppHandle,
@@ -1869,6 +1876,8 @@ async fn ai_run_inference(
 
     let token_app = app.clone();
     let token_session = session_id.clone();
+    let phase_app = app.clone();
+    let phase_session = session_id.clone();
     let cancel_thread = cancel.clone();
 
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -1884,6 +1893,15 @@ async fn ai_run_inference(
                     AiInferenceToken {
                         session_id: token_session.clone(),
                         token: piece.to_string(),
+                    },
+                );
+            },
+            |phase| {
+                let _ = phase_app.emit(
+                    "ai-inference-phase",
+                    AiInferencePhaseEvent {
+                        session_id: phase_session.clone(),
+                        phase,
                     },
                 );
             },
@@ -1937,6 +1955,44 @@ fn ai_cancel_inference() -> Result<(), String> {
     if let Some(flag) = slot.as_ref() {
         flag.store(true, Ordering::Relaxed);
     }
+    Ok(())
+}
+
+#[tauri::command]
+fn ai_list_backend_devices() -> Result<Vec<core_ai::BackendDevice>, String> {
+    core_ai::list_backend_devices().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_cache_state() -> core_ai::CacheStateSnapshot {
+    core_ai::cache_state()
+}
+
+#[tauri::command]
+async fn ai_preload_model(backend: Option<core_ai::InferenceBackend>) -> Result<(), String> {
+    let dir = ai_models_dir()?;
+    let manifest = core_ai::load_manifest(&dir).map_err(|e| e.to_string())?;
+    let active_id = manifest
+        .active_model_id
+        .clone()
+        .ok_or_else(|| "no active model".to_string())?;
+    let installed = manifest
+        .find(&active_id)
+        .ok_or_else(|| format!("active model not installed: {active_id}"))?;
+    let path = dir.join(&installed.filename);
+    let inference_backend = backend.unwrap_or_default();
+    // Loading is slow disk + GPU init; keep it off the async runtime.
+    tauri::async_runtime::spawn_blocking(move || {
+        core_ai::preload_model(&path, inference_backend)
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_unload_model() -> Result<(), String> {
+    core_ai::unload_model();
     Ok(())
 }
 
@@ -2100,7 +2156,11 @@ pub fn run() {
             ai_activate_model,
             ai_deactivate_model,
             ai_run_inference,
-            ai_cancel_inference
+            ai_cancel_inference,
+            ai_list_backend_devices,
+            ai_cache_state,
+            ai_preload_model,
+            ai_unload_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
