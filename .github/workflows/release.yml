@@ -11,6 +11,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install LunarG Vulkan SDK repository (provides glslc on 22.04)
+        run: |
+          # Ubuntu 22.04 doesn't ship glslc in the official repos; LunarG's
+          # vulkan-sdk metapackage bundles it (plus libvulkan-dev, glslang-tools).
+          # Sticking with 22.04 keeps the AppImage glibc requirement at 2.35.
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list http://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
@@ -24,8 +32,7 @@ jobs:
             fcitx5-frontend-gtk3 \
             libclang-dev \
             cmake \
-            libvulkan-dev \
-            glslang-tools
+            vulkan-sdk
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -144,7 +151,9 @@ jobs:
           path: out/*
 
   build-linux-aarch64:
-    runs-on: ubuntu-22.04-arm
+    # Bumped from 22.04 to 24.04 because LunarG Vulkan SDK has no arm64
+    # packages — 24.04 ships glslc natively. Requires glibc 2.39+ on target.
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
 
@@ -162,7 +171,8 @@ jobs:
             libclang-dev \
             cmake \
             libvulkan-dev \
-            glslang-tools
+            glslang-tools \
+            glslc
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
