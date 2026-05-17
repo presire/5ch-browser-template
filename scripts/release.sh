@@ -116,7 +116,28 @@ echo ""
 echo "[5/5] Create Windows ZIP"
 
 mkdir -p "$OUT_DIR"
-(cd "$TARGET_DIR/release" && powershell -Command "Compress-Archive -Path ember.exe -DestinationPath ember-win-x64.zip -Force")
+
+# Bundle vulkan-1.dll (Vulkan Loader, Apache 2.0) next to ember.exe so the
+# app works on machines without the Vulkan SDK/Runtime/recent GPU drivers
+# installed. Without this, users hit "vulkan-1.dll が見つかりません" on first
+# AI use (regression introduced in v0.0.161 when Vulkan backend was enabled).
+# Windows DLL search loads from the exe directory first, so co-locating works.
+VULKAN_DLL_SRC=""
+if [[ -n "${VULKAN_SDK:-}" && -f "${VULKAN_SDK}/Bin/vulkan-1.dll" ]]; then
+  VULKAN_DLL_SRC="${VULKAN_SDK}/Bin/vulkan-1.dll"
+elif [[ -f "/c/Windows/System32/vulkan-1.dll" ]]; then
+  # Fallback: System32 copy (installed by GPU drivers or Vulkan Runtime).
+  # Newer LunarG SDKs (1.4+) no longer ship vulkan-1.dll in $VULKAN_SDK/Bin.
+  VULKAN_DLL_SRC="/c/Windows/System32/vulkan-1.dll"
+else
+  echo "  ERROR: vulkan-1.dll not found in \$VULKAN_SDK/Bin or C:\\Windows\\System32"
+  echo "         Install Vulkan Runtime: https://vulkan.lunarg.com/sdk/home"
+  exit 1
+fi
+echo "  Bundling vulkan-1.dll from: $VULKAN_DLL_SRC"
+cp "$VULKAN_DLL_SRC" "$TARGET_DIR/release/vulkan-1.dll"
+
+(cd "$TARGET_DIR/release" && powershell -Command "Compress-Archive -Path ember.exe,vulkan-1.dll -DestinationPath ember-win-x64.zip -Force")
 cp "$TARGET_DIR/release/ember-win-x64.zip" "$OUT_DIR/ember-win-x64.zip"
 
 WIN_SHA256=$(sha256sum "$OUT_DIR/ember-win-x64.zip" | awk '{print $1}')
