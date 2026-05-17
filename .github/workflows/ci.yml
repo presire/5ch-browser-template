@@ -32,7 +32,7 @@ jobs:
           # MAX_PATH (260 chars); MSVC cl.exe fails with C1083 without this.
           reg add "HKLM\SYSTEM\CurrentControlSet\Control\FileSystem" /v LongPathsEnabled /t REG_DWORD /d 1 /f
 
-      - name: Shorten cargo target dir + force serial cmake build (MAX_PATH + flake workaround)
+      - name: Shorten cargo target dir (MAX_PATH workaround for cl.exe)
         shell: pwsh
         run: |
           # LongPathsEnabled is not enough — MSVC cl.exe still chokes on >260 char
@@ -41,12 +41,6 @@ jobs:
           # under the limit.
           New-Item -ItemType Directory -Force -Path C:\t | Out-Null
           echo "CARGO_TARGET_DIR=C:\t" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          # Force cmake to build the vulkan-shaders-gen ExternalProject sequentially.
-          # llama-cpp-sys-2's parallel install step ("cmake --target install --parallel 32")
-          # races with the ExternalProject's own build, producing
-          # "Not a file: cmake_install.cmake" errors. Serial build was reported by
-          # community to be the reliable workaround.
-          echo "CMAKE_BUILD_PARALLEL_LEVEL=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Install Vulkan SDK (core-ai GGML_VULKAN backend)
         shell: pwsh
@@ -66,7 +60,11 @@ jobs:
         working-directory: apps/desktop
 
       - name: Cargo check workspace
-        run: cargo check --workspace
+        # --jobs 1 forces serial build to dodge the llama-cpp-sys-2 vulkan-shaders-gen
+        # ExternalProject install race: cmake-rs 0.1.58 only honors NUM_JOBS (not
+        # CMAKE_BUILD_PARALLEL_LEVEL), and cargo's --jobs flag is what propagates
+        # NUM_JOBS=1 to the build script. ~3 min slower but reliable.
+        run: cargo check --workspace --jobs 1
 
       - name: Desktop build
         run: npm run build
