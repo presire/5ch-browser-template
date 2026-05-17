@@ -25,6 +25,7 @@
 - 自動更新（60秒間隔）
 - 更新チェック（latest.json 経由）
 - BE / UPLIFT / どんぐり認証
+- **ローカル LLM** によるスレ要約・チャット（Vulkan / Metal GPU 推論対応、外部 API 不要）
 
 ## 構成
 
@@ -34,6 +35,7 @@
 │   ├── desktop/          # Tauri + React デスクトップアプリ
 │   └── landing/          # 公式サイト (Cloudflare Pages)
 ├── crates/
+│   ├── core-ai/          # ローカル LLM 推論 (llama-cpp-2) / モデル管理
 │   ├── core-auth/        # BE / UPLIFT / どんぐり認証
 │   ├── core-fetch/       # HTTP取得・投稿フロー
 │   ├── core-parse/       # dat / subject.txt / bbsmenu パーサ
@@ -49,6 +51,17 @@
 - Rust stable
 - Node.js v22+
 - Tauri CLI（devDependencies に含まれる）
+- **LLVM (libclang) + CMake** — `core-ai` の `llama-cpp-2` ビルドに必要
+  - Windows: `winget install LLVM.LLVM Kitware.CMake` + `LIBCLANG_PATH=C:/Program Files/LLVM/bin`
+  - macOS: `brew install llvm cmake` + `LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib`
+  - Linux: `apt install libclang-dev cmake`
+- **Vulkan SDK** (Windows / Linux のみ) — GPU 推論用バックエンドのビルドに必要
+  - Windows: `winget install KhronosGroup.VulkanSDK` (~600 MB) + Long Path 有効化が必要
+    - 必要に応じて `CARGO_TARGET_DIR=C:\t` で MAX_PATH 超え回避
+  - Linux: `apt install libvulkan-dev glslang-tools`
+  - macOS: Metal は CMake が自動検出 — 追加導入不要
+
+> **利用者側 (ビルドしない場合)**: 上記は開発者向け。ZIP 展開で配布する exe には Vulkan ローダ (`vulkan-1.dll`) が同梱されており、ユーザーが追加で何かをインストールする必要はありません。ただし AI 機能を使うには **Vulkan 1.2+ 対応 GPU** が必要 (Apple Silicon は Metal で自動対応)。NVIDIA Kepler (GeForce 600/700 系) 等の Vulkan 非対応 / 破損 ICD 環境では AI 機能を有効化するとクラッシュします。
 
 ### セットアップ
 

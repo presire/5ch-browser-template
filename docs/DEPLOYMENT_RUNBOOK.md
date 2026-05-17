@@ -5,6 +5,17 @@
 - デスクトップバイナリ: GitHub Releases（ZIP配布）
 - 公式サイト + 更新メタデータ: Cloudflare Pages
 - メタデータ: `apps/landing/public/latest.json`
+- AI モデルカタログ: `apps/landing/public/ai-models.json`（ランディングと同時デプロイ。アプリ起動時に取得され、失敗時はバンドル版にフォールバック）
+
+### ビルドマシン側の追加要件 (v0.0.161+ Vulkan 有効化以降)
+
+| OS | 追加で必要なもの |
+|----|----------------|
+| Windows | Vulkan SDK (`winget install KhronosGroup.VulkanSDK` または `choco install vulkan-sdk`) — `VULKAN_SDK` env var が設定されていること / Ninja (`CMAKE_GENERATOR=Ninja`) / Long Path 有効化 / 必要に応じ `CARGO_TARGET_DIR=C:\t` で MAX_PATH 回避 |
+| macOS | 不要 (Metal は CMake が自動検出) |
+| Linux | `apt install libvulkan-dev glslang-tools libclang-dev cmake` |
+
+> **vulkan-1.dll の同梱**: `scripts/release.sh` は Windows ZIP 作成時に `vulkan-1.dll` を `ember.exe` の隣に置いてバンドルする（Apache 2.0、`$VULKAN_SDK/Bin` または `C:\Windows\System32` から自動コピー）。これにより Vulkan Runtime 未インストール環境でも DLL not found エラーを回避する。**ただし** 実際の GPU ドライバが破損 / 旧世代 (NVIDIA Kepler 等) の場合は ICD 列挙でクラッシュするため、ランディングで「Vulkan 1.2+ 対応 GPU 必須」と告知している。
 
 ## リリース手順（自動）
 
@@ -26,8 +37,12 @@ scripts/release.sh 0.0.50 "- サムネサイズ設定を追加
 
 1. バージョン更新（`package.json`, `tauri.conf.json`, `Cargo.toml`）
 2. 検証（`cargo check` + `npm run build` + smoke test）
-3. コミット & プッシュ
-4. Windows版 `npx tauri build` → ZIP作成 → `out/` に配置
+3. コミット & プッシュ（**固定ホワイトリスト方式** — `tauri.conf.json` / `Cargo.toml` / `lib.rs` / `capabilities/default.json` / `Cargo.lock` / `App.tsx` / `styles.css` / `pip.html`）
+4. Windows版 `npx tauri build` → `vulkan-1.dll` を `ember.exe` の隣にコピー → ZIP作成 → `out/` に配置
+
+> **ホワイトリスト注意**: `release.sh` の `git add` 対象は固定リスト。Rust 側で `lib.rs` 以外のファイル (新規モジュール等) を編集した時や、新規 crate を追加した時は **このリストに含まれずコミット漏れする**。リリース前に `git status` で取り残しを確認すること。
+>
+> **vulkan-1.dll が見つからない場合**: ビルドマシンに Vulkan SDK / Vulkan Runtime が入っていない可能性が高い。`scripts/release.sh` は `$VULKAN_SDK/Bin/vulkan-1.dll` → `C:\Windows\System32\vulkan-1.dll` の順に探し、両方無いと exit 1 する。Vulkan Runtime をインストールするか、Vulkan SDK を導入する。
 
 ### Mac版ビルド（Phase 1 完了後に実施）
 
@@ -100,9 +115,15 @@ git add -A && git commit -m "vX.Y.Z: <変更概要>" && git push
 ```bash
 cd apps/desktop && npx tauri build
 cd ../../target/release
-powershell -Command "Compress-Archive -Path ember.exe -DestinationPath ember-win-x64.zip -Force"
+
+# v0.0.161+ : vulkan-1.dll を ember.exe の隣に配置 (Vulkan Runtime 未導入環境対策)
+cp "$VULKAN_SDK/Bin/vulkan-1.dll" .  # または cp /c/Windows/System32/vulkan-1.dll .
+
+powershell -Command "Compress-Archive -Path ember.exe,vulkan-1.dll -DestinationPath ember-win-x64.zip -Force"
 sha256sum ember-win-x64.zip && wc -c < ember-win-x64.zip
 ```
+
+> ZIP に `vulkan-1.dll` を含めないと、Vulkan Runtime 未導入環境のユーザーが AI 機能を使った瞬間に「vulkan-1.dll が見つかりません」で落ちる。Windows の DLL 検索順は exe ディレクトリが最優先なので、同梱で OK。
 
 ### 4. macOS ビルド
 
@@ -140,6 +161,8 @@ npm run build
 npx wrangler pages deploy dist --project-name ember-5ch --branch main --commit-dirty=true
 ```
 
+> **`ai-models.json` の更新**: AI モデルを追加・差し替える場合は `apps/landing/public/ai-models.json` を編集してデプロイすればアプリ再リリース不要 (アプリは起動時にこの URL を取得する)。ただしバンドル版 (`apps/desktop/src-tauri/ai-models.json`) も同時に更新しておくと、オフライン環境でも最新カタログが見える。両者を揃えないと「カタログが見える環境/見えない環境」が出るので注意。
+
 ### 8. リリース後の確認
 
 - 旧バージョンのアプリで更新チェック → `hasUpdate=true`
@@ -151,3 +174,5 @@ npx wrangler pages deploy dist --project-name ember-5ch --branch main --commit-d
 - ZIP ファイルは GitHub Releases でホスティング（Pages には置かない）
 - ファイル名は固定: `ember-win-x64.zip`, `ember-mac-arm64.zip`
 - `latest.json` にシークレット情報を含めない
+- **Windows ZIP には必ず `vulkan-1.dll` を同梱**（`scripts/release.sh` は自動同梱、手動ビルド時は忘れがち）
+- **`ai-models.json` を編集した場合は landing デプロイ必須** — アプリ起動時にランディングから取得しているため、Pages に push しないと新カタログが配布されない
