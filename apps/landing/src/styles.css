@@ -434,6 +434,15 @@ h1 {
   box-shadow: var(--shadow-md);
   transition: opacity 250ms ease, transform 400ms ease;
 }
+.feature-big-text > .kicker {
+  margin-bottom: 8px;
+}
+.ai-caption {
+  margin: 14px 0 8px;
+  color: var(--ink-sub);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
 .feature-big-shot .shot-button:hover img {
   transform: translateY(-4px);
 }
