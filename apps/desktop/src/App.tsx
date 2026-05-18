@@ -97,17 +97,26 @@ function aiWrapTurn(template: string, role: "user" | "assistant", content: strin
   return `<start_of_turn>${r}\n${content}<end_of_turn>\n`;
 }
 
+// Invisible Japanese anchor appended after the assistant turn opens. LLMs
+// strongly bias toward the language of the most recent tokens; seeding a
+// Japanese phrase here makes English drift far less likely than relying on
+// system-prompt instructions alone. The streaming handler strips this prefix
+// from the visible output (see aiPrefillRemainingRef).
+const AI_LANG_PREFILL = "[日本語で回答]\n";
+
 function aiOpenAssistantTurn(template: string): string {
+  let opener: string;
   if (template === "qwen" || template === "chatml") {
-    return `<|im_start|>assistant\n`;
-  }
-  if (template === "gemma4") {
+    opener = `<|im_start|>assistant\n`;
+  } else if (template === "gemma4") {
     // The jinja "empty thought" trick (`<|channel>thought\n<channel|>`) is
     // ignored by Gemma 4 4B — it keeps writing into the channel and then
     // closes it itself. Skipping it makes the model emit content directly.
-    return `<|turn>model\n`;
+    opener = `<|turn>model\n`;
+  } else {
+    opener = `<start_of_turn>model\n`;
   }
-  return `<start_of_turn>model\n`;
+  return opener + AI_LANG_PREFILL;
 }
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
@@ -1005,6 +1014,10 @@ export default function App() {
   const aiTokenTargetRef = useRef<"summary" | "chat" | null>(null);
   const aiMaxTokensRef = useRef<number>(400);
   const aiLastPromptRef = useRef<string>("");
+  // Remaining bytes of AI_LANG_PREFILL to silently consume from the streamed
+  // output. Defensive: the prefill lives in the prompt (model normally never
+  // echoes it), but if a particular model does parrot it, strip it here.
+  const aiPrefillRemainingRef = useRef<string>("");
   const aiChatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [boardsFontSize, setBoardsFontSize] = useState(12);
   const [threadsFontSize, setThreadsFontSize] = useState(12);
@@ -4872,6 +4885,7 @@ export default function App() {
     aiSessionIdRef.current = null;
     aiTokenTargetRef.current = null;
     aiLastPromptRef.current = "";
+    aiPrefillRemainingRef.current = "";
   }, [currentAiThreadUrl]);
 
   // Auto-close subpane when no model is active.
@@ -4912,15 +4926,42 @@ export default function App() {
           (e) => {
             if (e.payload.sessionId !== aiSessionIdRef.current) return;
             const target = aiTokenTargetRef.current;
+            // Strip echoed prefill, if any. Normally the prefill is prompt-only
+            // and never appears in output, but a few models do parrot it back.
+            let tok = e.payload.token;
+            const remaining = aiPrefillRemainingRef.current;
+            if (remaining.length > 0 && tok.length > 0) {
+              if (tok === remaining) {
+                aiPrefillRemainingRef.current = "";
+                tok = "";
+              } else if (remaining.startsWith(tok)) {
+                aiPrefillRemainingRef.current = remaining.slice(tok.length);
+                tok = "";
+              } else if (tok.startsWith(remaining)) {
+                tok = tok.slice(remaining.length);
+                aiPrefillRemainingRef.current = "";
+              } else {
+                // Model didn't echo the prefill — done stripping, pass tokens through.
+                aiPrefillRemainingRef.current = "";
+              }
+            }
+            if (tok.length === 0) {
+              setAiTokenProgress((prev) => {
+                const max = aiMaxTokensRef.current;
+                const received = (prev?.received ?? 0) + 1;
+                return { received, max };
+              });
+              return;
+            }
             if (target === "summary") {
-              setAiSummary((prev) => prev + e.payload.token);
+              setAiSummary((prev) => prev + tok);
             } else if (target === "chat") {
               setAiChatMessages((prev) => {
                 if (prev.length === 0) return prev;
                 const last = prev[prev.length - 1];
                 if (last.role !== "assistant") return prev;
                 const next = prev.slice(0, -1);
-                next.push({ role: "assistant", content: last.content + e.payload.token });
+                next.push({ role: "assistant", content: last.content + tok });
                 return next;
               });
             }
@@ -5107,6 +5148,7 @@ export default function App() {
     aiTokenTargetRef.current = "summary";
     aiMaxTokensRef.current = maxTokens;
     aiLastPromptRef.current = prompt;
+    aiPrefillRemainingRef.current = AI_LANG_PREFILL;
     setAiSummary("");
     setAiInferenceBusy(true);
     setAiInferencePhase(null);
@@ -5164,6 +5206,7 @@ export default function App() {
     aiTokenTargetRef.current = "chat";
     aiMaxTokensRef.current = maxTokens;
     aiLastPromptRef.current = prompt;
+    aiPrefillRemainingRef.current = AI_LANG_PREFILL;
     setAiInferenceBusy(true);
     setAiInferencePhase(null);
     setAiTokenProgress({ received: 0, max: maxTokens });
@@ -5212,6 +5255,9 @@ export default function App() {
     aiTokenTargetRef.current = target;
     aiMaxTokensRef.current = maxTokens;
     aiLastPromptRef.current = newPrompt;
+    // Continuation: prefill was already consumed by the first pass — model
+    // emits raw continuation tokens, nothing to strip.
+    aiPrefillRemainingRef.current = "";
     setAiInferenceBusy(true);
     setAiInferencePhase(null);
     setAiTokenProgress({ received: 0, max: maxTokens });
