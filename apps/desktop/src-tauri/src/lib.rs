@@ -1705,7 +1705,18 @@ fn ai_status() -> Result<AiStatus, String> {
 
 #[tauri::command]
 async fn ai_download_model(app: AppHandle, model_id: String) -> Result<(), String> {
-    let catalog = core_ai::parse_catalog(AI_BUNDLED_CATALOG).map_err(|e| e.to_string())?;
+    // Prefer the remote catalog so newly-published entries (added via
+    // landing-only deploys without an app release) can still be downloaded.
+    // Without this, models added to the remote-only catalog hung at 0% in the
+    // UI because the bundled lookup returned "model not in catalog" before any
+    // download started.
+    let catalog = if let Some(body) = ai_fetch_remote_catalog().await {
+        core_ai::parse_catalog(&body)
+            .or_else(|_| core_ai::parse_catalog(AI_BUNDLED_CATALOG))
+    } else {
+        core_ai::parse_catalog(AI_BUNDLED_CATALOG)
+    }
+    .map_err(|e| e.to_string())?;
     let entry = catalog
         .find(&model_id)
         .ok_or_else(|| format!("model not in catalog: {model_id}"))?
