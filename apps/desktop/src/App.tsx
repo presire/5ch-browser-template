@@ -4810,8 +4810,17 @@ export default function App() {
     try {
       await invoke("ai_download_model", { modelId: id });
     } catch (e) {
-      // ai-download-finished event will fire with error; nothing more to do here.
+      // The Tauri command may reject before the download even starts (e.g.
+      // model not in catalog). In that case ai-download-finished never fires,
+      // so we need to clear the optimistic "downloading" state ourselves —
+      // otherwise the row hangs at 0% with an unresponsive Cancel button.
       console.warn("ai_download_model rejected", e);
+      setAiDownloads((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setAiError(`ダウンロード開始失敗: ${e}`);
     }
   };
   const aiCancelDownload = async (id: string) => {
