@@ -12,6 +12,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 
 type AiModelEntry = {
   id: string;
@@ -1009,10 +1010,12 @@ export default function App() {
   const [aiSummary, setAiSummary] = useState("");
   const [aiChatMessages, setAiChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [aiChatInput, setAiChatInput] = useState("");
+  const [aiReviewResult, setAiReviewResult] = useState("");
+  const [aiReviewPanelOpen, setAiReviewPanelOpen] = useState(false);
   const [aiInferenceBusy, setAiInferenceBusy] = useState(false);
   const [aiInferencePhase, setAiInferencePhase] = useState<"loadingModel" | "processingPrompt" | "generating" | null>(null);
   const [aiTokenProgress, setAiTokenProgress] = useState<{ received: number; max: number } | null>(null);
-  const [aiCanContinue, setAiCanContinue] = useState<"summary" | "chat" | null>(null);
+  const [aiCanContinue, setAiCanContinue] = useState<"summary" | "chat" | "review" | null>(null);
   const [aiInferenceBackend, setAiInferenceBackend] = useState<AiInferenceBackend>(loadAiInferenceBackend);
   useEffect(() => {
     try {
@@ -1022,7 +1025,7 @@ export default function App() {
     }
   }, [aiInferenceBackend]);
   const aiSessionIdRef = useRef<string | null>(null);
-  const aiTokenTargetRef = useRef<"summary" | "chat" | null>(null);
+  const aiTokenTargetRef = useRef<"summary" | "chat" | "review" | null>(null);
   const aiMaxTokensRef = useRef<number>(400);
   const aiLastPromptRef = useRef<string>("");
   // Remaining bytes of the prefill (aiPrefillFor) to silently consume from the
@@ -4889,6 +4892,8 @@ export default function App() {
     setAiSummary("");
     setAiChatMessages([]);
     setAiChatInput("");
+    setAiReviewResult("");
+    setAiReviewPanelOpen(false);
     setAiInferenceBusy(false);
     setAiInferencePhase(null);
     setAiTokenProgress(null);
@@ -4975,6 +4980,8 @@ export default function App() {
                 next.push({ role: "assistant", content: last.content + tok });
                 return next;
               });
+            } else if (target === "review") {
+              setAiReviewResult((prev) => prev + tok);
             }
             setAiTokenProgress((prev) => {
               const max = aiMaxTokensRef.current;
@@ -5228,6 +5235,91 @@ export default function App() {
     });
   };
 
+  const aiStartReviewPost = () => {
+    if (aiInferenceBusy || !aiStatus?.activeModelId) return;
+    const body = composeBody.trim();
+    // Skip trivially short posts (草, ほんこれ, etc.). At under 15 chars the
+    // model just produces noise indistinguishable from real issues.
+    if (body.length < 15) return;
+    // Pull thread context plus the specific responses the draft anchors to, so
+    // the model can judge whether the reply lands in-context (and whether
+    // claims invite easy "揚げ足".)
+    const focusIds = extractResNumbers(body);
+    const ctx = buildThreadContext(6000, focusIds);
+    const template = aiActiveTemplate();
+    const systemInstructions = [
+      "あなたは5ちゃんねるに書き込もうとしている文をチェックするアシスタントです。スレッドの流れを踏まえ、以下の3観点で投稿予定の文をレビューしてください。",
+      "",
+      "言語ルール (最重要): 出力は必ず日本語のみ。英語の単語・文章は一切使わない。Reply in Japanese only — do not use English.",
+      "",
+      "チェック観点:",
+      "1. 【誤字】明らかな誤字・誤変換・タイポ",
+      "2. 【揚げ足】論理の穴・曖昧な主張・相手に揚げ足を取られそうな箇所 (スレの流れと矛盾していないかも含めて判定する)",
+      "3. 【平易】回りくどい・読みづらい表現があれば具体的に",
+      "",
+      "厳守すべき出力ルール (違反は禁止):",
+      "- 観点ラベルだけ書いて中身を書かないのは禁止。【観点】の後には必ず30字以上の具体的な指摘を書く (どの語のどこが問題か、なぜ問題かを明示)",
+      "- 誤字 (タイポ、誤変換、おかしな送り仮名) は必ず【観点】誤字 として独立に指摘する。【観点】平易 や 修正案で「こっそり直す」のは違反。誤字と平易を混同しない",
+      "- 修正案を出すときは、誤字だけ直すのは違反。指摘した揚げ足ポイント・平易ポイントも修正案で実際に書き直すこと。自分で「煽りすぎ」と指摘した表現を修正案にそのまま残すのは禁止",
+      "- 修正案は元文の改行構造を保つ (元が複数行なら修正案も複数行で出す)",
+      "- 問題が全くなければ「問題なし」とだけ書いて出力を終える",
+      "- 指摘がある観点について、その観点が無いのに書かないこと。逆に該当する観点はすべて出すこと (3観点全部に該当することもある)",
+      "",
+      "5ch トーンの保持:",
+      "- 5ちゃんねる特有の口調・煽り・スラング・「w」「草」「〜だわ」等のノリは保つ。丁寧語・敬語に書き直さない",
+      "- スレの空気と元文の温度感を尊重する。中立化・無毒化はしない",
+      "- 投稿内容そのものの是非 (政治的立場や倫理判断) には踏み込まない。文章としての品質だけ見る",
+      "",
+      "--- 出力例 (この粒度・形式で出力すること) ---",
+      "",
+      "【投稿予定の本文の例】",
+      ">>15 そんな事してる奴は絶対バカだろ",
+      "常識的に考えてありえないんだから議論するよちもない",
+      "そもそもこの話題はかれこれずっと言われてきた事だわ",
+      "",
+      "【出力例】",
+      "【観点】誤字: 「議論するよち」は「議論する余地」の誤変換。「よち」では意味が通らない",
+      "【観点】揚げ足: 「絶対バカ」「議論する余地もない」が強すぎる断定。反論を呼び込みやすいので「俺はバカだと思う」程度にトーンを下げると揚げ足取られにくい",
+      "【観点】揚げ足: 「常識的に考えて」は「お前の常識を押し付けるな」と返される定番フレーズ。具体的な根拠を1つ添える方が強い",
+      "【観点】平易: 「かれこれずっと言われてきた事」がやや回りくどい。「前からずっと言われてた事」で短くなる",
+      "",
+      "修正案 (元文の改行を保つこと):",
+      ">>15 そんな事してる奴バカだろ",
+      "〇〇って点で破綻してるから議論にもならん",
+      "そもそも前からずっと言われてた事だわ",
+      "",
+      "--- 例ここまで。以下を同じ粒度でチェックしてください ---",
+    ].join("\n");
+    const prompt = aiWrapTurn(template, "user", [
+      systemInstructions,
+      "",
+      "【スレッド】",
+      ctx,
+      "",
+      "【投稿予定の本文】",
+      body,
+      "",
+      "上記の本文をチェックしてください。観点ラベルだけ書いて中身を書かない出力は禁止です。",
+    ].join("\n")) + aiOpenAssistantTurn(template);
+    const sid = `review-${Date.now()}`;
+    const maxTokens = 400;
+    aiSessionIdRef.current = sid;
+    aiTokenTargetRef.current = "review";
+    aiMaxTokensRef.current = maxTokens;
+    aiLastPromptRef.current = prompt;
+    aiPrefillRemainingRef.current = aiPrefillFor(template);
+    setAiReviewResult("");
+    setAiReviewPanelOpen(true);
+    setAiInferenceBusy(true);
+    setAiInferencePhase(null);
+    setAiTokenProgress({ received: 0, max: maxTokens });
+    setAiCanContinue(null);
+    setAiError(null);
+    void invoke("ai_run_inference", { sessionId: sid, prompt, maxTokens, backend: aiInferenceBackend }).catch((e) => {
+      console.warn("ai_run_inference failed", e);
+    });
+  };
+
   const aiCancelInference = () => {
     void invoke("ai_cancel_inference").catch((e) => console.warn("ai_cancel_inference failed", e));
   };
@@ -5255,6 +5347,8 @@ export default function App() {
     let generatedSoFar = "";
     if (target === "summary") {
       generatedSoFar = aiSummary;
+    } else if (target === "review") {
+      generatedSoFar = aiReviewResult;
     } else {
       const last = aiChatMessages[aiChatMessages.length - 1];
       if (last?.role === "assistant") generatedSoFar = last.content;
@@ -6687,7 +6781,7 @@ export default function App() {
                     )}
                     <div className="ai-summary-content ai-markdown">
                       {aiSummary ? (
-                        <ReactMarkdown>{escapeMdAnchors(aiSummary)}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkBreaks]}>{escapeMdAnchors(aiSummary)}</ReactMarkdown>
                       ) : (
                         <div className="ai-placeholder">
                           「要約する」ボタンを押すと、現在のスレを要約します。
@@ -6734,7 +6828,7 @@ export default function App() {
                           <div className="ai-chat-msg-role">{m.role === "user" ? "あなた" : "AI"}</div>
                           <div className={`ai-chat-msg-content ${m.role === "assistant" ? "ai-markdown" : ""}`}>
                             {m.role === "assistant" && m.content
-                              ? <ReactMarkdown>{escapeMdAnchors(m.content)}</ReactMarkdown>
+                              ? <ReactMarkdown remarkPlugins={[remarkBreaks]}>{escapeMdAnchors(m.content)}</ReactMarkdown>
                               : m.content || (m.role === "assistant" && aiInferenceBusy ? "..." : "")}
                           </div>
                         </div>
@@ -7045,8 +7139,25 @@ export default function App() {
           )}
           <div className="compose-actions">
             <span className="compose-meta">{composeBody.length}文字 / {composeBody.split("\n").length}行</span>
-            <button onClick={probePostFlowTraceFromCompose} disabled={composeSubmitting}>{composeSubmitting ? "送信中..." : `送信 (${composeSubmitKey === "shift" ? "Shift" : "Ctrl"}+Enter)`}</button>
+            <button
+              className="compose-ai-check-btn"
+              onClick={aiStartReviewPost}
+              disabled={aiInferenceBusy || !aiStatus?.activeModelId || composeBody.trim().length < 15}
+              title={
+                !aiStatus?.activeModelId ? "AI モデルが有効化されていません"
+                : composeBody.trim().length < 15 ? `本文が短すぎます (15文字以上で有効。現在 ${composeBody.trim().length}文字)`
+                : "AI に投稿予定の文をチェックさせる (スレ文脈込み)"
+              }
+            >
+              <BrainCircuit size={14} /> {
+                aiInferenceBusy && aiTokenTargetRef.current === "review" ? aiPhaseLabel(aiInferencePhase)
+                : !aiStatus?.activeModelId ? "AI チェック (モデル未有効)"
+                : composeBody.trim().length < 15 ? `AI チェック (あと ${15 - composeBody.trim().length}文字)`
+                : "AI チェック"
+              }
+            </button>
             <button onClick={() => setUploadPanelOpen((v) => { if (v) setUploadResults([]); return !v; })} title="画像アップロード"><Upload size={14} /></button>
+            <button onClick={probePostFlowTraceFromCompose} disabled={composeSubmitting}>{composeSubmitting ? "送信中..." : `送信 (${composeSubmitKey === "shift" ? "Shift" : "Ctrl"}+Enter)`}</button>
             <button onClick={async () => {
               setComposeResult({ ok: false, message: "診断中..." });
               try {
@@ -7057,6 +7168,37 @@ export default function App() {
               }
             }} style={{ fontSize: "0.85em" }}>接続診断</button>
           </div>
+          {aiReviewPanelOpen && (
+            <div className="compose-ai-review">
+              <div className="compose-ai-review-header">
+                <span><BrainCircuit size={12} /> AI チェック結果</span>
+                <span className="compose-ai-review-actions">
+                  {aiInferenceBusy && aiTokenTargetRef.current === "review" && (
+                    <button onClick={aiCancelInference} title={aiCancelHint(aiInferencePhase)}>停止</button>
+                  )}
+                  {!aiInferenceBusy && aiCanContinue === "review" && (
+                    <button onClick={aiContinueGenerate}>続きを生成</button>
+                  )}
+                  {aiReviewResult && !aiInferenceBusy && (
+                    <button onClick={() => { setAiReviewResult(""); setAiCanContinue(null); }}>クリア</button>
+                  )}
+                  <button onClick={() => { setAiReviewPanelOpen(false); }} title="閉じる"><X size={12} /></button>
+                </span>
+              </div>
+              {aiInferenceBusy && aiTokenTargetRef.current === "review" && aiTokenProgress && (
+                <div className="compose-ai-review-progress">{aiTokenProgress.received} / {aiTokenProgress.max} tok</div>
+              )}
+              <div className="compose-ai-review-body">
+                {aiReviewResult ? (
+                  <ReactMarkdown remarkPlugins={[remarkBreaks]}>{escapeMdAnchors(aiReviewResult)}</ReactMarkdown>
+                ) : aiInferenceBusy && aiTokenTargetRef.current === "review" ? (
+                  <span className="compose-ai-review-placeholder">{aiPhaseLabel(aiInferencePhase)}</span>
+                ) : (
+                  <span className="compose-ai-review-placeholder">(結果なし)</span>
+                )}
+              </div>
+            </div>
+          )}
           {uploadPanelOpen && (
             <div className="upload-panel">
               <div className="upload-panel-tabs">
