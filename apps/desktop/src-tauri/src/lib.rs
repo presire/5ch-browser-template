@@ -1640,6 +1640,45 @@ fn ai_models_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+#[tauri::command]
+fn ai_reveal_models_dir() -> Result<(), String> {
+    let dir = ai_models_dir()?;
+    // Create on first run so we open an empty folder instead of erroring out
+    // when the user has not downloaded anything yet.
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.as_os_str();
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("unsupported platform".to_string())
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct AiDownloadProgress {
@@ -2183,6 +2222,7 @@ pub fn run() {
             download_images,
             ai_list_models,
             ai_status,
+            ai_reveal_models_dir,
             ai_download_model,
             ai_cancel_download,
             ai_delete_model,
@@ -2195,6 +2235,22 @@ pub fn run() {
             ai_preload_model,
             ai_unload_model
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            // macOS: Cmd+Q → NSApplication terminate: → exit() → __cxa_finalize
+            // tears down ggml-metal's static device cache, which aborts inside
+            // ggml_metal_rsets_free when a model was loaded during the session.
+            // Bypass C++ static destructors by exiting immediately — the OS
+            // reclaims Metal resources without running ggml's teardown path.
+            // See _temp/mac_error.txt for the original crash report.
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Exit) {
+                unsafe extern "C" {
+                    fn _exit(status: i32) -> !;
+                }
+                unsafe { _exit(0); }
+            }
+            let _ = event;
+        });
 }

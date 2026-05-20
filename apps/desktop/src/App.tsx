@@ -12,6 +12,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 
 type AiModelEntry = {
   id: string;
@@ -97,12 +98,23 @@ function aiWrapTurn(template: string, role: "user" | "assistant", content: strin
   return `<start_of_turn>${r}\n${content}<end_of_turn>\n`;
 }
 
-// Invisible Japanese anchor appended after the assistant turn opens. LLMs
-// strongly bias toward the language of the most recent tokens; seeding a
-// Japanese phrase here makes English drift far less likely than relying on
-// system-prompt instructions alone. The streaming handler strips this prefix
-// from the visible output (see aiPrefillRemainingRef).
-const AI_LANG_PREFILL = "[日本語で回答]\n";
+// Invisible prefill appended after the assistant turn opens. Two purposes:
+// (1) Seed Japanese so the model doesn't drift into English — LLMs bias toward
+//     the language of the most recent tokens far more strongly than they obey
+//     system-prompt rules.
+// (2) For Qwen3 chat templates, close the implicit <think> block so the model
+//     emits content directly instead of leaking "</think>" into the answer.
+// The streaming handler strips this prefix from the visible output
+// (see aiPrefillRemainingRef).
+const AI_LANG_ANCHOR = "[日本語で回答]\n";
+const AI_QWEN_THINK_SKIP = "<think>\n\n</think>\n\n";
+
+function aiPrefillFor(template: string): string {
+  if (template === "qwen" || template === "chatml") {
+    return AI_QWEN_THINK_SKIP + AI_LANG_ANCHOR;
+  }
+  return AI_LANG_ANCHOR;
+}
 
 function aiOpenAssistantTurn(template: string): string {
   let opener: string;
@@ -116,12 +128,12 @@ function aiOpenAssistantTurn(template: string): string {
   } else {
     opener = `<start_of_turn>model\n`;
   }
-  return opener + AI_LANG_PREFILL;
+  return opener + aiPrefillFor(template);
 }
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon, Sparkles, BrainCircuit,
+  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon, Sparkles, BrainCircuit, FolderOpen,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -998,10 +1010,12 @@ export default function App() {
   const [aiSummary, setAiSummary] = useState("");
   const [aiChatMessages, setAiChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [aiChatInput, setAiChatInput] = useState("");
+  const [aiReviewResult, setAiReviewResult] = useState("");
+  const [aiReviewPanelOpen, setAiReviewPanelOpen] = useState(false);
   const [aiInferenceBusy, setAiInferenceBusy] = useState(false);
   const [aiInferencePhase, setAiInferencePhase] = useState<"loadingModel" | "processingPrompt" | "generating" | null>(null);
   const [aiTokenProgress, setAiTokenProgress] = useState<{ received: number; max: number } | null>(null);
-  const [aiCanContinue, setAiCanContinue] = useState<"summary" | "chat" | null>(null);
+  const [aiCanContinue, setAiCanContinue] = useState<"summary" | "chat" | "review" | null>(null);
   const [aiInferenceBackend, setAiInferenceBackend] = useState<AiInferenceBackend>(loadAiInferenceBackend);
   useEffect(() => {
     try {
@@ -1011,12 +1025,12 @@ export default function App() {
     }
   }, [aiInferenceBackend]);
   const aiSessionIdRef = useRef<string | null>(null);
-  const aiTokenTargetRef = useRef<"summary" | "chat" | null>(null);
+  const aiTokenTargetRef = useRef<"summary" | "chat" | "review" | null>(null);
   const aiMaxTokensRef = useRef<number>(400);
   const aiLastPromptRef = useRef<string>("");
-  // Remaining bytes of AI_LANG_PREFILL to silently consume from the streamed
-  // output. Defensive: the prefill lives in the prompt (model normally never
-  // echoes it), but if a particular model does parrot it, strip it here.
+  // Remaining bytes of the prefill (aiPrefillFor) to silently consume from the
+  // streamed output. Defensive: the prefill lives in the prompt (model normally
+  // never echoes it), but if a particular model does parrot it, strip it here.
   const aiPrefillRemainingRef = useRef<string>("");
   const aiChatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const [boardsFontSize, setBoardsFontSize] = useState(12);
@@ -4878,6 +4892,8 @@ export default function App() {
     setAiSummary("");
     setAiChatMessages([]);
     setAiChatInput("");
+    setAiReviewResult("");
+    setAiReviewPanelOpen(false);
     setAiInferenceBusy(false);
     setAiInferencePhase(null);
     setAiTokenProgress(null);
@@ -4964,6 +4980,8 @@ export default function App() {
                 next.push({ role: "assistant", content: last.content + tok });
                 return next;
               });
+            } else if (target === "review") {
+              setAiReviewResult((prev) => prev + tok);
             }
             setAiTokenProgress((prev) => {
               const max = aiMaxTokensRef.current;
@@ -5116,6 +5134,52 @@ export default function App() {
   // nested blockquote. Applied to all LLM-generated text before rendering.
   const escapeMdAnchors = (text: string): string => text.replace(/>/g, "\\>");
 
+  // Replace `>>NNN` / `>>NNN-MMM` inside markdown-rendered text children with
+  // .anchor-ref spans so AI output can trigger the existing response popup.
+  const renderWithAnchors = (children: React.ReactNode): React.ReactNode => {
+    const arr: React.ReactNode[] = Array.isArray(children) ? children : [children];
+    const out: React.ReactNode[] = [];
+    let kctr = 0;
+    for (let i = 0; i < arr.length; i++) {
+      const child = arr[i];
+      if (typeof child !== "string") {
+        out.push(child);
+        continue;
+      }
+      const re = />>(\d+)(?:-(\d+))?/g;
+      let m: RegExpExecArray | null;
+      let last = 0;
+      let found = false;
+      while ((m = re.exec(child)) !== null) {
+        found = true;
+        if (m.index > last) out.push(child.slice(last, m.index));
+        const attrs: Record<string, unknown> = {
+          className: "anchor-ref",
+          "data-anchor": m[1],
+          role: "link",
+          tabIndex: 0,
+        };
+        if (m[2]) attrs["data-anchor-end"] = m[2];
+        out.push(<span key={`anc${i}-${kctr++}`} {...attrs}>{m[0]}</span>);
+        last = m.index + m[0].length;
+      }
+      if (!found) out.push(child);
+      else if (last < child.length) out.push(child.slice(last));
+    }
+    return out;
+  };
+
+  const aiMdComponents = {
+    p: ({ children }: { children?: React.ReactNode }) => <p>{renderWithAnchors(children)}</p>,
+    li: ({ children }: { children?: React.ReactNode }) => <li>{renderWithAnchors(children)}</li>,
+    strong: ({ children }: { children?: React.ReactNode }) => <strong>{renderWithAnchors(children)}</strong>,
+    em: ({ children }: { children?: React.ReactNode }) => <em>{renderWithAnchors(children)}</em>,
+    h1: ({ children }: { children?: React.ReactNode }) => <h1>{renderWithAnchors(children)}</h1>,
+    h2: ({ children }: { children?: React.ReactNode }) => <h2>{renderWithAnchors(children)}</h2>,
+    h3: ({ children }: { children?: React.ReactNode }) => <h3>{renderWithAnchors(children)}</h3>,
+    h4: ({ children }: { children?: React.ReactNode }) => <h4>{renderWithAnchors(children)}</h4>,
+  };
+
   const aiActiveTemplate = (): string => {
     const id = aiStatus?.activeModelId;
     if (!id) return "gemma";
@@ -5148,7 +5212,7 @@ export default function App() {
     aiTokenTargetRef.current = "summary";
     aiMaxTokensRef.current = maxTokens;
     aiLastPromptRef.current = prompt;
-    aiPrefillRemainingRef.current = AI_LANG_PREFILL;
+    aiPrefillRemainingRef.current = aiPrefillFor(template);
     setAiSummary("");
     setAiInferenceBusy(true);
     setAiInferencePhase(null);
@@ -5206,7 +5270,92 @@ export default function App() {
     aiTokenTargetRef.current = "chat";
     aiMaxTokensRef.current = maxTokens;
     aiLastPromptRef.current = prompt;
-    aiPrefillRemainingRef.current = AI_LANG_PREFILL;
+    aiPrefillRemainingRef.current = aiPrefillFor(template);
+    setAiInferenceBusy(true);
+    setAiInferencePhase(null);
+    setAiTokenProgress({ received: 0, max: maxTokens });
+    setAiCanContinue(null);
+    setAiError(null);
+    void invoke("ai_run_inference", { sessionId: sid, prompt, maxTokens, backend: aiInferenceBackend }).catch((e) => {
+      console.warn("ai_run_inference failed", e);
+    });
+  };
+
+  const aiStartReviewPost = () => {
+    if (aiInferenceBusy || !aiStatus?.activeModelId) return;
+    const body = composeBody.trim();
+    // Skip trivially short posts (草, ほんこれ, etc.). At under 15 chars the
+    // model just produces noise indistinguishable from real issues.
+    if (body.length < 15) return;
+    // Pull thread context plus the specific responses the draft anchors to, so
+    // the model can judge whether the reply lands in-context (and whether
+    // claims invite easy "揚げ足".)
+    const focusIds = extractResNumbers(body);
+    const ctx = buildThreadContext(6000, focusIds);
+    const template = aiActiveTemplate();
+    const systemInstructions = [
+      "あなたは5ちゃんねるに書き込もうとしている文をチェックするアシスタントです。スレッドの流れを踏まえ、以下の3観点で投稿予定の文をレビューしてください。",
+      "",
+      "言語ルール (最重要): 出力は必ず日本語のみ。英語の単語・文章は一切使わない。Reply in Japanese only — do not use English.",
+      "",
+      "チェック観点:",
+      "1. 【誤字】明らかな誤字・誤変換・タイポ",
+      "2. 【揚げ足】論理の穴・曖昧な主張・相手に揚げ足を取られそうな箇所 (スレの流れと矛盾していないかも含めて判定する)",
+      "3. 【平易】回りくどい・読みづらい表現があれば具体的に",
+      "",
+      "厳守すべき出力ルール (違反は禁止):",
+      "- 観点ラベルだけ書いて中身を書かないのは禁止。【観点】の後には必ず30字以上の具体的な指摘を書く (どの語のどこが問題か、なぜ問題かを明示)",
+      "- 誤字 (タイポ、誤変換、おかしな送り仮名) は必ず【観点】誤字 として独立に指摘する。【観点】平易 や 修正案で「こっそり直す」のは違反。誤字と平易を混同しない",
+      "- 修正案を出すときは、誤字だけ直すのは違反。指摘した揚げ足ポイント・平易ポイントも修正案で実際に書き直すこと。自分で「煽りすぎ」と指摘した表現を修正案にそのまま残すのは禁止",
+      "- 修正案は元文の改行構造を保つ (元が複数行なら修正案も複数行で出す)",
+      "- 問題が全くなければ「問題なし」とだけ書いて出力を終える",
+      "- 指摘がある観点について、その観点が無いのに書かないこと。逆に該当する観点はすべて出すこと (3観点全部に該当することもある)",
+      "",
+      "5ch トーンの保持:",
+      "- 5ちゃんねる特有の口調・煽り・スラング・「w」「草」「〜だわ」等のノリは保つ。丁寧語・敬語に書き直さない",
+      "- スレの空気と元文の温度感を尊重する。中立化・無毒化はしない",
+      "- 投稿内容そのものの是非 (政治的立場や倫理判断) には踏み込まない。文章としての品質だけ見る",
+      "",
+      "--- 出力例 (この粒度・形式で出力すること) ---",
+      "",
+      "【投稿予定の本文の例】",
+      ">>15 そんな事してる奴は絶対バカだろ",
+      "常識的に考えてありえないんだから議論するよちもない",
+      "そもそもこの話題はかれこれずっと言われてきた事だわ",
+      "",
+      "【出力例】",
+      "【観点】誤字: 「議論するよち」は「議論する余地」の誤変換。「よち」では意味が通らない",
+      "【観点】揚げ足: 「絶対バカ」「議論する余地もない」が強すぎる断定。反論を呼び込みやすいので「俺はバカだと思う」程度にトーンを下げると揚げ足取られにくい",
+      "【観点】揚げ足: 「常識的に考えて」は「お前の常識を押し付けるな」と返される定番フレーズ。具体的な根拠を1つ添える方が強い",
+      "【観点】平易: 「かれこれずっと言われてきた事」がやや回りくどい。「前からずっと言われてた事」で短くなる",
+      "",
+      "修正案 (元文の改行を保つこと):",
+      ">>15 そんな事してる奴バカだろ",
+      "〇〇って点で破綻してるから議論にもならん",
+      "そもそも前からずっと言われてた事だわ",
+      "",
+      "--- 例ここまで。以下を同じ粒度でチェックしてください ---",
+    ].join("\n");
+    const prompt = aiWrapTurn(template, "user", [
+      systemInstructions,
+      "",
+      "【スレッド】",
+      ctx,
+      "",
+      "【投稿予定の本文】",
+      body,
+      "",
+      "上記の本文をチェックしてください。観点ラベルだけ書いて中身を書かない出力は禁止です。",
+    ].join("\n")) + aiOpenAssistantTurn(template);
+    const sid = `review-${Date.now()}`;
+    const maxTokens = 400;
+    aiSessionIdRef.current = sid;
+    aiTokenTargetRef.current = "review";
+    aiMaxTokensRef.current = maxTokens;
+    aiLastPromptRef.current = prompt;
+    aiPrefillRemainingRef.current = aiPrefillFor(template);
+    setAiReviewResult("");
+    setAiReviewPanelOpen(true);
     setAiInferenceBusy(true);
     setAiInferencePhase(null);
     setAiTokenProgress({ received: 0, max: maxTokens });
@@ -5244,6 +5393,8 @@ export default function App() {
     let generatedSoFar = "";
     if (target === "summary") {
       generatedSoFar = aiSummary;
+    } else if (target === "review") {
+      generatedSoFar = aiReviewResult;
     } else {
       const last = aiChatMessages[aiChatMessages.length - 1];
       if (last?.role === "assistant") generatedSoFar = last.content;
@@ -6674,9 +6825,51 @@ export default function App() {
                         </span>
                       </div>
                     )}
-                    <div className="ai-summary-content ai-markdown">
+                    <div
+                      className="ai-summary-content ai-markdown"
+                      onMouseOver={(e) => {
+                        const target = e.target as HTMLElement;
+                        const anchor = target.closest<HTMLElement>(".anchor-ref");
+                        if (!anchor) return;
+                        const ids = getAnchorIds(anchor).filter((id) => responseItems.some((r) => r.id === id));
+                        if (ids.length > 0) {
+                          if (anchorPopupCloseTimer.current) {
+                            clearTimeout(anchorPopupCloseTimer.current);
+                            anchorPopupCloseTimer.current = null;
+                          }
+                          const rect = anchor.getBoundingClientRect();
+                          const popupWidth = Math.min(620, window.innerWidth - 24);
+                          const x = Math.max(8, Math.min(rect.left, window.innerWidth - popupWidth - 8));
+                          setAnchorPopup({ x, y: rect.bottom + 1, anchorTop: rect.top, responseIds: ids });
+                        }
+                      }}
+                      onMouseOut={(e) => {
+                        const target = e.target as HTMLElement;
+                        if (!target.closest(".anchor-ref")) return;
+                        const next = e.relatedTarget as HTMLElement | null;
+                        if (next?.closest(".anchor-popup")) return;
+                        if (anchorPopupCloseTimer.current) clearTimeout(anchorPopupCloseTimer.current);
+                        anchorPopupCloseTimer.current = setTimeout(() => {
+                          setAnchorPopup(null);
+                          setNestedPopups([]);
+                          anchorPopupCloseTimer.current = null;
+                        }, 80);
+                      }}
+                      onClick={(e) => {
+                        const target = e.target as HTMLElement;
+                        const anchor = target.closest<HTMLElement>(".anchor-ref");
+                        if (!anchor) return;
+                        const ids = getAnchorIds(anchor);
+                        const first = ids.find((id) => responseItems.some((r) => r.id === id));
+                        if (first) {
+                          setSelectedResponse(first);
+                          setAnchorPopup(null);
+                          setStatus(`jumped to >>${first}`);
+                        }
+                      }}
+                    >
                       {aiSummary ? (
-                        <ReactMarkdown>{escapeMdAnchors(aiSummary)}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkBreaks]} components={aiMdComponents}>{escapeMdAnchors(aiSummary)}</ReactMarkdown>
                       ) : (
                         <div className="ai-placeholder">
                           「要約する」ボタンを押すと、現在のスレを要約します。
@@ -6723,7 +6916,7 @@ export default function App() {
                           <div className="ai-chat-msg-role">{m.role === "user" ? "あなた" : "AI"}</div>
                           <div className={`ai-chat-msg-content ${m.role === "assistant" ? "ai-markdown" : ""}`}>
                             {m.role === "assistant" && m.content
-                              ? <ReactMarkdown>{escapeMdAnchors(m.content)}</ReactMarkdown>
+                              ? <ReactMarkdown remarkPlugins={[remarkBreaks]}>{escapeMdAnchors(m.content)}</ReactMarkdown>
                               : m.content || (m.role === "assistant" && aiInferenceBusy ? "..." : "")}
                           </div>
                         </div>
@@ -7034,8 +7227,25 @@ export default function App() {
           )}
           <div className="compose-actions">
             <span className="compose-meta">{composeBody.length}文字 / {composeBody.split("\n").length}行</span>
-            <button onClick={probePostFlowTraceFromCompose} disabled={composeSubmitting}>{composeSubmitting ? "送信中..." : `送信 (${composeSubmitKey === "shift" ? "Shift" : "Ctrl"}+Enter)`}</button>
+            <button
+              className="compose-ai-check-btn"
+              onClick={aiStartReviewPost}
+              disabled={aiInferenceBusy || !aiStatus?.activeModelId || composeBody.trim().length < 15}
+              title={
+                !aiStatus?.activeModelId ? "AI モデルが有効化されていません"
+                : composeBody.trim().length < 15 ? `本文が短すぎます (15文字以上で有効。現在 ${composeBody.trim().length}文字)`
+                : "AI に投稿予定の文をチェックさせる (スレ文脈込み)"
+              }
+            >
+              <BrainCircuit size={14} /> {
+                aiInferenceBusy && aiTokenTargetRef.current === "review" ? aiPhaseLabel(aiInferencePhase)
+                : !aiStatus?.activeModelId ? "AI チェック (モデル未有効)"
+                : composeBody.trim().length < 15 ? `AI チェック (あと ${15 - composeBody.trim().length}文字)`
+                : "AI チェック"
+              }
+            </button>
             <button onClick={() => setUploadPanelOpen((v) => { if (v) setUploadResults([]); return !v; })} title="画像アップロード"><Upload size={14} /></button>
+            <button onClick={probePostFlowTraceFromCompose} disabled={composeSubmitting}>{composeSubmitting ? "送信中..." : `送信 (${composeSubmitKey === "shift" ? "Shift" : "Ctrl"}+Enter)`}</button>
             <button onClick={async () => {
               setComposeResult({ ok: false, message: "診断中..." });
               try {
@@ -7046,6 +7256,37 @@ export default function App() {
               }
             }} style={{ fontSize: "0.85em" }}>接続診断</button>
           </div>
+          {aiReviewPanelOpen && (
+            <div className="compose-ai-review">
+              <div className="compose-ai-review-header">
+                <span><BrainCircuit size={12} /> AI チェック結果</span>
+                <span className="compose-ai-review-actions">
+                  {aiInferenceBusy && aiTokenTargetRef.current === "review" && (
+                    <button onClick={aiCancelInference} title={aiCancelHint(aiInferencePhase)}>停止</button>
+                  )}
+                  {!aiInferenceBusy && aiCanContinue === "review" && (
+                    <button onClick={aiContinueGenerate}>続きを生成</button>
+                  )}
+                  {aiReviewResult && !aiInferenceBusy && (
+                    <button onClick={() => { setAiReviewResult(""); setAiCanContinue(null); }}>クリア</button>
+                  )}
+                  <button onClick={() => { setAiReviewPanelOpen(false); }} title="閉じる"><X size={12} /></button>
+                </span>
+              </div>
+              {aiInferenceBusy && aiTokenTargetRef.current === "review" && aiTokenProgress && (
+                <div className="compose-ai-review-progress">{aiTokenProgress.received} / {aiTokenProgress.max} tok</div>
+              )}
+              <div className="compose-ai-review-body">
+                {aiReviewResult ? (
+                  <ReactMarkdown remarkPlugins={[remarkBreaks]}>{escapeMdAnchors(aiReviewResult)}</ReactMarkdown>
+                ) : aiInferenceBusy && aiTokenTargetRef.current === "review" ? (
+                  <span className="compose-ai-review-placeholder">{aiPhaseLabel(aiInferencePhase)}</span>
+                ) : (
+                  <span className="compose-ai-review-placeholder">(結果なし)</span>
+                )}
+              </div>
+            </div>
+          )}
           {uploadPanelOpen && (
             <div className="upload-panel">
               <div className="upload-panel-tabs">
@@ -8177,7 +8418,24 @@ export default function App() {
                 {aiStatus && (
                   <div className="settings-row">
                     <span>保存先</span>
-                    <span style={{ fontSize: "0.8em", opacity: 0.7, wordBreak: "break-all" }}>{aiStatus.modelsDir}</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8em", opacity: 0.7, wordBreak: "break-all" }}>
+                      <span>{aiStatus.modelsDir}</span>
+                      {isTauriRuntime() && (
+                        <button
+                          type="button"
+                          className="title-action-btn"
+                          title="保存先フォルダを開く"
+                          onClick={() => {
+                            void invoke("ai_reveal_models_dir").catch((e) => {
+                              console.warn("ai_reveal_models_dir failed", e);
+                              setAiError(`保存先フォルダを開けません: ${String(e)}`);
+                            });
+                          }}
+                        >
+                          <FolderOpen size={14} />
+                        </button>
+                      )}
+                    </span>
                   </div>
                 )}
               </fieldset>
@@ -8238,6 +8496,11 @@ export default function App() {
                     const pct = progress && progress.total
                       ? Math.min(100, (progress.downloaded / progress.total) * 100)
                       : 0;
+                    // After bytes hit total, the Rust side still runs SHA256
+                    // verify + atomic rename synchronously without emitting
+                    // any further progress event. Treat that gap as the
+                    // "verifying" phase so the UI doesn't look frozen.
+                    const verifying = !!(progress && progress.total && progress.downloaded >= progress.total);
                     return (
                       <div key={m.id} className={`ai-model-card${active ? " active" : ""}`}>
                         <div className="ai-model-card-header">
@@ -8250,11 +8513,12 @@ export default function App() {
                         </div>
                         <div className="ai-model-desc">{m.description}</div>
                         {downloading && (
-                          <div className="ai-download-progress">
-                            <div className="ai-download-progress-bar" style={{ width: `${pct}%` }} />
+                          <div className={`ai-download-progress${verifying ? " verifying" : ""}`}>
+                            <div className="ai-download-progress-bar" style={{ width: `${verifying ? 100 : pct}%` }} />
                             <span className="ai-download-progress-label">
-                              {formatAiBytes(progress.downloaded)}
-                              {progress.total ? ` / ${formatAiBytes(progress.total)}` : ""}
+                              {verifying
+                                ? `検証中… (${formatAiBytes(progress.total ?? progress.downloaded)})`
+                                : `${formatAiBytes(progress.downloaded)}${progress.total ? ` / ${formatAiBytes(progress.total)}` : ""}`}
                             </span>
                           </div>
                         )}
@@ -8262,8 +8526,11 @@ export default function App() {
                           {!installed && !downloading && (
                             <button onClick={() => void aiDownloadModel(m.id)}>ダウンロード</button>
                           )}
-                          {downloading && (
+                          {downloading && !verifying && (
                             <button onClick={() => void aiCancelDownload(m.id)}>キャンセル</button>
+                          )}
+                          {downloading && verifying && (
+                            <button disabled title="ダウンロード完了後の SHA256 検証中。キャンセルできません。">検証中…</button>
                           )}
                           {installed && !active && !downloading && (
                             <>

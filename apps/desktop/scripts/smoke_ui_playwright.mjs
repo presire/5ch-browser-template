@@ -897,6 +897,20 @@ try {
   await new Promise((r) => setTimeout(r, 100));
   console.log("smoke-ui: compose font size setting ok");
 
+  // --- compose AI review button ---
+  await page.click(".response-no", { button: "left" });
+  await page.click('.response-menu button:has-text("ここにレス")');
+  await page.waitForSelector(".compose-window textarea.compose-body");
+  const aiCheckBtn = await page.$(".compose-actions .compose-ai-check-btn");
+  assert(aiCheckBtn, "compose actions should have AI チェック button");
+  const aiCheckDisabled = await aiCheckBtn.evaluate((el) => el.disabled);
+  // In smoke env there's no active AI model and/or body, so the button must
+  // start disabled — proving the gating wiring is in place.
+  assert(aiCheckDisabled, "AI チェック button should be disabled without an active model");
+  await page.click(".compose-header button:has-text('閉じる')");
+  await new Promise((r) => setTimeout(r, 100));
+  console.log("smoke-ui: compose ai review button ok");
+
   console.log("smoke-ui: ok");
 } finally {
   if (browser) {
