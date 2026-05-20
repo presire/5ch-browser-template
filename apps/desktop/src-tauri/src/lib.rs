@@ -1640,6 +1640,45 @@ fn ai_models_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+#[tauri::command]
+fn ai_reveal_models_dir() -> Result<(), String> {
+    let dir = ai_models_dir()?;
+    // Create on first run so we open an empty folder instead of erroring out
+    // when the user has not downloaded anything yet.
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.as_os_str();
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("unsupported platform".to_string())
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct AiDownloadProgress {
@@ -2183,6 +2222,7 @@ pub fn run() {
             download_images,
             ai_list_models,
             ai_status,
+            ai_reveal_models_dir,
             ai_download_model,
             ai_cancel_download,
             ai_delete_model,

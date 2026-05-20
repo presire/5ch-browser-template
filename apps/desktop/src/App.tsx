@@ -133,7 +133,7 @@ function aiOpenAssistantTurn(template: string): string {
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon, Sparkles, BrainCircuit,
+  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon, Sparkles, BrainCircuit, FolderOpen,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -5134,6 +5134,52 @@ export default function App() {
   // nested blockquote. Applied to all LLM-generated text before rendering.
   const escapeMdAnchors = (text: string): string => text.replace(/>/g, "\\>");
 
+  // Replace `>>NNN` / `>>NNN-MMM` inside markdown-rendered text children with
+  // .anchor-ref spans so AI output can trigger the existing response popup.
+  const renderWithAnchors = (children: React.ReactNode): React.ReactNode => {
+    const arr: React.ReactNode[] = Array.isArray(children) ? children : [children];
+    const out: React.ReactNode[] = [];
+    let kctr = 0;
+    for (let i = 0; i < arr.length; i++) {
+      const child = arr[i];
+      if (typeof child !== "string") {
+        out.push(child);
+        continue;
+      }
+      const re = />>(\d+)(?:-(\d+))?/g;
+      let m: RegExpExecArray | null;
+      let last = 0;
+      let found = false;
+      while ((m = re.exec(child)) !== null) {
+        found = true;
+        if (m.index > last) out.push(child.slice(last, m.index));
+        const attrs: Record<string, unknown> = {
+          className: "anchor-ref",
+          "data-anchor": m[1],
+          role: "link",
+          tabIndex: 0,
+        };
+        if (m[2]) attrs["data-anchor-end"] = m[2];
+        out.push(<span key={`anc${i}-${kctr++}`} {...attrs}>{m[0]}</span>);
+        last = m.index + m[0].length;
+      }
+      if (!found) out.push(child);
+      else if (last < child.length) out.push(child.slice(last));
+    }
+    return out;
+  };
+
+  const aiMdComponents = {
+    p: ({ children }: { children?: React.ReactNode }) => <p>{renderWithAnchors(children)}</p>,
+    li: ({ children }: { children?: React.ReactNode }) => <li>{renderWithAnchors(children)}</li>,
+    strong: ({ children }: { children?: React.ReactNode }) => <strong>{renderWithAnchors(children)}</strong>,
+    em: ({ children }: { children?: React.ReactNode }) => <em>{renderWithAnchors(children)}</em>,
+    h1: ({ children }: { children?: React.ReactNode }) => <h1>{renderWithAnchors(children)}</h1>,
+    h2: ({ children }: { children?: React.ReactNode }) => <h2>{renderWithAnchors(children)}</h2>,
+    h3: ({ children }: { children?: React.ReactNode }) => <h3>{renderWithAnchors(children)}</h3>,
+    h4: ({ children }: { children?: React.ReactNode }) => <h4>{renderWithAnchors(children)}</h4>,
+  };
+
   const aiActiveTemplate = (): string => {
     const id = aiStatus?.activeModelId;
     if (!id) return "gemma";
@@ -6779,9 +6825,51 @@ export default function App() {
                         </span>
                       </div>
                     )}
-                    <div className="ai-summary-content ai-markdown">
+                    <div
+                      className="ai-summary-content ai-markdown"
+                      onMouseOver={(e) => {
+                        const target = e.target as HTMLElement;
+                        const anchor = target.closest<HTMLElement>(".anchor-ref");
+                        if (!anchor) return;
+                        const ids = getAnchorIds(anchor).filter((id) => responseItems.some((r) => r.id === id));
+                        if (ids.length > 0) {
+                          if (anchorPopupCloseTimer.current) {
+                            clearTimeout(anchorPopupCloseTimer.current);
+                            anchorPopupCloseTimer.current = null;
+                          }
+                          const rect = anchor.getBoundingClientRect();
+                          const popupWidth = Math.min(620, window.innerWidth - 24);
+                          const x = Math.max(8, Math.min(rect.left, window.innerWidth - popupWidth - 8));
+                          setAnchorPopup({ x, y: rect.bottom + 1, anchorTop: rect.top, responseIds: ids });
+                        }
+                      }}
+                      onMouseOut={(e) => {
+                        const target = e.target as HTMLElement;
+                        if (!target.closest(".anchor-ref")) return;
+                        const next = e.relatedTarget as HTMLElement | null;
+                        if (next?.closest(".anchor-popup")) return;
+                        if (anchorPopupCloseTimer.current) clearTimeout(anchorPopupCloseTimer.current);
+                        anchorPopupCloseTimer.current = setTimeout(() => {
+                          setAnchorPopup(null);
+                          setNestedPopups([]);
+                          anchorPopupCloseTimer.current = null;
+                        }, 80);
+                      }}
+                      onClick={(e) => {
+                        const target = e.target as HTMLElement;
+                        const anchor = target.closest<HTMLElement>(".anchor-ref");
+                        if (!anchor) return;
+                        const ids = getAnchorIds(anchor);
+                        const first = ids.find((id) => responseItems.some((r) => r.id === id));
+                        if (first) {
+                          setSelectedResponse(first);
+                          setAnchorPopup(null);
+                          setStatus(`jumped to >>${first}`);
+                        }
+                      }}
+                    >
                       {aiSummary ? (
-                        <ReactMarkdown remarkPlugins={[remarkBreaks]}>{escapeMdAnchors(aiSummary)}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkBreaks]} components={aiMdComponents}>{escapeMdAnchors(aiSummary)}</ReactMarkdown>
                       ) : (
                         <div className="ai-placeholder">
                           「要約する」ボタンを押すと、現在のスレを要約します。
@@ -8330,7 +8418,24 @@ export default function App() {
                 {aiStatus && (
                   <div className="settings-row">
                     <span>保存先</span>
-                    <span style={{ fontSize: "0.8em", opacity: 0.7, wordBreak: "break-all" }}>{aiStatus.modelsDir}</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8em", opacity: 0.7, wordBreak: "break-all" }}>
+                      <span>{aiStatus.modelsDir}</span>
+                      {isTauriRuntime() && (
+                        <button
+                          type="button"
+                          className="title-action-btn"
+                          title="保存先フォルダを開く"
+                          onClick={() => {
+                            void invoke("ai_reveal_models_dir").catch((e) => {
+                              console.warn("ai_reveal_models_dir failed", e);
+                              setAiError(`保存先フォルダを開けません: ${String(e)}`);
+                            });
+                          }}
+                        >
+                          <FolderOpen size={14} />
+                        </button>
+                      )}
+                    </span>
                   </div>
                 )}
               </fieldset>
@@ -8391,6 +8496,11 @@ export default function App() {
                     const pct = progress && progress.total
                       ? Math.min(100, (progress.downloaded / progress.total) * 100)
                       : 0;
+                    // After bytes hit total, the Rust side still runs SHA256
+                    // verify + atomic rename synchronously without emitting
+                    // any further progress event. Treat that gap as the
+                    // "verifying" phase so the UI doesn't look frozen.
+                    const verifying = !!(progress && progress.total && progress.downloaded >= progress.total);
                     return (
                       <div key={m.id} className={`ai-model-card${active ? " active" : ""}`}>
                         <div className="ai-model-card-header">
@@ -8403,11 +8513,12 @@ export default function App() {
                         </div>
                         <div className="ai-model-desc">{m.description}</div>
                         {downloading && (
-                          <div className="ai-download-progress">
-                            <div className="ai-download-progress-bar" style={{ width: `${pct}%` }} />
+                          <div className={`ai-download-progress${verifying ? " verifying" : ""}`}>
+                            <div className="ai-download-progress-bar" style={{ width: `${verifying ? 100 : pct}%` }} />
                             <span className="ai-download-progress-label">
-                              {formatAiBytes(progress.downloaded)}
-                              {progress.total ? ` / ${formatAiBytes(progress.total)}` : ""}
+                              {verifying
+                                ? `検証中… (${formatAiBytes(progress.total ?? progress.downloaded)})`
+                                : `${formatAiBytes(progress.downloaded)}${progress.total ? ` / ${formatAiBytes(progress.total)}` : ""}`}
                             </span>
                           </div>
                         )}
@@ -8415,8 +8526,11 @@ export default function App() {
                           {!installed && !downloading && (
                             <button onClick={() => void aiDownloadModel(m.id)}>ダウンロード</button>
                           )}
-                          {downloading && (
+                          {downloading && !verifying && (
                             <button onClick={() => void aiCancelDownload(m.id)}>キャンセル</button>
+                          )}
+                          {downloading && verifying && (
+                            <button disabled title="ダウンロード完了後の SHA256 検証中。キャンセルできません。">検証中…</button>
                           )}
                           {installed && !active && !downloading && (
                             <>

@@ -5155,6 +5155,20 @@ button.search-history-btn:hover {
   background: #4a90e2;
   transition: width 120ms linear;
 }
+.ai-download-progress.verifying .ai-download-progress-bar {
+  background: repeating-linear-gradient(
+    45deg,
+    #4a90e2 0,
+    #4a90e2 10px,
+    #6aa9ef 10px,
+    #6aa9ef 20px
+  );
+  animation: ai-download-verify-stripes 1s linear infinite;
+}
+@keyframes ai-download-verify-stripes {
+  from { background-position: 0 0; }
+  to { background-position: 28.28px 0; }
+}
 .ai-download-progress-label {
   position: absolute;
   inset: 0;
