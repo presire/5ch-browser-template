@@ -16,5 +16,14 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 [target.'cfg(target_os = "macos")'.dependencies]
 llama-cpp-2 = { version = "0.1.146", features = ["metal"] }
 
-[target.'cfg(not(target_os = "macos"))'.dependencies]
+[target.'cfg(target_os = "windows")'.dependencies]
+llama-cpp-2 = { version = "0.1.146", features = [] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
 llama-cpp-2 = { version = "0.1.146", features = ["vulkan"] }
+
+[package.metadata.cargo-xwin]
+build-args = ["--target-dir", "C:/t"]
+
+[package.metadata]
+cargo-build-target-dir = "C:/t"

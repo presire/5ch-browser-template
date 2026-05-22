@@ -24,6 +24,20 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          $vulkanUrl = "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe"
+          $installer = "$env:TEMP\vulkan-sdk.exe"
+          Invoke-WebRequest -Uri $vulkanUrl -OutFile $installer
+          Start-Process -FilePath $installer -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait
+          $vulkanSdkPath = (Get-ChildItem -Path "C:\VulkanSDK" -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName
+          echo "VULKAN_SDK=$vulkanSdkPath" >> $env:GITHUB_ENV
+          echo "$vulkanSdkPath\Bin" >> $env:GITHUB_PATH
+          # Set additional environment variables for CMake
+          echo "VK_SDK_PATH=$vulkanSdkPath" >> $env:GITHUB_ENV
+          echo "$vulkanSdkPath\Lib" >> $env:GITHUB_PATH
+
       - name: Install desktop deps
         run: npm ci
         working-directory: apps/desktop
@@ -31,7 +45,12 @@ jobs:
       - name: Build NSIS installer
         working-directory: apps/desktop
         shell: pwsh
+        env:
+          CARGO_BUILD_TARGET_DIR: C:\t
         run: |
+          # Create short build directory to avoid Windows MAX_PATH (260) limitation
+          New-Item -ItemType Directory -Path "C:\t" -Force | Out-Null
+          
           $tmpConfig = New-TemporaryFile
           @"
           {
