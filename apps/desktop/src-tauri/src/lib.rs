@@ -1060,6 +1060,25 @@ fn save_read_status(status: ReadStatusMap) -> Result<(), String> {
     core_store::save_json("read_status.json", &status).map_err(|e| e.to_string())
 }
 
+// --- Read marker (手動「ここまで読んだ」) persistence ---
+
+/// Map of board_url -> { thread_key -> manually-marked response_no }
+/// read_status.json (自動既読位置) とは別管理 — 自動更新が手動マーカーを上書きしないため
+type ReadMarkerMap = HashMap<String, HashMap<String, u32>>;
+
+#[tauri::command]
+fn load_read_marker() -> Result<ReadMarkerMap, String> {
+    match core_store::load_json::<ReadMarkerMap>("read_marker.json") {
+        Ok(data) => Ok(data),
+        Err(_) => Ok(HashMap::new()),
+    }
+}
+
+#[tauri::command]
+fn save_read_marker(markers: ReadMarkerMap) -> Result<(), String> {
+    core_store::save_json("read_marker.json", &markers).map_err(|e| e.to_string())
+}
+
 // --- Auth config persistence ---
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -2197,6 +2216,8 @@ pub fn run() {
             save_ng_image_filter,
             load_read_status,
             save_read_status,
+            load_read_marker,
+            save_read_marker,
             load_auth_config,
             save_auth_config,
             login_with_config,
