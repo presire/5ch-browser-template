@@ -1,6 +1,7 @@
 import {
   Fragment,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -217,7 +218,7 @@ type FavoriteBoard = { boardName: string; url: string };
 type FavoriteThread = { threadUrl: string; title: string; boardUrl: string };
 type RecentThread = FavoriteThread & { updatedAt: number };
 type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
-type NgEntry = { value: string; mode: "hide" | "hide-images"; disabled?: boolean; excludeNo1?: boolean };
+type NgEntry = { value: string; mode: "hide" | "hide-images"; disabled?: boolean; excludeNo1?: boolean; match?: "partial" | "exact" };
 type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: (string | NgEntry)[] };
 type NgImageEntry = { hash: string; thumbnail: string; sourceUrl: string; addedAt: number; disabled?: boolean; threshold?: number };
 type NgImageFilter = { entries: NgImageEntry[]; threshold: number };
@@ -253,6 +254,7 @@ const ngVal = (e: string | NgEntry): string => typeof e === "string" ? e : e.val
 const ngEntryMode = (e: string | NgEntry): "hide" | "hide-images" => typeof e === "string" ? "hide" : e.mode;
 const ngEntryExcludeNo1 = (e: string | NgEntry): boolean => typeof e === "string" ? false : (e.excludeNo1 ?? false);
 const ngEntryDisabled = (e: string | NgEntry): boolean => typeof e === "string" ? false : (e.disabled ?? false);
+const ngEntryMatch = (e: string | NgEntry): "partial" | "exact" => typeof e === "string" ? "partial" : (e.match ?? "partial");
 type AuthConfig = {
   upliftEmail: string;
   upliftPassword: string;
@@ -873,6 +875,8 @@ export default function App() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [favorites, setFavorites] = useState<FavoritesData>({ boards: [], threads: [] });
   const [ngFilters, setNgFilters] = useState<NgFilters>({ words: [], ids: [], names: [], thread_words: [] });
+  // 手動「ここまで読んだ」マーカー: board_url -> thread_key -> response_no
+  const [readMarker, setReadMarker] = useState<Record<string, Record<string, number>>>({});
   const [ngImageFilter, setNgImageFilter] = useState<NgImageFilter>({ entries: [], threshold: 10 });
   const ngImageHashCacheRef = useRef(new Map<string, string | "pending" | "error">());
   const [imageContextMenu, setImageContextMenu] = useState<{ x: number; y: number; url: string } | null>(null);
@@ -968,6 +972,7 @@ export default function App() {
   const [threadLastReadCount, setThreadLastReadCount] = useState<Record<number, number>>({});
   const [threadMenu, setThreadMenu] = useState<{ x: number; y: number; threadId: number } | null>(null);
   const [responseMenu, setResponseMenu] = useState<{ x: number; y: number; responseId: number } | null>(null);
+  const responseMenuRef = useRef<HTMLDivElement>(null);
   const [aaOverrides, setAaOverrides] = useState<Map<number, boolean>>(new Map());
   const [anchorPopup, setAnchorPopup] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[]; z?: number } | null>(null);
   const [nestedPopups, setNestedPopups] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[]; z?: number }[]>([]);
@@ -1250,6 +1255,34 @@ export default function App() {
     }
   };
 
+  const loadReadMarkers = async () => {
+    if (!isTauriRuntime()) return;
+    try {
+      const data = await invoke<Record<string, Record<string, number>>>("load_read_marker");
+      setReadMarker(data);
+    } catch {
+      // no saved markers yet
+    }
+  };
+
+  // マーカーを設定 (no) または解除 (null)。ステート更新 + 永続化
+  const setReadMarkerForThread = (boardUrl: string, threadKey: string, no: number | null) => {
+    if (!boardUrl || !threadKey) return;
+    setReadMarker((prev) => {
+      const next: Record<string, Record<string, number>> = { ...prev, [boardUrl]: { ...(prev[boardUrl] ?? {}) } };
+      if (no == null) {
+        delete next[boardUrl][threadKey];
+        if (Object.keys(next[boardUrl]).length === 0) delete next[boardUrl];
+      } else {
+        next[boardUrl][threadKey] = no;
+      }
+      if (isTauriRuntime()) {
+        invoke("save_read_marker", { markers: next }).catch((e) => console.warn("save_read_marker failed", e));
+      }
+      return next;
+    });
+  };
+
   const loadReadStatusForBoard = async (boardUrl: string, threads: ThreadListItem[]) => {
     if (!isTauriRuntime()) return;
     try {
@@ -1448,14 +1481,16 @@ export default function App() {
     });
   };
 
-  const addNgEntry = (type: "words" | "ids" | "names" | "thread_words", value: string, mode?: "hide" | "hide-images") => {
+  const addNgEntry = (type: "words" | "ids" | "names" | "thread_words", value: string, mode?: "hide" | "hide-images", match?: "partial" | "exact") => {
     const trimmed = value.trim();
     if (!trimmed) return;
     if (ngFilters[type].some((e) => ngVal(e) === trimmed)) {
       setStatus(`already in NG ${type}: ${trimmed}`);
       return;
     }
-    const entry: string | NgEntry = type === "thread_words" ? trimmed : { value: trimmed, mode: mode ?? ngAddMode };
+    const entry: string | NgEntry = type === "thread_words"
+      ? trimmed
+      : { value: trimmed, mode: mode ?? ngAddMode, ...(match === "exact" ? { match: "exact" } : {}) };
     void persistNgFilters({ ...ngFilters, [type]: [...ngFilters[type], entry] });
     setStatus(`added NG ${type}: ${trimmed}`);
   };
@@ -1532,7 +1567,7 @@ export default function App() {
     });
   };
 
-  const ngMatch = (pattern: string, target: string): boolean => {
+  const ngMatch = (pattern: string, target: string, match: "partial" | "exact" = "partial"): boolean => {
     if (pattern.startsWith("/") && pattern.endsWith("/") && pattern.length > 2) {
       try {
         return new RegExp(pattern.slice(1, -1), "i").test(target);
@@ -1540,6 +1575,7 @@ export default function App() {
         return false;
       }
     }
+    if (match === "exact") return target.trim() === pattern.trim();
     return target.toLowerCase().includes(pattern.toLowerCase());
   };
 
@@ -1547,10 +1583,16 @@ export default function App() {
     if (ngFilters.words.length === 0 && ngFilters.ids.length === 0 && ngFilters.names.length === 0) return null;
     const isNo1 = resp.responseNo === 1;
     let result: null | "hide" | "hide-images" = null;
+    let plainBody: string | null = null;
     for (const w of ngFilters.words) {
       if (ngEntryDisabled(w)) continue;
       if (isNo1 && ngEntryExcludeNo1(w)) continue;
-      if (ngMatch(ngVal(w), resp.text)) {
+      const wMatch = ngEntryMatch(w);
+      // exact-mode 本文NGはプレーンテキスト同士で比較 (resp.text は HTML のため)
+      const wTarget = wMatch === "exact"
+        ? (plainBody ??= responseHtmlToPlainText(resp.text))
+        : resp.text;
+      if (ngMatch(ngVal(w), wTarget, wMatch)) {
         const m = ngEntryMode(w);
         if (m === "hide") return "hide";
         result = "hide-images";
@@ -3052,6 +3094,9 @@ export default function App() {
     return true;
   });
   const activeResponse = visibleResponseItems.find((r) => r.id === selectedResponse) ?? visibleResponseItems[0];
+  // 現在表示中スレの「ここまで読んだ」マーカー位置
+  const currentReadMarker: number | null =
+    readMarker[getBoardUrlFromThreadUrl(threadUrl)]?.[getThreadKeyFromThreadUrl(threadUrl)] ?? null;
   const selectedResponseLabel = activeResponse ? `#${activeResponse.id}` : "-";
 
   // Collect images with their response numbers for the image gallery pane
@@ -3314,6 +3359,16 @@ export default function App() {
     setThreadMenu(null);
   };
 
+  // メニューを実測高さで再クランプ — 項目数が多く下端がはみ出す場合に上へ寄せる
+  useLayoutEffect(() => {
+    if (!responseMenu || !responseMenuRef.current) return;
+    const h = responseMenuRef.current.offsetHeight;
+    const maxTop = Math.max(MENU_EDGE_PADDING, window.innerHeight - h - MENU_EDGE_PADDING);
+    if (responseMenu.y > maxTop) {
+      setResponseMenu((m) => (m ? { ...m, y: maxTop } : m));
+    }
+  }, [responseMenu]);
+
   const markThreadRead = (threadId: number, value: boolean) => {
     setThreadReadMap((prev) => ({ ...prev, [threadId]: value }));
     setThreadMenu(null);
@@ -3418,7 +3473,7 @@ export default function App() {
   };
 
   const runResponseAction = async (
-    action: "quote" | "quote-with-name" | "copy-url" | "add-ng-id" | "copy-id" | "copy-body" | "copy-full" | "add-ng-name" | "toggle-aa" | "settings"
+    action: "quote" | "quote-with-name" | "copy-url" | "add-ng-id" | "copy-id" | "copy-body" | "copy-full" | "add-ng-name" | "add-ng-body" | "toggle-aa" | "settings"
   ) => {
     if (!responseMenu) return;
     const id = responseMenu.responseId;
@@ -3505,6 +3560,16 @@ export default function App() {
     if (action === "add-ng-name") {
       if (resp.name.trim()) {
         addNgEntry("names", resp.name.trim());
+      }
+      setResponseMenu(null);
+      return;
+    }
+    if (action === "add-ng-body") {
+      const plainText = responseHtmlToPlainText(resp.text).trim();
+      if (plainText) {
+        addNgEntry("words", plainText, "hide", "exact");
+      } else {
+        setStatus(`本文が空です #${id}`);
       }
       setResponseMenu(null);
       return;
@@ -4078,6 +4143,7 @@ export default function App() {
     void loadFavorites();
     void loadNgFilters();
     void loadNgImageFilter();
+    void loadReadMarkers();
     // Load auth config and auto-login
     if (isTauriRuntime()) {
       invoke<AuthConfig>("load_auth_config").then((cfg) => {
@@ -6662,6 +6728,11 @@ export default function App() {
                     </div>
                     <div className={`response-body${(aaOverrides.has(r.id) ? aaOverrides.get(r.id) : isAsciiArt(r.text)) ? " aa" : ""}`} dangerouslySetInnerHTML={{ __html: renderResponseBodyHighlighted(r.text, responseSearchQuery, { hideImages: ngResultMap.get(r.id) === "hide-images", imageSizeLimitKb: imageSizeLimit, youtubeThumbs: youtubeThumbsEnabled }).__html + (responseBodyBottomPad ? "<br><br>" : "") }} />
                   </div>
+                  {r.id === currentReadMarker && (
+                    <div className="read-marker-separator">
+                      <span>ここまで読んだ</span>
+                    </div>
+                  )}
                   </Fragment>
                 );
               })}
@@ -7113,6 +7184,19 @@ export default function App() {
                     New
                   </button>
                 )}
+                {currentReadMarker !== null && (
+                  <button
+                    className="nav-marker-btn"
+                    title="「ここまで読んだ」の続きへ"
+                    onClick={() => {
+                      const next = visibleResponseItems.find((r) => r.id > currentReadMarker);
+                      if (next) setSelectedResponse(next.id);
+                      else setSelectedResponse(currentReadMarker);
+                    }}
+                  >
+                    続き
+                  </button>
+                )}
                 <button onClick={() => { if (visibleResponseItems.length > 0) setSelectedResponse(visibleResponseItems[visibleResponseItems.length - 1].id); }}>End</button>
                 <input
                   className="nav-jump-input"
@@ -7491,6 +7575,7 @@ export default function App() {
                       const mode = ngEntryMode(entry);
                       const off = ngEntryDisabled(entry);
                       const exNo1 = ngEntryExcludeNo1(entry);
+                      const isExact = ngEntryMatch(entry) === "exact";
                       return (
                         <li key={v} className={off ? "ng-disabled" : ""}>
                           <button
@@ -7510,7 +7595,8 @@ export default function App() {
                             onClick={() => toggleNgEntryExcludeNo1(type, v)}
                             title={exNo1 ? ">>1を除外中 (クリックで解除)" : ">>1には適用しない (クリックで有効)"}
                           >{exNo1 ? ">>1除外ON" : ">>1除外OFF"}</button>
-                          <span>{v}</span>
+                          {isExact && <span className="ng-match-badge" title="完全一致 (本文NG)">完全</span>}
+                          <span className="ng-val" title={v}>{v}</span>
                           <button className="ng-remove" onClick={() => removeNgEntry(type, v)}>×</button>
                         </li>
                       );
@@ -7642,9 +7728,22 @@ export default function App() {
         </div>
       )}
       {responseMenu && (
-        <div className="thread-menu response-menu" style={{ left: responseMenu.x, top: responseMenu.y }} onClick={(e) => e.stopPropagation()}>
+        <div ref={responseMenuRef} className="thread-menu response-menu" style={{ left: responseMenu.x, top: responseMenu.y }} onClick={(e) => e.stopPropagation()}>
           <button onClick={() => void runResponseAction("quote")}>ここにレス</button>
           <button onClick={() => void runResponseAction("quote-with-name")}>名前付き引用</button>
+          {currentReadMarker === responseMenu.responseId ? (
+            <button onClick={() => {
+              setReadMarkerForThread(getBoardUrlFromThreadUrl(threadUrl), getThreadKeyFromThreadUrl(threadUrl), null);
+              setStatus(`「ここまで読んだ」を解除: #${responseMenu.responseId}`);
+              setResponseMenu(null);
+            }}>ここまで読んだを解除</button>
+          ) : (
+            <button onClick={() => {
+              setReadMarkerForThread(getBoardUrlFromThreadUrl(threadUrl), getThreadKeyFromThreadUrl(threadUrl), responseMenu.responseId);
+              setStatus(`「ここまで読んだ」を設定: #${responseMenu.responseId}`);
+              setResponseMenu(null);
+            }}>ここまで読んだに設定</button>
+          )}
           <button onClick={() => void runResponseAction("copy-body")}>本文をコピー</button>
           <button onClick={() => void runResponseAction("copy-full")}>レス全体をコピー</button>
           <button onClick={() => void runResponseAction("copy-url")}>レスURLをコピー</button>
@@ -7652,6 +7751,7 @@ export default function App() {
           <button onClick={() => void copyWholeThread()}>スレ全体をコピー</button>
           <button onClick={() => void runResponseAction("add-ng-id")}>NGIDに追加</button>
           <button onClick={() => void runResponseAction("add-ng-name")}>NG名前に追加</button>
+          <button onClick={() => void runResponseAction("add-ng-body")}>本文をNGに追加</button>
           <button onClick={() => void runResponseAction("toggle-aa")}>
             {(() => {
               const rid = responseMenu.responseId;

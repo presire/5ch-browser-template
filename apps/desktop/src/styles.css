@@ -713,6 +713,11 @@ li.fav-drag-over {
   margin-left: auto;
 }
 
+.nav-buttons button {
+  flex: none;
+  white-space: nowrap;
+}
+
 .response-nav-bar button {
   padding: 1px 6px;
   font-size: calc(10px + var(--fs-delta, 0px));
@@ -732,7 +737,7 @@ li.fav-drag-over {
 }
 
 .nav-jump-input {
-  width: 40px;
+  width: 28px;
   padding: 1px 3px;
   font-size: calc(10px + var(--fs-delta, 0px));
   border: 1px solid #b0b0b0;
@@ -1035,6 +1040,24 @@ li.fav-drag-over {
   flex: 1;
   height: 1px;
   background: #cc0000;
+}
+
+.read-marker-separator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px;
+  color: #0066cc;
+  font-size: calc(11px + var(--fs-delta, 0px));
+  font-weight: 700;
+}
+
+.read-marker-separator::before,
+.read-marker-separator::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #0066cc;
 }
 
 .response-new-marker {
@@ -2314,6 +2337,17 @@ button.search-history-btn:hover {
 .ng-mode-img:hover {
   background: #b8901c;
 }
+.ng-match-badge {
+  flex: none !important;
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-weight: bold;
+  line-height: 1.2;
+  background: #2d7dd2;
+  color: #fff;
+}
+
 .ng-remove {
   flex: none !important;
   padding: 0 4px;
@@ -2555,6 +2589,11 @@ button.search-history-btn:hover {
 
 .nav-new-btn {
   color: #cc3300;
+  font-weight: 700;
+}
+
+.nav-marker-btn {
+  color: #0066cc;
   font-weight: 700;
 }
 
@@ -3544,6 +3583,13 @@ button.search-history-btn:hover {
 .dark .new-response-separator::after {
   background: #ff6644;
 }
+.dark .read-marker-separator {
+  color: #4ea3ff;
+}
+.dark .read-marker-separator::before,
+.dark .read-marker-separator::after {
+  background: #4ea3ff;
+}
 .dark .response-new-marker {
   color: #ff6644;
 }
@@ -3578,6 +3624,9 @@ button.search-history-btn:hover {
 }
 .dark .nav-new-btn {
   color: #ff6644;
+}
+.dark .nav-marker-btn {
+  color: #4ea3ff;
 }
 .dark .nav-jump-input,
 .dark .tab-res-count {
@@ -4180,9 +4229,13 @@ button.search-history-btn:hover {
 .shell.glass.dark .new-count.has-new,
 .shell.glass.dark .thread-fetched-cell.has-new-mark,
 .shell.glass.dark .nav-new-btn,
+.shell.glass.dark .nav-marker-btn,
 .shell.glass.dark .new-response-separator,
 .shell.glass.dark .new-response-separator::before,
-.shell.glass.dark .new-response-separator::after {
+.shell.glass.dark .new-response-separator::after,
+.shell.glass.dark .read-marker-separator,
+.shell.glass.dark .read-marker-separator::before,
+.shell.glass.dark .read-marker-separator::after {
   filter: brightness(1.7) saturate(1.15);
   text-shadow:
     0 0 2px rgba(0, 0, 0, 0.95),
