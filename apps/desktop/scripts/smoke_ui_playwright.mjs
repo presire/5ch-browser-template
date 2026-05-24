@@ -257,6 +257,18 @@ try {
   assert(ngListItemsAfter === 0, "NG list should be empty after removing word");
   console.log("smoke-ui: ng remove word ok");
 
+  // switch to Highlight tab, add and remove a highlight word
+  await page.click(".ng-panel-tabs button:has-text('ハイライト')");
+  await page.fill(".ng-panel-add input", "testhlword");
+  await page.click(".ng-panel-add button:has-text('追加')");
+  const hlListItems = await page.$$eval(".ng-list li", (els) => els.map((el) => el.textContent));
+  assert(hlListItems.some((t) => t.includes("testhlword")), "highlight word should appear in list after adding");
+  await page.click(".ng-remove");
+  const hlListItemsAfter = await page.$$eval(".ng-list li", (els) => els.length);
+  assert(hlListItemsAfter === 0, "highlight list should be empty after removing word");
+  console.log("smoke-ui: highlight tab add/remove ok");
+  await page.click(".ng-panel-tabs button:has-text('NG')");
+
   // close NG panel
   await page.click(".ng-panel-header button:has-text('閉じる')");
   const ngPanelAfterClose = await page.$(".ng-panel");

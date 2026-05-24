@@ -220,6 +220,9 @@ type RecentThread = FavoriteThread & { updatedAt: number };
 type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
 type NgEntry = { value: string; mode: "hide" | "hide-images"; disabled?: boolean; excludeNo1?: boolean; match?: "partial" | "exact" };
 type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: (string | NgEntry)[] };
+// 強調フィルタ (NGの逆): 指定ワード/ID/名前を強調表示
+type HlEntry = { value: string; color?: string; disabled?: boolean };
+type HighlightFilters = { words: (string | HlEntry)[]; ids: (string | HlEntry)[]; names: (string | HlEntry)[] };
 type NgImageEntry = { hash: string; thumbnail: string; sourceUrl: string; addedAt: number; disabled?: boolean; threshold?: number };
 type NgImageFilter = { entries: NgImageEntry[]; threshold: number };
 const hammingDistanceB64 = (a: string, b: string): number => {
@@ -255,6 +258,22 @@ const ngEntryMode = (e: string | NgEntry): "hide" | "hide-images" => typeof e ==
 const ngEntryExcludeNo1 = (e: string | NgEntry): boolean => typeof e === "string" ? false : (e.excludeNo1 ?? false);
 const ngEntryDisabled = (e: string | NgEntry): boolean => typeof e === "string" ? false : (e.disabled ?? false);
 const ngEntryMatch = (e: string | NgEntry): "partial" | "exact" => typeof e === "string" ? "partial" : (e.match ?? "partial");
+// 強調フィルタの色プリセット (キーは CSS クラス .hl-c-<key> と対応)
+const HIGHLIGHT_COLORS: { key: string; label: string }[] = [
+  { key: "yellow", label: "黄" },
+  { key: "orange", label: "橙" },
+  { key: "green", label: "緑" },
+  { key: "blue", label: "青" },
+  { key: "pink", label: "桃" },
+  { key: "purple", label: "紫" },
+];
+const HIGHLIGHT_COLOR_KEYS = new Set(HIGHLIGHT_COLORS.map((c) => c.key));
+const hlVal = (e: string | HlEntry): string => typeof e === "string" ? e : e.value;
+const hlColor = (e: string | HlEntry): string => {
+  const c = typeof e === "string" ? undefined : e.color;
+  return c && HIGHLIGHT_COLOR_KEYS.has(c) ? c : "yellow";
+};
+const hlDisabled = (e: string | HlEntry): boolean => typeof e === "string" ? false : (e.disabled ?? false);
 type AuthConfig = {
   upliftEmail: string;
   upliftPassword: string;
@@ -401,6 +420,32 @@ const highlightHtmlPreservingTags = (html: string, query: string) => {
 };
 const renderHighlightedPlainText = (text: string, query: string): { __html: string } =>
   ({ __html: highlightHtmlPreservingTags(escapeHtml(decodeHtmlEntities(text)), query) });
+// 強調エントリ (NGの逆): 値ごとの色でタグを壊さずに <mark class="highlight-word hl-c-<color>"> で囲む
+// 同じ色のエントリをまとめて1パスで処理 (色ごとにループ)
+const highlightEntriesPreservingTags = (html: string, entries: { value: string; color: string }[]): string => {
+  const clean = entries.map((e) => ({ value: e.value.trim(), color: e.color })).filter((e) => e.value);
+  if (clean.length === 0) return html;
+  const byColor = new Map<string, string[]>();
+  for (const e of clean) {
+    const arr = byColor.get(e.color) ?? [];
+    arr.push(e.value);
+    byColor.set(e.color, arr);
+  }
+  let out = html;
+  for (const [color, values] of byColor) {
+    let re: RegExp;
+    try {
+      re = new RegExp(values.map(escapeRegExp).join("|"), "gi");
+    } catch {
+      continue;
+    }
+    out = out
+      .split(/(<[^>]+>)/g)
+      .map((part) => (part.startsWith("<") ? part : part.replace(re, (m) => `<mark class="highlight-word hl-c-${color}">${m}</mark>`)))
+      .join("");
+  }
+  return out;
+};
 const rewrite5chNet = (url: string): string => url.replace(/\.5ch\.net\b/gi, ".5ch.io");
 const parseThreadPath = (url: string): { board: string; key: string } | null => {
   try {
@@ -777,9 +822,18 @@ const renderResponseBody = (html: string, opts?: { hideImages?: boolean; imageSi
   }
   return { __html: safe };
 };
-const renderResponseBodyHighlighted = (html: string, query: string, opts?: { hideImages?: boolean; imageSizeLimitKb?: number; youtubeThumbs?: boolean }): { __html: string } => {
-  const rendered = renderResponseBody(html, opts).__html;
-  return { __html: highlightHtmlPreservingTags(rendered, query) };
+const renderResponseBodyHighlighted = (html: string, query: string, highlightWords: { value: string; color: string }[], opts?: { hideImages?: boolean; imageSizeLimitKb?: number; youtubeThumbs?: boolean }): { __html: string } => {
+  let out = renderResponseBody(html, opts).__html;
+  out = highlightEntriesPreservingTags(out, highlightWords);
+  out = highlightHtmlPreservingTags(out, query);
+  return { __html: out };
+};
+// 名前 / ID 用: プレーンテキストを強調エントリ + 検索クエリでハイライト
+const renderHighlightedPlainTextWithEntries = (text: string, query: string, entries: { value: string; color: string }[]): { __html: string } => {
+  let out = escapeHtml(decodeHtmlEntities(text));
+  out = highlightEntriesPreservingTags(out, entries);
+  out = highlightHtmlPreservingTags(out, query);
+  return { __html: out };
 };
 
 const IMAGE_URL_RE = /(?:https?:\/\/|ttps?:\/\/|ps:\/\/|s:\/\/)[^\s<>&"]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s<>&"]*)?/gi;
@@ -875,6 +929,7 @@ export default function App() {
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [favorites, setFavorites] = useState<FavoritesData>({ boards: [], threads: [] });
   const [ngFilters, setNgFilters] = useState<NgFilters>({ words: [], ids: [], names: [], thread_words: [] });
+  const [highlightFilters, setHighlightFilters] = useState<HighlightFilters>({ words: [], ids: [], names: [] });
   // 手動「ここまで読んだ」マーカー: board_url -> thread_key -> response_no
   const [readMarker, setReadMarker] = useState<Record<string, Record<string, number>>>({});
   const [ngImageFilter, setNgImageFilter] = useState<NgImageFilter>({ entries: [], threshold: 10 });
@@ -934,6 +989,10 @@ export default function App() {
   const [responsesLoading, setResponsesLoading] = useState(false);
   const [ngInput, setNgInput] = useState("");
   const [ngInputType, setNgInputType] = useState<"words" | "ids" | "names">("words");
+  const [ngPanelTab, setNgPanelTab] = useState<"ng" | "highlight">("ng");
+  const [highlightInput, setHighlightInput] = useState("");
+  const [highlightInputType, setHighlightInputType] = useState<"words" | "ids" | "names">("words");
+  const [highlightAddColor, setHighlightAddColor] = useState("yellow");
   const [ngBulkOpen, setNgBulkOpen] = useState(false);
   const [ngBulkText, setNgBulkText] = useState("");
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -1415,6 +1474,63 @@ export default function App() {
     } catch (error) {
       setStatus(`ng save error: ${String(error)}`);
     }
+  };
+
+  const loadHighlightFilters = async () => {
+    if (!isTauriRuntime()) return;
+    try {
+      const data = await invoke<HighlightFilters>("load_highlight_filters");
+      setHighlightFilters({ words: data.words ?? [], ids: data.ids ?? [], names: data.names ?? [] });
+    } catch {
+      // no saved highlight filters yet
+    }
+  };
+
+  const persistHighlightFilters = async (next: HighlightFilters) => {
+    setHighlightFilters(next);
+    if (!isTauriRuntime()) return;
+    try {
+      await invoke("save_highlight_filters", { filters: next });
+    } catch (error) {
+      setStatus(`highlight save error: ${String(error)}`);
+    }
+  };
+
+  const addHighlightEntry = (type: "words" | "ids" | "names", value: string, color?: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (highlightFilters[type].some((e) => hlVal(e) === trimmed)) {
+      setStatus(`already in highlight ${type}: ${trimmed}`);
+      return;
+    }
+    const entry: HlEntry = { value: trimmed, color: color ?? highlightAddColor };
+    void persistHighlightFilters({ ...highlightFilters, [type]: [...highlightFilters[type], entry] });
+    setStatus(`added highlight ${type}: ${trimmed}`);
+  };
+
+  const removeHighlightEntry = (type: "words" | "ids" | "names", value: string) => {
+    void persistHighlightFilters({ ...highlightFilters, [type]: highlightFilters[type].filter((e) => hlVal(e) !== value) });
+    setStatus(`removed highlight ${type}: ${value}`);
+  };
+
+  const toggleHighlightEntry = (type: "words" | "ids" | "names", value: string) => {
+    void persistHighlightFilters({
+      ...highlightFilters,
+      [type]: highlightFilters[type].map((e) => {
+        if (hlVal(e) !== value) return e;
+        return { value, color: hlColor(e), disabled: !hlDisabled(e) };
+      }),
+    });
+  };
+
+  const setHighlightEntryColor = (type: "words" | "ids" | "names", value: string, color: string) => {
+    void persistHighlightFilters({
+      ...highlightFilters,
+      [type]: highlightFilters[type].map((e) => {
+        if (hlVal(e) !== value) return e;
+        return { value, color, disabled: hlDisabled(e) };
+      }),
+    });
   };
 
   const loadNgImageFilter = async () => {
@@ -3068,6 +3184,13 @@ export default function App() {
     if (result) ngResultMap.set(r.id, result);
   }
   const ngFilteredCount = ngResultMap.size;
+
+  // 強調表示 (NGの逆): 有効なエントリを {value,color} に正規化 (本文/名前/IDをインラインで <mark>)
+  const toHlActive = (list: (string | HlEntry)[]) =>
+    list.filter((e) => !hlDisabled(e)).map((e) => ({ value: hlVal(e), color: hlColor(e) }));
+  const hlWordEntries = toHlActive(highlightFilters.words);
+  const hlNameEntries = toHlActive(highlightFilters.names);
+  const hlIdEntries = toHlActive(highlightFilters.ids);
   const visibleResponseItems = responseItems.filter((r) => {
     const ngResult = ngResultMap.get(r.id);
     if (ngResult === "hide") return false;
@@ -3473,7 +3596,7 @@ export default function App() {
   };
 
   const runResponseAction = async (
-    action: "quote" | "quote-with-name" | "copy-url" | "add-ng-id" | "copy-id" | "copy-body" | "copy-full" | "add-ng-name" | "add-ng-body" | "toggle-aa" | "settings"
+    action: "quote" | "quote-with-name" | "copy-url" | "add-ng-id" | "copy-id" | "copy-body" | "copy-full" | "add-ng-name" | "add-ng-body" | "add-hl-id" | "add-hl-name" | "toggle-aa" | "settings"
   ) => {
     if (!responseMenu) return;
     const id = responseMenu.responseId;
@@ -3570,6 +3693,23 @@ export default function App() {
         addNgEntry("words", plainText, "hide", "exact");
       } else {
         setStatus(`本文が空です #${id}`);
+      }
+      setResponseMenu(null);
+      return;
+    }
+    if (action === "add-hl-id") {
+      const posterId = extractId(resp.time);
+      if (posterId) {
+        addHighlightEntry("ids", posterId);
+      } else {
+        setStatus(`no ID found in response #${id}`);
+      }
+      setResponseMenu(null);
+      return;
+    }
+    if (action === "add-hl-name") {
+      if (resp.name.trim()) {
+        addHighlightEntry("names", resp.name.trim());
       }
       setResponseMenu(null);
       return;
@@ -4144,6 +4284,7 @@ export default function App() {
     void loadNgFilters();
     void loadNgImageFilter();
     void loadReadMarkers();
+    void loadHighlightFilters();
     // Load auth config and auto-login
     if (isTauriRuntime()) {
       invoke<AuthConfig>("load_auth_config").then((cfg) => {
@@ -6634,6 +6775,8 @@ export default function App() {
               {visibleResponseItems.map((r) => {
                 const id = extractId(r.time);
                 const count = id ? (idCountMap.get(id) ?? 0) : 0;
+                // ID が強調エントリに一致したら id セル全体をハイライト色で着色
+                const idHlColor = id ? hlIdEntries.find((e) => id.toLowerCase().includes(e.value.toLowerCase()))?.color : undefined;
                 const isNew = newResponseStart !== null && r.id >= newResponseStart;
                 const isFirstNew = isNew && r.id === newResponseStart;
                 return (
@@ -6657,7 +6800,7 @@ export default function App() {
                       {replyToMeNos.has(r.id) && <span className="reply-to-me-label">[自分宛]</span>}
                       <span
                         className="response-name"
-                        dangerouslySetInnerHTML={renderHighlightedPlainText(r.nameWithoutWatchoi, responseSearchQuery)}
+                        dangerouslySetInnerHTML={renderHighlightedPlainTextWithEntries(r.nameWithoutWatchoi, responseSearchQuery, hlNameEntries)}
                       />
                       {r.watchoi && (
                         <span
@@ -6690,8 +6833,8 @@ export default function App() {
                         />
                         {id && (
                           <span
-                            className="response-id-cell"
-                            style={{ color: getIdColor(id) }}
+                            className={`response-id-cell${idHlColor ? ` highlight-word hl-c-${idHlColor}` : ""}`}
+                            style={idHlColor ? undefined : { color: getIdColor(id) }}
                             onClick={(e) => {
                               e.stopPropagation();
                               if (idPopupCloseTimer.current) { clearTimeout(idPopupCloseTimer.current); idPopupCloseTimer.current = null; }
@@ -6726,7 +6869,7 @@ export default function App() {
                         )}
                       </span>
                     </div>
-                    <div className={`response-body${(aaOverrides.has(r.id) ? aaOverrides.get(r.id) : isAsciiArt(r.text)) ? " aa" : ""}`} dangerouslySetInnerHTML={{ __html: renderResponseBodyHighlighted(r.text, responseSearchQuery, { hideImages: ngResultMap.get(r.id) === "hide-images", imageSizeLimitKb: imageSizeLimit, youtubeThumbs: youtubeThumbsEnabled }).__html + (responseBodyBottomPad ? "<br><br>" : "") }} />
+                    <div className={`response-body${(aaOverrides.has(r.id) ? aaOverrides.get(r.id) : isAsciiArt(r.text)) ? " aa" : ""}`} dangerouslySetInnerHTML={{ __html: renderResponseBodyHighlighted(r.text, responseSearchQuery, hlWordEntries, { hideImages: ngResultMap.get(r.id) === "hide-images", imageSizeLimitKb: imageSizeLimit, youtubeThumbs: youtubeThumbsEnabled }).__html + (responseBodyBottomPad ? "<br><br>" : "") }} />
                   </div>
                   {r.id === currentReadMarker && (
                     <div className="read-marker-separator">
@@ -7508,14 +7651,25 @@ export default function App() {
       {ngPanelOpen && (
         <section className="ng-panel" role="dialog" aria-label="NGフィルタ">
           <header className="ng-panel-header">
-            <strong>NGフィルタ</strong>
+            <strong>{ngPanelTab === "ng" ? "NGフィルタ" : "ハイライト"}</strong>
             <span className="ng-panel-count">
-              {ngFilters.words.length}語 / {ngFilters.ids.length}ID / {ngFilters.names.length}名
+              {ngPanelTab === "ng"
+                ? `${ngFilters.words.length}語 / ${ngFilters.ids.length}ID / ${ngFilters.names.length}名`
+                : `${highlightFilters.words.length}語 / ${highlightFilters.ids.length}ID / ${highlightFilters.names.length}名`}
             </span>
-            <button className="ng-toggle-all" onClick={() => toggleAllNg(false)} title="全NGを有効化">全有効</button>
-            <button className="ng-toggle-all" onClick={() => toggleAllNg(true)} title="全NGを無効化">全無効</button>
+            {ngPanelTab === "ng" && (
+              <>
+                <button className="ng-toggle-all" onClick={() => toggleAllNg(false)} title="全NGを有効化">全有効</button>
+                <button className="ng-toggle-all" onClick={() => toggleAllNg(true)} title="全NGを無効化">全無効</button>
+              </>
+            )}
             <button onClick={() => setNgPanelOpen(false)}>閉じる</button>
           </header>
+          <div className="ng-panel-tabs">
+            <button className={ngPanelTab === "ng" ? "active-toggle" : ""} onClick={() => setNgPanelTab("ng")}>NG (非表示)</button>
+            <button className={ngPanelTab === "highlight" ? "active-toggle" : ""} onClick={() => setNgPanelTab("highlight")}>ハイライト (強調)</button>
+          </div>
+          {ngPanelTab === "ng" && (<>
           <div className="ng-panel-add">
             <select value={ngInputType} onChange={(e) => setNgInputType(e.target.value as "words" | "ids" | "names")}>
               <option value="words">ワード</option>
@@ -7606,6 +7760,74 @@ export default function App() {
               </div>
             ))}
           </div>
+          </>)}
+          {ngPanelTab === "highlight" && (<>
+          <div className="ng-panel-add">
+            <select value={highlightInputType} onChange={(e) => setHighlightInputType(e.target.value as "words" | "ids" | "names")}>
+              <option value="words">ワード</option>
+              <option value="ids">ID</option>
+              <option value="names">名前</option>
+            </select>
+            <input
+              value={highlightInput}
+              onChange={(e) => setHighlightInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  addHighlightEntry(highlightInputType, highlightInput);
+                  setHighlightInput("");
+                }
+              }}
+              placeholder={highlightInputType === "words" ? "強調ワードを入力" : highlightInputType === "ids" ? "強調するIDを入力" : "強調する名前を入力"}
+            />
+            <select value={highlightAddColor} onChange={(e) => setHighlightAddColor(e.target.value)} className="hl-color-select" title="ハイライト色">
+              {HIGHLIGHT_COLORS.map((c) => (
+                <option key={c.key} value={c.key}>{c.label}</option>
+              ))}
+            </select>
+            <button onClick={() => { addHighlightEntry(highlightInputType, highlightInput); setHighlightInput(""); }}>追加</button>
+          </div>
+          <div className="ng-panel-lists">
+            {(["words", "ids", "names"] as const).map((type) => (
+              <div key={type} className="ng-list-section">
+                <h4 className="ng-section-header">
+                  <span>{type === "words" ? "ワード" : type === "ids" ? "ID" : "名前"} ({highlightFilters[type].filter((e) => !hlDisabled(e)).length}/{highlightFilters[type].length})</span>
+                </h4>
+                {highlightFilters[type].length === 0 ? (
+                  <span className="ng-empty">(なし)</span>
+                ) : (
+                  <ul className="ng-list">
+                    {highlightFilters[type].map((entry) => {
+                      const v = hlVal(entry);
+                      const color = hlColor(entry);
+                      const off = hlDisabled(entry);
+                      return (
+                        <li key={v} className={off ? "ng-disabled" : ""}>
+                          <button
+                            className={`ng-toggle ${off ? "ng-toggle-off" : "ng-toggle-on"}`}
+                            onClick={() => toggleHighlightEntry(type, v)}
+                            title={off ? "クリックで有効化" : "クリックで無効化"}
+                          >{off ? "OFF" : "ON"}</button>
+                          <select
+                            className={`hl-color-select hl-c-${color}`}
+                            value={color}
+                            onChange={(e) => setHighlightEntryColor(type, v, e.target.value)}
+                            title="ハイライト色"
+                          >
+                            {HIGHLIGHT_COLORS.map((c) => (
+                              <option key={c.key} value={c.key}>{c.label}</option>
+                            ))}
+                          </select>
+                          <span className="ng-val" title={v}>{v}</span>
+                          <button className="ng-remove" onClick={() => removeHighlightEntry(type, v)}>×</button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+          </>)}
         </section>
       )}
       {ngImagePanelOpen && (
@@ -7752,6 +7974,8 @@ export default function App() {
           <button onClick={() => void runResponseAction("add-ng-id")}>NGIDに追加</button>
           <button onClick={() => void runResponseAction("add-ng-name")}>NG名前に追加</button>
           <button onClick={() => void runResponseAction("add-ng-body")}>本文をNGに追加</button>
+          <button onClick={() => void runResponseAction("add-hl-id")}>IDをハイライト</button>
+          <button onClick={() => void runResponseAction("add-hl-name")}>名前をハイライト</button>
           <button onClick={() => void runResponseAction("toggle-aa")}>
             {(() => {
               const rid = responseMenu.responseId;
