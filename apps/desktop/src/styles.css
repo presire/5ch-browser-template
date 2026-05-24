@@ -1276,6 +1276,43 @@ li.fav-drag-over {
   border-radius: 2px;
 }
 
+/* 強調 (NGの逆) — 本文/名前/IDの一致箇所をインラインでマーク。色はプリセット */
+.highlight-word {
+  padding: 0 1px;
+  border-radius: 2px;
+  font-weight: 700;
+}
+.highlight-word.hl-c-yellow { background: #ffe08a; color: #5a3a00; }
+.highlight-word.hl-c-orange { background: #ffc48a; color: #5a2e00; }
+.highlight-word.hl-c-green  { background: #b6e8a8; color: #1e4d12; }
+.highlight-word.hl-c-blue   { background: #a8d4f5; color: #0d3a5c; }
+.highlight-word.hl-c-pink   { background: #f7b8d2; color: #5c1238; }
+.highlight-word.hl-c-purple { background: #d4b8f0; color: #3a1260; }
+
+/* NGパネルのタブバー */
+.ng-panel-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px 0;
+}
+.ng-panel-tabs button {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: calc(12px + var(--fs-delta, 0px));
+}
+
+/* ハイライト色セレクト — 選択中の色で背景を着色して一目で分かるように */
+.hl-color-select {
+  flex: none;
+  font-weight: 700;
+}
+.hl-color-select.hl-c-yellow { background: #ffe08a; color: #5a3a00; }
+.hl-color-select.hl-c-orange { background: #ffc48a; color: #5a2e00; }
+.hl-color-select.hl-c-green  { background: #b6e8a8; color: #1e4d12; }
+.hl-color-select.hl-c-blue   { background: #a8d4f5; color: #0d3a5c; }
+.hl-color-select.hl-c-pink   { background: #f7b8d2; color: #5c1238; }
+.hl-color-select.hl-c-purple { background: #d4b8f0; color: #3a1260; }
+
 .threads th {
   border: 1px solid #d0d0d0;
   font-size: calc(12px + var(--fs-delta, 0px));
@@ -3225,6 +3262,18 @@ button.search-history-btn:hover {
 .dark .response-block.reply-to-me {
   border-left: 4px solid #2090d0;
 }
+.dark .highlight-word.hl-c-yellow { background: #6b5210; color: #ffe9a8; }
+.dark .highlight-word.hl-c-orange { background: #6e3f12; color: #ffd6a8; }
+.dark .highlight-word.hl-c-green  { background: #2d4d22; color: #c4f0b4; }
+.dark .highlight-word.hl-c-blue   { background: #1e3e57; color: #b4ddf7; }
+.dark .highlight-word.hl-c-pink   { background: #5c2240; color: #f7c4dc; }
+.dark .highlight-word.hl-c-purple { background: #3e2660; color: #ddc4f7; }
+.dark .hl-color-select.hl-c-yellow { background: #6b5210; color: #ffe9a8; }
+.dark .hl-color-select.hl-c-orange { background: #6e3f12; color: #ffd6a8; }
+.dark .hl-color-select.hl-c-green  { background: #2d4d22; color: #c4f0b4; }
+.dark .hl-color-select.hl-c-blue   { background: #1e3e57; color: #b4ddf7; }
+.dark .hl-color-select.hl-c-pink   { background: #5c2240; color: #f7c4dc; }
+.dark .hl-color-select.hl-c-purple { background: #3e2660; color: #ddc4f7; }
 .dark .response-name {
   color: #3a9a3a;
 }

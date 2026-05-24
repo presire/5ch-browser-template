@@ -1079,6 +1079,44 @@ fn save_read_marker(markers: ReadMarkerMap) -> Result<(), String> {
     core_store::save_json("read_marker.json", &markers).map_err(|e| e.to_string())
 }
 
+// --- Highlight filters (NG の逆: 指定ワード/ID/名前を強調表示) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum HlEntry {
+    Simple(String),
+    WithMeta {
+        value: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        disabled: bool,
+    },
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+struct HighlightFilters {
+    #[serde(default)]
+    words: Vec<HlEntry>,
+    #[serde(default)]
+    ids: Vec<HlEntry>,
+    #[serde(default)]
+    names: Vec<HlEntry>,
+}
+
+#[tauri::command]
+fn load_highlight_filters() -> Result<HighlightFilters, String> {
+    match core_store::load_json::<HighlightFilters>("highlight_filters.json") {
+        Ok(data) => Ok(data),
+        Err(_) => Ok(HighlightFilters::default()),
+    }
+}
+
+#[tauri::command]
+fn save_highlight_filters(filters: HighlightFilters) -> Result<(), String> {
+    core_store::save_json("highlight_filters.json", &filters).map_err(|e| e.to_string())
+}
+
 // --- Auth config persistence ---
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -2218,6 +2256,8 @@ pub fn run() {
             save_read_status,
             load_read_marker,
             save_read_marker,
+            load_highlight_filters,
+            save_highlight_filters,
             load_auth_config,
             save_auth_config,
             login_with_config,
