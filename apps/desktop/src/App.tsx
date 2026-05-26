@@ -6507,6 +6507,13 @@ export default function App() {
                 <button className="title-action-btn" onClick={downloadAllThreadImages} title="画像を一括ダウンロード"><Download size={14} /></button>
                 <button className={`title-action-btn ${imageGalleryOpen ? "active-toggle" : ""}`} onClick={() => setImageGalleryOpen((v) => !v)} title="画像一覧"><Images size={14} /></button>
                 <button
+                  className={`title-action-btn ${thumbMaskEnabled ? "active-toggle" : ""}`}
+                  onClick={() => setThumbMaskEnabled((v) => !v)}
+                  title={thumbMaskEnabled ? "サムネイルマスク解除" : "サムネイルをマスク"}
+                >
+                  {thumbMaskEnabled ? <ImageOff size={14} /> : <Image size={14} />}
+                </button>
+                <button
                   className={`title-action-btn ${aiSubpaneOpen ? "active-toggle" : ""}`}
                   onClick={() => {
                     if (aiSubpaneOpen && aiInferenceBusy) aiCancelInference();
@@ -6516,13 +6523,6 @@ export default function App() {
                   title={aiStatus?.activeModelId ? "AI" : "AI (モデル未有効 - ファイル → AI 設定)"}
                 >
                   <BrainCircuit size={14} />
-                </button>
-                <button
-                  className={`title-action-btn ${thumbMaskEnabled ? "active-toggle" : ""}`}
-                  onClick={() => setThumbMaskEnabled((v) => !v)}
-                  title={thumbMaskEnabled ? "サムネイルマスク解除" : "サムネイルをマスク"}
-                >
-                  {thumbMaskEnabled ? <ImageOff size={14} /> : <Image size={14} />}
                 </button>
                 <button
                   className={`title-action-btn ${autoScrollEnabled ? "active-toggle" : ""}`}
