@@ -226,6 +226,7 @@ export default function App() {
           <nav className="nav-links">
             <a href="#features">機能</a>
             <a href="#install">インストール</a>
+            <a href="#sync">データ共有</a>
             <a href="#download">ダウンロード</a>
             <a href={GITHUB_URL} target="_blank" rel="noreferrer">GitHub</a>
             <button
@@ -698,6 +699,87 @@ export default function App() {
                 Raspberry Pi (AArch64) で描画に問題がある場合、
                 <code>LIBGL_ALWAYS_SOFTWARE=1</code> を設定してください。
               </p>
+            </article>
+          </div>
+        </section>
+
+        <section id="sync" className="section">
+          <div className="section-head reveal">
+            <p className="kicker">Sync</p>
+            <h2>複数PCでデータを共有</h2>
+          </div>
+
+          <div className="install-grid">
+            <article className="card install-card reveal" data-delay="1" style={{ gridColumn: "1 / -1" }}>
+              <p className="note">
+                データフォルダの保存先を任意の場所に変更できます。
+                <strong>OneDrive / iCloud Drive / Google Drive</strong> などのクラウド同期フォルダを指定すれば、
+                自宅と外出先など複数のPCで<strong>お気に入り・NG設定・既読・認証設定</strong>を共有できます。
+              </p>
+              <ol className="install-steps">
+                <li>メニューの「<strong>ファイル</strong>」→「<strong>設定</strong>」を開く</li>
+                <li>「<strong>データフォルダ</strong>」の「<strong>フォルダを変更…</strong>」で同期フォルダを選択</li>
+                <li>アプリを<strong>再起動</strong>すると反映されます</li>
+                <li>共有したい各PCで同じ同期フォルダを指定します（この設定自体は同期されないため、PCごとに行ってください）</li>
+              </ol>
+              <details className="install-warning">
+                <summary>
+                  Windows / Mac / Linux で同期する手順（例）
+                  <span className="install-warning-hint">クリックで展開</span>
+                </summary>
+                <p className="note">
+                  3つのOSで共有する場合は、まず<strong>3OSすべてに対応した同期サービス</strong>を選びます。
+                  <strong>Dropbox</strong> と <strong>Syncthing</strong>（クラウド不要のP2P同期）は Windows / Mac / Linux 公式対応で確実です。
+                  OneDrive / iCloud Drive / Google Drive は Linux 公式クライアントが無いため、Linux を含める場合は避けるのが無難です。
+                </p>
+                <ol className="install-steps">
+                  <li>同期サービスのフォルダ内に、共有用フォルダ（例: <code>Ember</code>）を1つ作成</li>
+                  <li>
+                    （初回のみ）今データがあるPCの「現在の保存先」の中身を、作成した <code>Ember</code> フォルダに手動コピー
+                    （保存先変更時に自動コピーはされません）
+                  </li>
+                  <li>
+                    各PCで「設定 → データフォルダ → フォルダを変更…」からその <code>Ember</code> フォルダを選択して再起動。
+                    パスはOSごとに異なってOKです:
+                    <br />Windows: <code>C:\Users\…\Dropbox\Ember</code>
+                    <br />macOS: <code>~/Dropbox/Ember</code>
+                    <br />Linux: <code>~/Dropbox/Ember</code>
+                  </li>
+                  <li>以降は<strong>必ず1台ずつ</strong>起動・終了し、同期の完了を待ってから別のPCを使う</li>
+                </ol>
+                <p className="note">
+                  クラウドに置きたくない場合は <strong>Syncthing</strong> が便利です（端末間で直接同期。容量制限なし）。
+                </p>
+              </details>
+              <details className="install-warning">
+                <summary>
+                  ご利用上の注意（必ずお読みください）
+                  <span className="install-warning-hint">クリックで展開</span>
+                </summary>
+                <ul className="install-steps">
+                  <li>
+                    <strong>2台以上で同時に起動しないでください。</strong>
+                    同期の競合により、お気に入りなどのデータが壊れたり巻き戻ったりする恐れがあります。
+                    必ず1台ずつ起動・終了してください。
+                  </li>
+                  <li>
+                    フォルダを変更しても、<strong>これまでのデータは自動的にコピーされません。</strong>
+                    必要な場合は、変更前の保存先から手動でコピーしてください。
+                  </li>
+                  <li>
+                    <strong>AIモデル</strong>（数GB）は、データフォルダの変更にかかわらず常に各PCのローカルに保存されます（クラウドには同期されません）。各PCで個別にダウンロードしてください。
+                  </li>
+                  <li>
+                    スレッドのキャッシュ（<code>cache.db</code>）は、万一壊れても再取得で復旧する一時データです。
+                  </li>
+                  <li>
+                    クラウドがオフライン・未同期の場合、指定フォルダにアクセスできず一時的にデフォルトの保存先で起動することがあります。
+                  </li>
+                  <li>
+                    お気に入り（スレ・板）は同期されます。一方で<strong>スレの読みかけ位置・開いているタブ・検索履歴・自分の書き込み記録は同期されません</strong>（端末ごとの保存）。
+                  </li>
+                </ul>
+              </details>
             </article>
           </div>
         </section>
