@@ -724,6 +724,35 @@ export default function App() {
               </ol>
               <details className="install-warning">
                 <summary>
+                  Windows / Mac / Linux で同期する手順（例）
+                  <span className="install-warning-hint">クリックで展開</span>
+                </summary>
+                <p className="note">
+                  3つのOSで共有する場合は、まず<strong>3OSすべてに対応した同期サービス</strong>を選びます。
+                  <strong>Dropbox</strong> と <strong>Syncthing</strong>（クラウド不要のP2P同期）は Windows / Mac / Linux 公式対応で確実です。
+                  OneDrive / iCloud Drive / Google Drive は Linux 公式クライアントが無いため、Linux を含める場合は避けるのが無難です。
+                </p>
+                <ol className="install-steps">
+                  <li>同期サービスのフォルダ内に、共有用フォルダ（例: <code>Ember</code>）を1つ作成</li>
+                  <li>
+                    （初回のみ）今データがあるPCの「現在の保存先」の中身を、作成した <code>Ember</code> フォルダに手動コピー
+                    （保存先変更時に自動コピーはされません）
+                  </li>
+                  <li>
+                    各PCで「設定 → データフォルダ → フォルダを変更…」からその <code>Ember</code> フォルダを選択して再起動。
+                    パスはOSごとに異なってOKです:
+                    <br />Windows: <code>C:\Users\…\Dropbox\Ember</code>
+                    <br />macOS: <code>~/Dropbox/Ember</code>
+                    <br />Linux: <code>~/Dropbox/Ember</code>
+                  </li>
+                  <li>以降は<strong>必ず1台ずつ</strong>起動・終了し、同期の完了を待ってから別のPCを使う</li>
+                </ol>
+                <p className="note">
+                  クラウドに置きたくない場合は <strong>Syncthing</strong> が便利です（端末間で直接同期。容量制限なし）。
+                </p>
+              </details>
+              <details className="install-warning">
+                <summary>
                   ご利用上の注意（必ずお読みください）
                   <span className="install-warning-hint">クリックで展開</span>
                 </summary>
