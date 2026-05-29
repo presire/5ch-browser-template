@@ -326,6 +326,54 @@ const THREAD_COL_LABELS: Record<ThreadColKey, string> = {
   speed: "勢い",
 };
 const DEFAULT_COL_VISIBLE: Record<ToggleableThreadColKey, boolean> = { fetched: true, datNumber: true, title: true, res: true, read: true, unread: true, lastFetch: true, speed: true };
+type GestureActionId =
+  | "none"
+  | "prevTab"
+  | "nextTab"
+  | "closeTab"
+  | "reloadThread"
+  | "reloadThreadList"
+  | "scrollTop"
+  | "scrollBottom"
+  | "toggleDark"
+  | "openSettings"
+  | "toggleThumbMask";
+const GESTURE_ACTIONS: { id: GestureActionId; label: string }[] = [
+  { id: "none", label: "なし" },
+  { id: "prevTab", label: "前のタブ" },
+  { id: "nextTab", label: "次のタブ" },
+  { id: "closeTab", label: "タブを閉じる" },
+  { id: "reloadThread", label: "スレッド更新" },
+  { id: "reloadThreadList", label: "スレッド一覧を更新" },
+  { id: "scrollTop", label: "先頭へスクロール" },
+  { id: "scrollBottom", label: "末尾へスクロール" },
+  { id: "toggleDark", label: "ダークモード切替" },
+  { id: "openSettings", label: "設定を開く" },
+  { id: "toggleThumbMask", label: "サムネイルをマスク切替" },
+];
+const GESTURE_PATTERNS: { key: string; label: string }[] = [
+  { key: "left", label: "←" },
+  { key: "right", label: "→" },
+  { key: "up", label: "↑" },
+  { key: "down", label: "↓" },
+  { key: "up,down", label: "↑↓" },
+  { key: "down,up", label: "↓↑" },
+  { key: "left,right", label: "←→" },
+  { key: "right,left", label: "→←" },
+  { key: "down,right", label: "↓→" },
+  { key: "down,left", label: "↓←" },
+  { key: "up,right", label: "↑→" },
+  { key: "up,left", label: "↑←" },
+];
+const DEFAULT_GESTURE_BINDINGS: Record<string, GestureActionId> = {
+  left: "prevTab",
+  right: "nextTab",
+  down: "reloadThread",
+  up: "scrollTop",
+  "up,down": "scrollBottom",
+  "down,right": "closeTab",
+  "down,left": "reloadThreadList",
+};
 const COMPOSE_PREFS_KEY = "desktop.composePrefs.v1";
 const NAME_HISTORY_KEY = "desktop.nameHistory.v1";
 const BOOKMARK_KEY = "desktop.bookmarks.v1";
@@ -1000,6 +1048,7 @@ export default function App() {
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(60);
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [mouseGestureEnabled, setMouseGestureEnabled] = useState(false);
+  const [gestureBindings, setGestureBindings] = useState<Record<string, GestureActionId>>(DEFAULT_GESTURE_BINDINGS);
   const [threadAgeColorEnabled, setThreadAgeColorEnabled] = useState(false);
   const [imageGalleryOpen, setImageGalleryOpen] = useState(false);
   const gestureRef = useRef<{
@@ -4093,6 +4142,7 @@ export default function App() {
           autoRefreshInterval?: number;
           alwaysOnTop?: boolean;
           mouseGestureEnabled?: boolean;
+          gestureBindings?: Record<string, GestureActionId>;
           threadAgeColorEnabled?: boolean;
           composeSize?: { w: number; h: number };
           threadColVisible?: Record<string, boolean>;
@@ -4151,6 +4201,14 @@ export default function App() {
         if (typeof parsed.autoRefreshInterval === "number") setAutoRefreshInterval(parsed.autoRefreshInterval);
         if (typeof parsed.alwaysOnTop === "boolean") setAlwaysOnTop(parsed.alwaysOnTop);
         if (typeof parsed.mouseGestureEnabled === "boolean") setMouseGestureEnabled(parsed.mouseGestureEnabled);
+        if (parsed.gestureBindings && typeof parsed.gestureBindings === "object") {
+          const valid = new Set(GESTURE_ACTIONS.map((a) => a.id));
+          const cleaned: Record<string, GestureActionId> = {};
+          for (const [k, v] of Object.entries(parsed.gestureBindings)) {
+            if (valid.has(v as GestureActionId)) cleaned[k] = v as GestureActionId;
+          }
+          setGestureBindings((prev) => ({ ...prev, ...cleaned }));
+        }
         if (typeof parsed.threadAgeColorEnabled === "boolean") setThreadAgeColorEnabled(parsed.threadAgeColorEnabled);
         if (parsed.composeSize && typeof parsed.composeSize.w === "number" && typeof parsed.composeSize.h === "number") setComposeSize(parsed.composeSize);
         if (parsed.threadColVisible && typeof parsed.threadColVisible === "object") setThreadColVisible((prev) => ({ ...prev, ...parsed.threadColVisible }));
@@ -4677,31 +4735,41 @@ export default function App() {
 
     const executeGesture = (dirs: string[]) => {
       const key = dirs.join(",");
-      switch (key) {
-        case "left": {
+      const action = gestureBindings[key] ?? "none";
+      switch (action) {
+        case "prevTab": {
           const len = threadTabs.length;
           if (len > 1) onTabClick((activeTabIndex - 1 + len) % len);
           break;
         }
-        case "right": {
+        case "nextTab": {
           const len = threadTabs.length;
           if (len > 1) onTabClick((activeTabIndex + 1) % len);
           break;
         }
-        case "down":
+        case "reloadThread":
           void fetchResponsesFromCurrent();
           break;
-        case "up":
+        case "scrollTop":
           if (responseScrollRef.current) responseScrollRef.current.scrollTop = 0;
           break;
-        case "up,down":
+        case "scrollBottom":
           if (responseScrollRef.current) responseScrollRef.current.scrollTop = responseScrollRef.current.scrollHeight;
           break;
-        case "down,right":
+        case "closeTab":
           if (activeTabIndex >= 0) closeTab(activeTabIndex);
           break;
-        case "down,left":
+        case "reloadThreadList":
           void fetchThreadListFromCurrent();
+          break;
+        case "toggleDark":
+          setDarkMode((v) => !v);
+          break;
+        case "openSettings":
+          setSettingsOpen(true);
+          break;
+        case "toggleThumbMask":
+          setThumbMaskEnabled((v) => !v);
           break;
         default:
           break;
@@ -4774,7 +4842,7 @@ export default function App() {
       gestureRef.current = null;
       clearTrail();
     };
-  }, [mouseGestureEnabled, activeTabIndex, threadTabs]);
+  }, [mouseGestureEnabled, activeTabIndex, threadTabs, gestureBindings]);
 
   useEffect(() => {
     if (!layoutPrefsLoadedRef.current) return;
@@ -4814,6 +4882,7 @@ export default function App() {
       autoRefreshInterval,
       alwaysOnTop,
       mouseGestureEnabled,
+      gestureBindings,
       threadAgeColorEnabled,
       composeSize: composeSize ?? undefined,
       threadColVisible,
@@ -4826,7 +4895,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, threadAgeColorEnabled, composeSize, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, composeSize, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -5754,6 +5823,7 @@ export default function App() {
             { text: "sep" },
             { text: "設定", action: () => setSettingsOpen(true) },
             { text: "AI 設定", action: () => setAiSettingsOpen(true) },
+            { text: "マウスジェスチャ設定", action: () => setGestureListOpen(true) },
             ...(navigator.userAgent.includes("Windows") ? [
               { text: "sep" },
               { text: "終了", action: () => { if (isTauriRuntime()) { void invoke("quit_app"); } } },
@@ -5813,7 +5883,6 @@ export default function App() {
           ]},
           { label: "ヘルプ", items: [
             { text: "ショートカット一覧", action: () => setShortcutsOpen(true) },
-            { text: "マウスジェスチャ一覧", action: () => setGestureListOpen(true) },
             { text: "更新確認", action: checkForUpdates },
             { text: "sep" },
             { text: "バージョン情報", action: () => requestAnimationFrame(() => { setAboutOpen(true); void checkForUpdates(); }) },
@@ -8529,28 +8598,36 @@ export default function App() {
         </div>
       )}
       {gestureListOpen && (
-        <div className="lightbox-overlay" onClick={() => setGestureListOpen(false)}>
-          <div className="shortcuts-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="lightbox-overlay gesture-config-overlay" onClick={() => setGestureListOpen(false)}>
+          <div className="shortcuts-panel gesture-config-panel" onClick={(e) => e.stopPropagation()}>
             <header className="shortcuts-header">
-              <strong>マウスジェスチャ一覧</strong>
+              <strong>マウスジェスチャ設定</strong>
               <button onClick={() => setGestureListOpen(false)}>閉じる</button>
             </header>
             <div className="shortcuts-body">
-              <p style={{ margin: "0 0 8px", fontSize: 11, color: "var(--sub)" }}>右クリックを押しながらドラッグで発動{!mouseGestureEnabled && "（現在無効）"}</p>
-              {[
-                ["←", "前のタブ"],
-                ["→", "次のタブ"],
-                ["↓", "スレッド更新"],
-                ["↑", "先頭へスクロール"],
-                ["↑↓", "末尾へスクロール"],
-                ["↓→", "タブを閉じる"],
-                ["↓←", "スレッド一覧を更新"],
-              ].map(([gesture, desc]) => (
-                <div key={gesture} className="shortcut-row">
-                  <kbd>{gesture}</kbd>
-                  <span>{desc}</span>
+              <label className="gesture-config-enable">
+                <input type="checkbox" checked={mouseGestureEnabled} onChange={(e) => setMouseGestureEnabled(e.target.checked)} />
+                <span>マウスジェスチャを有効にする</span>
+              </label>
+              <p style={{ margin: "0 0 8px", fontSize: 11, color: "var(--sub)" }}>右クリックを押しながらドラッグで発動。各ジェスチャに割り当てる動作を選べます。</p>
+              {GESTURE_PATTERNS.map(({ key, label }) => (
+                <div key={key} className="gesture-config-row">
+                  <kbd>{label}</kbd>
+                  <select
+                    value={gestureBindings[key] ?? "none"}
+                    onChange={(e) =>
+                      setGestureBindings((prev) => ({ ...prev, [key]: e.target.value as GestureActionId }))
+                    }
+                  >
+                    {GESTURE_ACTIONS.map((a) => (
+                      <option key={a.id} value={a.id}>{a.label}</option>
+                    ))}
+                  </select>
                 </div>
               ))}
+              <div style={{ marginTop: 10, textAlign: "right" }}>
+                <button onClick={() => setGestureBindings(DEFAULT_GESTURE_BINDINGS)}>デフォルトに戻す</button>
+              </div>
             </div>
           </div>
         </div>
@@ -8662,6 +8739,7 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={mouseGestureEnabled} onChange={(e) => setMouseGestureEnabled(e.target.checked)} />
                   <span>マウスジェスチャ</span>
+                  <button type="button" className="gesture-config-open-btn" onClick={() => setGestureListOpen(true)}>ジェスチャ割り当て…</button>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={showBoardButtons} onChange={(e) => setShowBoardButtons(e.target.checked)} />
