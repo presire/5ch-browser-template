@@ -2816,6 +2816,10 @@ button.search-history-btn:hover {
   justify-content: center;
 }
 
+.gesture-config-overlay {
+  z-index: 130;
+}
+
 .lightbox-content {
   max-width: 90vw;
   max-height: 90vh;
@@ -2896,6 +2900,46 @@ button.search-history-btn:hover {
   border-radius: 3px;
   background: #ffffff;
   font-family: monospace;
+  font-size: 11px;
+}
+
+.gesture-config-enable {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gesture-config-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.gesture-config-row kbd {
+  display: inline-block;
+  min-width: 48px;
+  text-align: center;
+  padding: 2px 6px;
+  border: 1px solid #c0c0c0;
+  border-radius: 3px;
+  background: #ffffff;
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.gesture-config-row select {
+  flex: 1;
+}
+
+.gesture-config-open-btn {
+  margin-left: auto;
   font-size: 11px;
 }
 
@@ -3453,14 +3497,16 @@ button.search-history-btn:hover {
 }
 .dark .settings-panel button,
 .dark .settings-header button,
-.dark .shortcuts-header button {
+.dark .shortcuts-header button,
+.dark .gesture-config-panel button {
   background: #3a3a3a;
   color: var(--ink);
   border-color: #555;
 }
 .dark .settings-panel button:hover,
 .dark .settings-header button:hover,
-.dark .shortcuts-header button:hover {
+.dark .shortcuts-header button:hover,
+.dark .gesture-config-panel button:hover {
   background: #4a4a4a;
 }
 /* --- Dark mode: compose close button --- */
@@ -3545,7 +3591,8 @@ button.search-history-btn:hover {
   background: #333;
   border-color: #3c3c3c;
 }
-.dark .shortcut-row kbd {
+.dark .shortcut-row kbd,
+.dark .gesture-config-row kbd {
   background: #1e1e1e;
   border-color: #555;
   color: var(--ink);
@@ -4261,6 +4308,10 @@ button.search-history-btn:hover {
 .shell.glass .lightbox-overlay,
 .shell.glass .hover-preview {
   z-index: 800;
+}
+
+.shell.glass .gesture-config-overlay {
+  z-index: 810;
 }
 
 /* ガラス+ダーク: ID文字を明度ブースト + 黒の濃い縁取りで暗色パレットの可読性を確保 */

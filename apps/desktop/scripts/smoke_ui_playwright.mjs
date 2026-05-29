@@ -810,6 +810,18 @@ try {
   assert(legends.some((l) => l.includes("Ronin")), `settings should have Ronin/BE section, got ${legends}`);
   assert(legends.includes("データフォルダ"), `settings should have データフォルダ section, got ${legends}`);
   assert(legends.includes("情報"), `settings should have 情報 section, got ${legends}`);
+  // mouse gesture customization: settings has an "assign" button that opens the gesture config panel
+  const gestureOpenBtn = await page.$(".gesture-config-open-btn");
+  assert(gestureOpenBtn, "settings should have a mouse gesture assignment button");
+  await gestureOpenBtn.click();
+  await new Promise((r) => setTimeout(r, 150));
+  const gesturePanel = await page.$(".gesture-config-panel");
+  assert(gesturePanel, "clicking gesture assign button should open gesture config panel");
+  const gestureSelects = await page.$$eval(".gesture-config-row select", (els) => els.length);
+  assert(gestureSelects === 12, `gesture config should list 12 assignable patterns, got ${gestureSelects}`);
+  await page.click('.gesture-config-panel .shortcuts-header button:has-text("閉じる")');
+  await new Promise((r) => setTimeout(r, 100));
+  console.log("smoke-ui: mouse gesture customization ok");
   // close settings
   await page.click('.settings-header button:has-text("閉じる")');
   await new Promise((r) => setTimeout(r, 100));
