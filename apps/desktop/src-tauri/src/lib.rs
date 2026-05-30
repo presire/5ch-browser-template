@@ -1680,6 +1680,29 @@ async fn ai_fetch_remote_catalog() -> Option<String> {
     resp.text().await.ok()
 }
 
+/// Build the effective model catalog: remote entries take precedence, but any
+/// id present in the bundled copy and missing from the remote is appended.
+/// This lets the app surface newly-added bundled models (post-release dev
+/// builds) before the landing-only deploy lands — without breaking the
+/// production flow where the remote catalog is canonical.
+async fn ai_load_merged_catalog() -> Result<core_ai::ModelCatalog, String> {
+    let bundled = core_ai::parse_catalog(AI_BUNDLED_CATALOG).map_err(|e| e.to_string())?;
+    let Some(body) = ai_fetch_remote_catalog().await else {
+        return Ok(bundled);
+    };
+    let Ok(remote) = core_ai::parse_catalog(&body) else {
+        return Ok(bundled);
+    };
+    let mut models = remote.models;
+    let known: std::collections::HashSet<String> = models.iter().map(|m| m.id.clone()).collect();
+    for entry in bundled.models {
+        if !known.contains(&entry.id) {
+            models.push(entry);
+        }
+    }
+    Ok(core_ai::ModelCatalog { version: remote.version, models })
+}
+
 static AI_CANCEL_FLAGS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 static AI_INFERENCE_CANCEL: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new();
 
@@ -1838,15 +1861,7 @@ const COMPILED_BACKEND: &str = "vulkan";
 
 #[tauri::command]
 async fn ai_list_models() -> Result<core_ai::ModelCatalog, String> {
-    // Prefer the remote catalog so we can publish new model entries without
-    // shipping a new app version. Fall back to the bundled copy on any
-    // network or parse failure (incl. offline use).
-    if let Some(body) = ai_fetch_remote_catalog().await {
-        if let Ok(catalog) = core_ai::parse_catalog(&body) {
-            return Ok(catalog);
-        }
-    }
-    core_ai::parse_catalog(AI_BUNDLED_CATALOG).map_err(|e| e.to_string())
+    ai_load_merged_catalog().await
 }
 
 #[tauri::command]
@@ -1865,18 +1880,9 @@ fn ai_status() -> Result<AiStatus, String> {
 
 #[tauri::command]
 async fn ai_download_model(app: AppHandle, model_id: String) -> Result<(), String> {
-    // Prefer the remote catalog so newly-published entries (added via
-    // landing-only deploys without an app release) can still be downloaded.
-    // Without this, models added to the remote-only catalog hung at 0% in the
-    // UI because the bundled lookup returned "model not in catalog" before any
-    // download started.
-    let catalog = if let Some(body) = ai_fetch_remote_catalog().await {
-        core_ai::parse_catalog(&body)
-            .or_else(|_| core_ai::parse_catalog(AI_BUNDLED_CATALOG))
-    } else {
-        core_ai::parse_catalog(AI_BUNDLED_CATALOG)
-    }
-    .map_err(|e| e.to_string())?;
+    // Use the same merged catalog as ai_list_models so download IDs that exist
+    // only in the bundled copy (post-release dev builds) can still be resolved.
+    let catalog = ai_load_merged_catalog().await?;
     let entry = catalog
         .find(&model_id)
         .ok_or_else(|| format!("model not in catalog: {model_id}"))?
@@ -2021,16 +2027,16 @@ async fn ai_run_inference(
     prompt: String,
     max_tokens: Option<u32>,
     backend: Option<core_ai::InferenceBackend>,
+    model_id: Option<String>,
 ) -> Result<(), String> {
     let dir = ai_models_dir()?;
     let manifest = core_ai::load_manifest(&dir).map_err(|e| e.to_string())?;
-    let active_id = manifest
-        .active_model_id
-        .clone()
+    let target_id = model_id
+        .or_else(|| manifest.active_model_id.clone())
         .ok_or_else(|| "no active model".to_string())?;
     let installed = manifest
-        .find(&active_id)
-        .ok_or_else(|| format!("active model not installed: {active_id}"))?;
+        .find(&target_id)
+        .ok_or_else(|| format!("model not installed: {target_id}"))?;
     let path = dir.join(&installed.filename);
     let max = max_tokens.unwrap_or(512);
     let inference_backend = backend.unwrap_or_default();
