@@ -117,6 +117,19 @@
       "promptTemplate": "qwen",
       "languages": ["ja", "en", "zh"],
       "recommendedFor": ["summary", "reply"]
+    },
+    {
+      "id": "hy-mt2-1.8b-q4km",
+      "name": "Hy-MT2-1.8B (翻訳専用)",
+      "description": "Tencent 製・翻訳特化 1.8B (1.1 GB)。33 言語対応・Apache 2.0。翻訳機能を使うにはこのモデルが必要 (要約・会話には不向き)。",
+      "sizeBytes": 1133080448,
+      "quantization": "Q4_K_M",
+      "url": "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf",
+      "sha256": "dc5f44fcf1fa496ee7ad725982c0c8c553a4de00259b53af84c4b89fb0c06699",
+      "contextLength": 32768,
+      "promptTemplate": "hunyuan",
+      "languages": ["ja", "en", "zh", "zh-Hant", "ko"],
+      "recommendedFor": ["translation"]
     }
   ]
 }
