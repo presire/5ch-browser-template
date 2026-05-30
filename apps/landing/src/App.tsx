@@ -24,6 +24,7 @@ const GITHUB_URL = "https://github.com/kiyohken2000/5ch-browser-template";
 const ISSUES_URL = "https://github.com/kiyohken2000/5ch-browser-template/issues";
 const X_URL = "https://x.com/votepurchase";
 const BMC_URL = "https://buymeacoffee.com/votepurchase";
+const BLOG_URL = "https://capsaicin.site";
 
 type PlatformAsset = {
   sha256: string;
@@ -852,6 +853,9 @@ export default function App() {
               <p className="lead">
                 不具合報告・要望は <a href={ISSUES_URL} target="_blank" rel="noreferrer">GitHub Issues</a> へお願いします。
               </p>
+              <p className="lead">
+                開発記録は <a href={BLOG_URL} target="_blank" rel="noreferrer">開発ブログ (capsaicin.site)</a> で更新中。
+              </p>
             </div>
           </div>
         </section>
@@ -867,6 +871,7 @@ export default function App() {
           <div className="footer-links">
             <a href={GITHUB_URL} target="_blank" rel="noreferrer">GitHub</a>
             <a href={X_URL} target="_blank" rel="noreferrer">X</a>
+            <a href={BLOG_URL} target="_blank" rel="noreferrer">Blog</a>
             <a href={ISSUES_URL} target="_blank" rel="noreferrer">Issues</a>
             <a href="/latest.json" target="_blank" rel="noreferrer">latest.json</a>
           </div>

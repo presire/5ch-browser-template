@@ -64,19 +64,28 @@ type AiCacheState = {
 };
 
 const AI_PREFS_KEY = "desktop.aiPrefs.v1";
-function loadAiInferenceBackend(): AiInferenceBackend {
+function loadAiPrefs(): { inferenceBackend: AiInferenceBackend; translationEnabled: boolean } {
   try {
     const raw = localStorage.getItem(AI_PREFS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed?.inferenceBackend === "auto" || parsed?.inferenceBackend === "gpu" || parsed?.inferenceBackend === "cpu") {
-        return parsed.inferenceBackend;
-      }
+      const backend: AiInferenceBackend =
+        parsed?.inferenceBackend === "auto" || parsed?.inferenceBackend === "gpu" || parsed?.inferenceBackend === "cpu"
+          ? parsed.inferenceBackend
+          : "auto";
+      const translationEnabled = parsed?.translationEnabled === true;
+      return { inferenceBackend: backend, translationEnabled };
     }
   } catch (e) {
     console.warn("desktop.aiPrefs.v1 load failed", e);
   }
-  return "auto";
+  return { inferenceBackend: "auto", translationEnabled: false };
+}
+function loadAiInferenceBackend(): AiInferenceBackend {
+  return loadAiPrefs().inferenceBackend;
+}
+function loadTranslationEnabled(): boolean {
+  return loadAiPrefs().translationEnabled;
 }
 
 function formatAiBytes(n: number): string {
@@ -93,6 +102,10 @@ function aiWrapTurn(template: string, role: "user" | "assistant", content: strin
   if (template === "gemma4") {
     const r = role === "user" ? "user" : "model";
     return `<|turn>${r}\n${content}<turn|>\n`;
+  }
+  if (template === "hunyuan") {
+    // No newline / role token after — Hunyuan glues content directly after the role tag.
+    return role === "user" ? `<｜hy_User｜>${content}` : `<｜hy_Assistant｜>${content}`;
   }
   // default: gemma (Gemma 3)
   const r = role === "user" ? "user" : "model";
@@ -111,6 +124,9 @@ const AI_LANG_ANCHOR = "[日本語で回答]\n";
 const AI_QWEN_THINK_SKIP = "<think>\n\n</think>\n\n";
 
 function aiPrefillFor(template: string): string {
+  // Hunyuan is a translation-only model — the target language is encoded in
+  // the prompt itself, so the JA anchor would actively harm output direction.
+  if (template === "hunyuan") return "";
   if (template === "qwen" || template === "chatml") {
     return AI_QWEN_THINK_SKIP + AI_LANG_ANCHOR;
   }
@@ -126,10 +142,41 @@ function aiOpenAssistantTurn(template: string): string {
     // ignored by Gemma 4 4B — it keeps writing into the channel and then
     // closes it itself. Skipping it makes the model emit content directly.
     opener = `<|turn>model\n`;
+  } else if (template === "hunyuan") {
+    opener = `<｜hy_Assistant｜>`;
   } else {
     opener = `<start_of_turn>model\n`;
   }
   return opener + aiPrefillFor(template);
+}
+
+// Translation feature — uses a dedicated model (Hy-MT2) that is loaded
+// independently of the summary/chat model. The translation feature is gated
+// on this model being installed.
+//   - Response translation: always JA (the user wants to *read* foreign-language
+//     posts in Japanese; the source language is whatever the post happens to be).
+//   - Compose translation: user picks the target so they can post in a foreign
+//     language; the source is their Japanese draft.
+const TRANSLATION_MODEL_ID = "hy-mt2-1.8b-q4km";
+type TranslationLang = { code: string; label: string; nativeName: string };
+const RESPONSE_TRANSLATION_LANG: TranslationLang = { code: "ja", label: "日本語", nativeName: "Japanese" };
+const COMPOSE_TRANSLATION_LANGS: TranslationLang[] = [
+  { code: "en", label: "English", nativeName: "English" },
+  { code: "zh", label: "中文（簡体）", nativeName: "Chinese (Simplified)" },
+  { code: "zh-Hant", label: "中文（繁體）", nativeName: "Chinese (Traditional)" },
+  { code: "ko", label: "한국어", nativeName: "Korean" },
+];
+function translationLangLabel(code: string): string {
+  if (code === RESPONSE_TRANSLATION_LANG.code) return RESPONSE_TRANSLATION_LANG.label;
+  return COMPOSE_TRANSLATION_LANGS.find((l) => l.code === code)?.label ?? code;
+}
+function translationLangNativeName(code: string): string | null {
+  if (code === RESPONSE_TRANSLATION_LANG.code) return RESPONSE_TRANSLATION_LANG.nativeName;
+  return COMPOSE_TRANSLATION_LANGS.find((l) => l.code === code)?.nativeName ?? null;
+}
+function buildTranslationPrompt(text: string, targetLangNativeName: string): string {
+  const inst = `Translate the following text into ${targetLangNativeName}. Note that you should only output the translated result without any additional explanation:\n\n${text}`;
+  return `<｜hy_User｜>${inst}<｜hy_Assistant｜>`;
 }
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
@@ -1138,16 +1185,40 @@ export default function App() {
   const [aiTokenProgress, setAiTokenProgress] = useState<{ received: number; max: number } | null>(null);
   const [aiCanContinue, setAiCanContinue] = useState<"summary" | "chat" | "review" | null>(null);
   const [aiInferenceBackend, setAiInferenceBackend] = useState<AiInferenceBackend>(loadAiInferenceBackend);
+  const [translationEnabled, setTranslationEnabled] = useState<boolean>(loadTranslationEnabled);
   useEffect(() => {
     try {
-      localStorage.setItem(AI_PREFS_KEY, JSON.stringify({ inferenceBackend: aiInferenceBackend }));
+      localStorage.setItem(AI_PREFS_KEY, JSON.stringify({ inferenceBackend: aiInferenceBackend, translationEnabled }));
     } catch (e) {
       console.warn("desktop.aiPrefs.v1 save failed", e);
     }
-  }, [aiInferenceBackend]);
+  }, [aiInferenceBackend, translationEnabled]);
+  // Clear the compose translation when the compose window closes. If a compose
+  // translation is in flight, cancel it so late-arriving tokens don't repopulate
+  // a hidden state. Order matters: drop the ref first so the token handler
+  // short-circuits before any setComposeTranslation call lands.
+  useEffect(() => {
+    if (composeOpen) return;
+    if (aiTranslationTargetRef.current?.kind === "compose") {
+      aiTranslationTargetRef.current = null;
+      if (isTauriRuntime()) {
+        void invoke("ai_cancel_inference").catch((e) => console.warn("ai_cancel_inference failed", e));
+      }
+    }
+    setComposeTranslation(null);
+  }, [composeOpen]);
   const aiSessionIdRef = useRef<string | null>(null);
-  const aiTokenTargetRef = useRef<"summary" | "chat" | "review" | null>(null);
+  const aiTokenTargetRef = useRef<"summary" | "chat" | "review" | "translation" | null>(null);
   const aiMaxTokensRef = useRef<number>(400);
+  // Per-response and per-compose translation state. A single ref tracks the
+  // currently-streaming translation target so token events know where to land.
+  type ResponseTranslation = { lang: string; text: string; loading: boolean; error?: string };
+  const [responseTranslations, setResponseTranslations] = useState<Record<number, ResponseTranslation>>({});
+  const [composeTranslation, setComposeTranslation] = useState<ResponseTranslation | null>(null);
+  type AiTranslationTarget =
+    | { kind: "response"; responseId: number; lang: string }
+    | { kind: "compose"; lang: string };
+  const aiTranslationTargetRef = useRef<AiTranslationTarget | null>(null);
   const aiLastPromptRef = useRef<string>("");
   // Remaining bytes of the prefill (aiPrefillFor) to silently consume from the
   // streamed output. Defensive: the prefill lives in the prompt (model normally
@@ -5346,6 +5417,20 @@ export default function App() {
               });
             } else if (target === "review") {
               setAiReviewResult((prev) => prev + tok);
+            } else if (target === "translation") {
+              const tt = aiTranslationTargetRef.current;
+              if (!tt) return;
+              if (tt.kind === "response") {
+                const rid = tt.responseId;
+                setResponseTranslations((prev) => {
+                  const existing = prev[rid] ?? { lang: tt.lang, text: "", loading: true };
+                  return { ...prev, [rid]: { ...existing, text: existing.text + tok } };
+                });
+              } else {
+                setComposeTranslation((prev) =>
+                  prev ? { ...prev, text: prev.text + tok } : { lang: tt.lang, text: tok, loading: true }
+                );
+              }
             }
             setAiTokenProgress((prev) => {
               const max = aiMaxTokensRef.current;
@@ -5361,15 +5446,32 @@ export default function App() {
           (e) => {
             if (e.payload.sessionId !== aiSessionIdRef.current) return;
             const target = aiTokenTargetRef.current;
+            const trTarget = aiTranslationTargetRef.current;
             setAiInferenceBusy(false);
             setAiInferencePhase(null);
             setAiTokenProgress(null);
             aiSessionIdRef.current = null;
             aiTokenTargetRef.current = null;
+            aiTranslationTargetRef.current = null;
+            if (target === "translation" && trTarget) {
+              const errMsg = !e.payload.ok ? (e.payload.error ?? "推論失敗") : undefined;
+              if (trTarget.kind === "response") {
+                setResponseTranslations((prev) => {
+                  const existing = prev[trTarget.responseId];
+                  if (!existing) return prev;
+                  return { ...prev, [trTarget.responseId]: { ...existing, loading: false, error: errMsg } };
+                });
+              } else {
+                setComposeTranslation((prev) => prev ? { ...prev, loading: false, error: errMsg } : null);
+              }
+              setAiCanContinue(null);
+              void refreshAiCacheState();
+              return;
+            }
             if (!e.payload.ok && e.payload.error) {
               setAiError(`推論失敗: ${e.payload.error}`);
               setAiCanContinue(null);
-            } else if (e.payload.truncated && target) {
+            } else if (e.payload.truncated && target && target !== "translation") {
               setAiCanContinue(target);
             } else {
               setAiCanContinue(null);
@@ -5732,6 +5834,82 @@ export default function App() {
 
   const aiCancelInference = () => {
     void invoke("ai_cancel_inference").catch((e) => console.warn("ai_cancel_inference failed", e));
+  };
+
+  const isTranslationModelInstalled = (): boolean =>
+    !!aiStatus?.installed.some((m) => m.id === TRANSLATION_MODEL_ID);
+
+  const startTranslation = (target: AiTranslationTarget, sourceText: string) => {
+    if (!isTauriRuntime()) return;
+    const trimmed = sourceText.trim();
+    if (trimmed.length === 0) {
+      setStatus("翻訳対象が空です");
+      return;
+    }
+    if (aiInferenceBusy) {
+      setStatus("AI が他のタスクで稼働中です。完了を待つかキャンセルしてください。");
+      return;
+    }
+    if (!isTranslationModelInstalled()) {
+      setStatus("翻訳機能には Hy-MT2-1.8B のダウンロードが必要です。AI 設定を開いて導入してください。");
+      setAiSettingsOpen(true);
+      return;
+    }
+    const nativeName = translationLangNativeName(target.lang);
+    if (!nativeName) return;
+    const prompt = buildTranslationPrompt(trimmed, nativeName);
+    const sid = `translate-${Date.now()}`;
+    aiSessionIdRef.current = sid;
+    aiTokenTargetRef.current = "translation";
+    aiTranslationTargetRef.current = target;
+    aiPrefillRemainingRef.current = "";
+    aiMaxTokensRef.current = 512;
+    setAiInferenceBusy(true);
+    setAiInferencePhase("loadingModel");
+    setAiTokenProgress({ received: 0, max: 512 });
+
+    if (target.kind === "response") {
+      setResponseTranslations((prev) => ({
+        ...prev,
+        [target.responseId]: { lang: target.lang, text: "", loading: true },
+      }));
+    } else {
+      setComposeTranslation({ lang: target.lang, text: "", loading: true });
+    }
+
+    void invoke("ai_run_inference", {
+      sessionId: sid,
+      prompt,
+      maxTokens: 512,
+      backend: aiInferenceBackend,
+      modelId: TRANSLATION_MODEL_ID,
+    }).catch((e) => {
+      console.warn("ai_run_inference (translate) failed", e);
+      const msg = String(e);
+      setAiInferenceBusy(false);
+      setAiInferencePhase(null);
+      setAiTokenProgress(null);
+      aiSessionIdRef.current = null;
+      aiTokenTargetRef.current = null;
+      aiTranslationTargetRef.current = null;
+      if (target.kind === "response") {
+        setResponseTranslations((prev) => ({
+          ...prev,
+          [target.responseId]: { lang: target.lang, text: "", loading: false, error: msg },
+        }));
+      } else {
+        setComposeTranslation({ lang: target.lang, text: "", loading: false, error: msg });
+      }
+    });
+  };
+
+  const closeResponseTranslation = (responseId: number) => {
+    setResponseTranslations((prev) => {
+      if (!(responseId in prev)) return prev;
+      const next = { ...prev };
+      delete next[responseId];
+      return next;
+    });
   };
 
   const aiPhaseLabel = (phase: typeof aiInferencePhase): string => {
@@ -7061,6 +7239,21 @@ export default function App() {
                       </span>
                     </div>
                     <div className={`response-body${(aaOverrides.has(r.id) ? aaOverrides.get(r.id) : isAsciiArt(r.text)) ? " aa" : ""}`} dangerouslySetInnerHTML={{ __html: renderResponseBodyHighlighted(r.text, responseSearchQuery, hlWordEntries, { hideImages: ngResultMap.get(r.id) === "hide-images", imageSizeLimitKb: imageSizeLimit, youtubeThumbs: youtubeThumbsEnabled }).__html + (responseBodyBottomPad ? "<br><br>" : "") }} />
+                    {responseTranslations[r.id] && (() => {
+                      const tr = responseTranslations[r.id];
+                      const langLabel = translationLangLabel(tr.lang);
+                      return (
+                        <div className="response-translation">
+                          <div className="response-translation-header">
+                            <span className="response-translation-label">翻訳 ({langLabel}){tr.loading ? " — 翻訳中..." : ""}</span>
+                            <button className="response-translation-close" onClick={() => closeResponseTranslation(r.id)} title="翻訳を閉じる"><X size={11} /></button>
+                          </div>
+                          <div className="response-translation-body">
+                            {tr.error ? <span className="response-translation-error">エラー: {tr.error}</span> : tr.text || (tr.loading ? "..." : "(空)")}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                   {r.id === currentReadMarker && (
                     <div className="read-marker-separator">
@@ -7674,6 +7867,58 @@ export default function App() {
               }
             }} style={{ fontSize: "0.85em" }}>接続診断</button>
           </div>
+          {translationEnabled && isTranslationModelInstalled() && (
+            <div className="compose-actions compose-actions-secondary">
+              <span className="compose-meta">翻訳:</span>
+              <select
+                className="compose-translate-lang"
+                value={composeTranslation?.lang ?? COMPOSE_TRANSLATION_LANGS[0].code}
+                onChange={(e) => {
+                  const lang = e.target.value;
+                  if (composeTranslation && !composeTranslation.loading) {
+                    setComposeTranslation({ ...composeTranslation, lang });
+                  } else if (!composeTranslation) {
+                    setComposeTranslation({ lang, text: "", loading: false });
+                  }
+                }}
+                disabled={aiInferenceBusy && aiTokenTargetRef.current === "translation"}
+                title="翻訳先の言語"
+              >
+                {COMPOSE_TRANSLATION_LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+              </select>
+              <button
+                onClick={() => {
+                  const lang = composeTranslation?.lang ?? COMPOSE_TRANSLATION_LANGS[0].code;
+                  startTranslation({ kind: "compose", lang }, composeBody);
+                }}
+                disabled={aiInferenceBusy || composeBody.trim().length === 0}
+                title="本文を翻訳"
+              >本文を翻訳</button>
+            </div>
+          )}
+          {composeTranslation && (() => {
+            const tr = composeTranslation;
+            const langLabel = translationLangLabel(tr.lang);
+            return (
+              <div className="compose-translation">
+                <div className="compose-translation-header">
+                  <span>翻訳 ({langLabel}){tr.loading ? " — 翻訳中..." : ""}</span>
+                  <span className="compose-translation-actions">
+                    {tr.text && !tr.loading && (
+                      <button onClick={() => { void navigator.clipboard.writeText(tr.text).then(() => setStatus("翻訳結果をコピーしました")).catch(() => setStatus("コピー失敗")); }}>コピー</button>
+                    )}
+                    {tr.text && !tr.loading && (
+                      <button onClick={() => { setComposeBody(tr.text); setStatus("翻訳結果を本文に反映しました"); }}>本文へ反映</button>
+                    )}
+                    <button onClick={() => setComposeTranslation(null)} title="閉じる"><X size={12} /></button>
+                  </span>
+                </div>
+                <div className="compose-translation-body">
+                  {tr.error ? <span className="compose-translation-error">エラー: {tr.error}</span> : (tr.text || (tr.loading ? "翻訳開始しました..." : "(空)"))}
+                </div>
+              </div>
+            );
+          })()}
           {aiReviewPanelOpen && (
             <div className="compose-ai-review">
               <div className="compose-ai-review-header">
@@ -8186,6 +8431,25 @@ export default function App() {
               </button>
             ) : null;
           })()}
+          {translationEnabled && isTranslationModelInstalled() && (
+            <button
+              disabled={aiInferenceBusy}
+              title="このレスを日本語に翻訳"
+              onClick={() => {
+                const rid = responseMenu.responseId;
+                const resp = responseItems.find((r) => r.id === rid);
+                if (!resp) { setResponseMenu(null); return; }
+                const plainText = responseHtmlToPlainText(resp.text);
+                startTranslation({ kind: "response", responseId: rid, lang: RESPONSE_TRANSLATION_LANG.code }, plainText);
+                setResponseMenu(null);
+              }}
+            >翻訳 (日本語に)</button>
+          )}
+          {translationEnabled && responseTranslations[responseMenu.responseId] && (
+            <button onClick={() => { closeResponseTranslation(responseMenu.responseId); setResponseMenu(null); }}>
+              翻訳を閉じる
+            </button>
+          )}
         </div>
       )}
       {imageContextMenu && (
@@ -9068,6 +9332,69 @@ export default function App() {
                 <div className="settings-row" style={{ fontSize: "0.8em", opacity: 0.7 }}>
                   <span>※ 設定変更は次回の推論実行から有効</span>
                 </div>
+              </fieldset>
+              <fieldset>
+                <legend>翻訳機能</legend>
+                {(() => {
+                  const installed = !!aiStatus?.installed.some((m) => m.id === TRANSLATION_MODEL_ID);
+                  const trEntry = aiCatalog?.models.find((m) => m.id === TRANSLATION_MODEL_ID);
+                  const trProgress = aiDownloads[TRANSLATION_MODEL_ID];
+                  const trDownloading = !!trProgress;
+                  const trPct = trProgress && trProgress.total
+                    ? Math.min(100, (trProgress.downloaded / trProgress.total) * 100)
+                    : 0;
+                  const trVerifying = !!(trProgress && trProgress.total && trProgress.downloaded >= trProgress.total);
+                  return (
+                    <>
+                      <div className="settings-row">
+                        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <input
+                            type="checkbox"
+                            checked={translationEnabled && installed}
+                            disabled={!installed}
+                            onChange={(e) => setTranslationEnabled(e.target.checked)}
+                          />
+                          <span>翻訳機能を有効化</span>
+                        </label>
+                        <span style={{ fontSize: "0.8em", opacity: 0.7 }}>
+                          {installed ? "レス: 日本語に翻訳 / compose: 任意の言語に翻訳" : "Hy-MT2-1.8B のダウンロードが必要です"}
+                        </span>
+                      </div>
+                      {trDownloading && (
+                        <div className={`ai-download-progress${trVerifying ? " verifying" : ""}`}>
+                          <div className="ai-download-progress-bar" style={{ width: `${trVerifying ? 100 : trPct}%` }} />
+                          <span className="ai-download-progress-label">
+                            {trVerifying
+                              ? `検証中… (${formatAiBytes(trProgress.total ?? trProgress.downloaded)})`
+                              : `${formatAiBytes(trProgress.downloaded)}${trProgress.total ? ` / ${formatAiBytes(trProgress.total)}` : ""}`}
+                          </span>
+                        </div>
+                      )}
+                      <div className="ai-model-actions">
+                        {!installed && !trDownloading && trEntry && (
+                          <button onClick={() => void aiDownloadModel(TRANSLATION_MODEL_ID)}>
+                            Hy-MT2-1.8B をダウンロード ({formatAiBytes(trEntry.sizeBytes)})
+                          </button>
+                        )}
+                        {!installed && !trDownloading && !trEntry && (
+                          <button disabled>カタログ読み込み中…</button>
+                        )}
+                        {trDownloading && !trVerifying && (
+                          <button onClick={() => void aiCancelDownload(TRANSLATION_MODEL_ID)}>キャンセル</button>
+                        )}
+                        {trDownloading && trVerifying && (
+                          <button disabled title="ダウンロード完了後の SHA256 検証中。キャンセルできません。">検証中…</button>
+                        )}
+                        {installed && !trDownloading && (
+                          <button onClick={() => void aiDeleteModel(TRANSLATION_MODEL_ID)}>削除</button>
+                        )}
+                      </div>
+                      <div className="settings-row" style={{ fontSize: "0.8em", opacity: 0.7 }}>
+                        <span>※ 翻訳には Hy-MT2-1.8B (1.1 GB) を使用。要約・会話とは独立して読み込まれます</span>
+                      </div>
+                    </>
+                  );
+                })()}
               </fieldset>
               <fieldset>
                 <legend>利用可能なモデル</legend>
