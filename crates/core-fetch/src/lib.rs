@@ -10,6 +10,7 @@ use core_parse::{parse_dat_line, parse_subject_line};
 use encoding_rs::SHIFT_JIS;
 
 pub const BBSMENU_URL: &str = "https://menu.5ch.io/bbsmenu.json";
+pub const EX0CH_BBSMENU_URL: &str = "https://bbspink.org/ex0ch/bbsmenu.json";
 
 #[derive(Debug, Error)]
 pub enum FetchError {
@@ -39,6 +40,7 @@ pub struct PostFormTokens {
     pub key: String,
     pub time: String,
     pub oekaki_thread1: Option<String>,
+    pub from_index: Option<String>,
     pub has_message_textarea: bool,
 }
 
@@ -110,33 +112,112 @@ struct ConfirmSubmitForm {
     fields: Vec<(String, String)>,
 }
 
-pub fn resolve_subject_url_from_thread_url(thread_url: &str) -> Result<String, FetchError> {
-    let normalized = normalize_5ch_url(thread_url);
-    let parsed = Url::parse(&normalized)?;
-    let mut segs = parsed
-        .path_segments()
-        .ok_or_else(|| FetchError::Parse("path segments".into()))?;
-    let parts = segs.by_ref().collect::<Vec<_>>();
-    if parts.is_empty() {
-        return Err(FetchError::Parse("path segments".into()));
+/// Location of a 5ch-compatible board, decoded from any of its URL forms
+/// (board top, subject.txt, or thread URL). `mount_path` is the prefix under
+/// which the board lives — `"/"` for 5ch.io (`https://mao.5ch.io/<board>/`)
+/// and `"/ex0ch/"` for bbspink.org's EXおろちつねる
+/// (`https://bbspink.org/ex0ch/<board>/`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardLocation {
+    pub scheme: String,
+    pub host: String,
+    pub mount_path: String,
+    pub board: String,
+    pub thread_key: Option<String>,
+}
+
+impl BoardLocation {
+    fn base(&self) -> String {
+        format!("{}://{}{}", self.scheme, self.host, self.mount_path)
     }
+    pub fn subject_url(&self) -> String {
+        format!("{}{}/subject.txt", self.base(), self.board)
+    }
+    pub fn thread_url(&self, key: &str) -> String {
+        format!("{}test/read.cgi/{}/{}/", self.base(), self.board, key)
+    }
+    pub fn dat_url(&self, key: &str) -> String {
+        format!("{}{}/dat/{}.dat", self.base(), self.board, key)
+    }
+}
 
-    let board = if parts.len() >= 2 && parts[parts.len() - 1] == "subject.txt" {
-        parts[parts.len() - 2]
-    } else if parts.len() >= 4 && parts[0] == "test" && parts[1] == "read.cgi" {
-        parts[2]
-    } else if !parts[0].is_empty() && parts[0] != "test" {
-        parts[0]
+fn build_mount_path(segs: &[&str]) -> String {
+    if segs.is_empty() {
+        "/".to_string()
     } else {
-        return Err(FetchError::Parse(
-            "unsupported url; use thread url, board url, or subject.txt".into(),
-        ));
-    };
+        format!("/{}/", segs.join("/"))
+    }
+}
 
+pub fn parse_board_location(input: &str) -> Result<BoardLocation, FetchError> {
+    let normalized = normalize_5ch_url(input);
+    let parsed = Url::parse(&normalized)?;
+    let scheme = parsed.scheme().to_string();
     let host = parsed
         .host_str()
-        .ok_or_else(|| FetchError::Parse("thread host".into()))?;
-    Ok(format!("{}://{}/{}/subject.txt", parsed.scheme(), host, board))
+        .ok_or_else(|| FetchError::Parse("host".into()))?
+        .to_string();
+    let segs: Vec<&str> = parsed.path().split('/').filter(|s| !s.is_empty()).collect();
+
+    if segs.len() >= 3 {
+        for i in 0..=segs.len().saturating_sub(3) {
+            if segs[i] == "test" && segs[i + 1] == "read.cgi" {
+                let board = segs[i + 2].to_string();
+                if board.is_empty() {
+                    return Err(FetchError::Parse("empty board after read.cgi".into()));
+                }
+                let thread_key = segs.get(i + 3).map(|s| s.to_string()).filter(|s| !s.is_empty());
+                return Ok(BoardLocation {
+                    scheme,
+                    host,
+                    mount_path: build_mount_path(&segs[..i]),
+                    board,
+                    thread_key,
+                });
+            }
+        }
+    }
+
+    if segs.last() == Some(&"subject.txt") {
+        if segs.len() < 2 {
+            return Err(FetchError::Parse("board before subject.txt".into()));
+        }
+        let board = segs[segs.len() - 2].to_string();
+        if board.is_empty() {
+            return Err(FetchError::Parse("empty board before subject.txt".into()));
+        }
+        return Ok(BoardLocation {
+            scheme,
+            host,
+            mount_path: build_mount_path(&segs[..segs.len() - 2]),
+            board,
+            thread_key: None,
+        });
+    }
+
+    if let Some(board) = segs.last() {
+        let board = board.to_string();
+        if board.is_empty() || board == "test" {
+            return Err(FetchError::Parse(
+                "unsupported url; use thread url, board url, or subject.txt".into(),
+            ));
+        }
+        return Ok(BoardLocation {
+            scheme,
+            host,
+            mount_path: build_mount_path(&segs[..segs.len() - 1]),
+            board,
+            thread_key: None,
+        });
+    }
+
+    Err(FetchError::Parse(
+        "unsupported url; use thread url, board url, or subject.txt".into(),
+    ))
+}
+
+pub fn resolve_subject_url_from_thread_url(thread_url: &str) -> Result<String, FetchError> {
+    Ok(parse_board_location(thread_url)?.subject_url())
 }
 
 pub async fn fetch_subject_threads(
@@ -144,7 +225,8 @@ pub async fn fetch_subject_threads(
     thread_url: &str,
     _limit: usize,
 ) -> Result<Vec<SubjectThread>, FetchError> {
-    let subject_url = resolve_subject_url_from_thread_url(thread_url)?;
+    let location = parse_board_location(thread_url)?;
+    let subject_url = location.subject_url();
     let response = client.get(&subject_url).send().await?;
     let status = response.status();
     if !status.is_success() {
@@ -154,34 +236,14 @@ pub async fn fetch_subject_threads(
     let (decoded, _, _) = SHIFT_JIS.decode(&bytes);
     let body = decoded.into_owned();
 
-    let subject = Url::parse(&subject_url)?;
-    let host = subject
-        .host_str()
-        .ok_or_else(|| FetchError::Parse("thread host".into()))?;
-    let mut segs = subject
-        .path_segments()
-        .ok_or_else(|| FetchError::Parse("path segments".into()))?;
-    let board = segs
-        .next()
-        .ok_or_else(|| FetchError::Parse("board segment".into()))?;
-    if board.is_empty() {
-        return Err(FetchError::Parse("board segment".into()));
-    }
-
     let mut out = Vec::new();
     for line in body.lines() {
         if let Some(entry) = parse_subject_line(line) {
             out.push(SubjectThread {
-                thread_key: entry.thread_key.clone(),
+                thread_url: location.thread_url(&entry.thread_key),
+                thread_key: entry.thread_key,
                 title: entry.title,
                 response_count: entry.response_count,
-                thread_url: format!(
-                    "{}://{}/test/read.cgi/{}/{}/",
-                    subject.scheme(),
-                    host,
-                    board,
-                    entry.thread_key
-                ),
             });
         }
     }
@@ -215,7 +277,11 @@ pub fn normalize_5ch_url(input: &str) -> String {
 }
 
 pub async fn fetch_bbsmenu_json(client: &Client) -> Result<Value, FetchError> {
-    let response = client.get(BBSMENU_URL).send().await?;
+    fetch_bbsmenu_from(client, BBSMENU_URL).await
+}
+
+pub async fn fetch_bbsmenu_from(client: &Client, url: &str) -> Result<Value, FetchError> {
+    let response = client.get(url).send().await?;
     let status = response.status();
     if !status.is_success() {
         return Err(FetchError::HttpStatus(status));
@@ -293,7 +359,12 @@ fn extract_attr(snippet: &str, attr: &str) -> Option<String> {
 fn extract_input_value(html: &str, name: &str) -> Option<String> {
     for marker in [format!("name=\"{name}\""), format!("name='{name}'")] {
         if let Some(idx) = html.find(&marker) {
-            let end = (idx + 400).min(html.len());
+            // idx は char boundary だが idx+400 はマルチバイト境界を割る可能性があるので
+            // is_char_boundary で安全にクランプする (Shift_JIS から UTF-8 デコードされた HTML で発生)。
+            let mut end = (idx + 400).min(html.len());
+            while end > idx && !html.is_char_boundary(end) {
+                end -= 1;
+            }
             let snippet = &html[idx..end];
             if let Some(v) = extract_attr(snippet, "value") {
                 return Some(v);
@@ -340,28 +411,11 @@ fn resolve_post_url(thread_url: &str, action: &str) -> Result<String, FetchError
 }
 
 pub fn resolve_dat_url_from_thread_url(thread_url: &str) -> Result<String, FetchError> {
-    let normalized = normalize_5ch_url(thread_url);
-    let parsed = Url::parse(&normalized)?;
-    let mut segs = parsed
-        .path_segments()
-        .ok_or_else(|| FetchError::Parse("path segments".into()))?;
-    let parts = segs.by_ref().collect::<Vec<_>>();
-
-    if !(parts.len() >= 4 && parts[0] == "test" && parts[1] == "read.cgi") {
-        return Err(FetchError::Parse(
-            "thread url format; expected /test/read.cgi/{board}/{key}/".into(),
-        ));
-    }
-    let board = parts[2];
-    let key = parts[3];
-    if board.is_empty() || key.is_empty() {
-        return Err(FetchError::Parse("thread url format".into()));
-    }
-
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| FetchError::Parse("thread host".into()))?;
-    Ok(format!("{}://{}/{}/dat/{}.dat", parsed.scheme(), host, board, key))
+    let location = parse_board_location(thread_url)?;
+    let key = location.thread_key.as_deref().ok_or_else(|| {
+        FetchError::Parse("thread url format; expected /test/read.cgi/{board}/{key}/".into())
+    })?;
+    Ok(location.dat_url(key))
 }
 
 /// Returns (responses, optional_title). Title is only set when fetched from read.cgi HTML fallback.
@@ -441,7 +495,13 @@ pub fn parse_post_form_tokens(thread_url: &str, html: &str) -> Result<PostFormTo
     let key = extract_input_value(html, "key").ok_or_else(|| FetchError::Parse("key".into()))?;
     let time = extract_input_value(html, "time").ok_or_else(|| FetchError::Parse("time".into()))?;
     let oekaki_thread1 = extract_input_value(html, "oekaki_thread1");
-    let has_message_textarea = html.contains("name=\"MESSAGE\"") || html.contains("name='MESSAGE'");
+    // from_index は bbspink.org/ex0ch/ で必要 (5ch にはないが送っても無害)
+    let from_index = extract_input_value(html, "from_index");
+    // ex0ch は <textarea name="MESSAGE"> を持たず <input type="text" name="MESSAGE"> を使う場合があるので
+    // textarea 存在チェックはタグ種別に依存させない
+    let has_message_textarea = html.contains("name=\"MESSAGE\"")
+        || html.contains("name='MESSAGE'")
+        || html.contains("name=MESSAGE");
 
     Ok(PostFormTokens {
         thread_url: thread_url.to_string(),
@@ -450,6 +510,7 @@ pub fn parse_post_form_tokens(thread_url: &str, html: &str) -> Result<PostFormTo
         key,
         time,
         oekaki_thread1,
+        from_index,
         has_message_textarea,
     })
 }
@@ -602,6 +663,18 @@ fn curl_exec(
     Ok((status, content_type, redirect_url, decoded.into_owned()))
 }
 
+/// Detect a 5ch/ex0ch "書き込みました" success page so we can stop the
+/// confirm/consent retry chain before it double-posts.
+pub fn is_post_success_page(html: &str) -> bool {
+    html.contains("書き込みました")
+        || html.contains("書込みました")
+        || html.contains("書き込みが完了しました")
+        // 5ch 旧表記
+        || html.contains("書きこみが終わりました")
+        || html.contains("書き込みが終わりました")
+        || html.contains("投稿が完了")
+}
+
 fn build_sjis_form_body(fields: &[(&str, &str)]) -> String {
     fields
         .iter()
@@ -664,6 +737,13 @@ fn curl_post_5ch_inner(
         } else {
             break;
         }
+    }
+
+    // Short-circuit: ex0ch (bbspink.org) と 5ch の両方が成功時に
+    // "<title>書き込みました。</title>" を含むページを返す。confirm/consent
+    // 検出より先にここで判定しないと、retry 系のフォールバックで二重投稿になる。
+    if status == 200 && is_post_success_page(&resp_body) {
+        return Ok((status, ct, resp_body));
     }
 
     // Step 4: If we got the cookie check/confirm page, auto-submit the confirm form
@@ -787,6 +867,9 @@ pub async fn submit_post_confirm_with_html(
     if let Some(v) = &tokens.oekaki_thread1 {
         fields.push(("oekaki_thread1", v));
     }
+    if let Some(v) = &tokens.from_index {
+        fields.push(("from_index", v));
+    }
 
     let (final_status, final_ct, final_body) =
         curl_post_5ch(&tokens.thread_url, &tokens.post_url, &fields, extra_cookies)?;
@@ -816,8 +899,10 @@ pub struct CreateThreadResult {
     pub thread_url: Option<String>,
 }
 
-/// Create a new thread on a 5ch board.
-/// `board_url` should be like "https://greta.5ch.io/poverty/" or "https://greta.5ch.io/test/read.cgi/poverty/..."
+/// Create a new thread on a 5ch / bbspink.org/ex0ch board.
+/// `board_url` should be like "https://greta.5ch.io/poverty/",
+/// "https://greta.5ch.io/test/read.cgi/poverty/...", or
+/// "https://bbspink.org/ex0ch/operate/".
 pub fn create_thread(
     board_url: &str,
     subject: &str,
@@ -826,23 +911,12 @@ pub fn create_thread(
     message: &str,
     extra_cookies: Option<&str>,
 ) -> Result<CreateThreadResult, FetchError> {
-    let normalized = normalize_5ch_url(board_url);
-    let parsed = Url::parse(&normalized)?;
-    let host = parsed.host_str().ok_or_else(|| FetchError::Parse("no host".into()))?;
+    let location = parse_board_location(board_url)?;
+    let bbs = location.board.clone();
+    let base = format!("{}://{}{}", location.scheme, location.host, location.mount_path);
 
-    // Extract board name (BBSID) from URL
-    let parts: Vec<&str> = parsed.path_segments()
-        .ok_or_else(|| FetchError::Parse("no path".into()))?
-        .filter(|s| !s.is_empty())
-        .collect();
-    let bbs = if parts.len() >= 3 && parts[0] == "test" && parts[1] == "read.cgi" {
-        parts[2]  // thread URL like /test/read.cgi/poverty/123/
-    } else {
-        parts.first().ok_or_else(|| FetchError::Parse("no board in url".into()))?
-    };
-
-    let post_url = format!("{}://{}/test/bbs.cgi", parsed.scheme(), host);
-    let referer = format!("{}://{}/{}/", parsed.scheme(), host, bbs);
+    let post_url = format!("{}test/bbs.cgi", base);
+    let referer = format!("{}{}/", base, bbs);
     let time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -854,7 +928,7 @@ pub fn create_thread(
         ("FROM", from),
         ("mail", mail),
         ("MESSAGE", message),
-        ("bbs", bbs),
+        ("bbs", &bbs),
         ("time", &time),
         ("subject", subject),
         ("submit", "\u{65B0}\u{898F}\u{30B9}\u{30EC}\u{30C3}\u{30C9}\u{4F5C}\u{6210}"),  // "新規スレッド作成"
@@ -871,21 +945,18 @@ pub fn create_thread(
     );
 
     // Try to extract the new thread URL from the response body
-    // 5ch returns links like /test/read.cgi/boardname/1234567890/
+    // 5ch / ex0ch both return links like /[mount]/test/read.cgi/<board>/<key>/
     let thread_url = {
-        let pattern = format!("/test/read.cgi/{}/", bbs);
+        let pattern = format!("test/read.cgi/{}/", bbs);
         body.find(&pattern).and_then(|idx| {
             let rest = &body[idx..];
-            // find the end of the URL (quote, space, angle bracket, etc.)
             let end = rest.find(['"', '\'', '<', ' ', '\n'])
                 .unwrap_or(rest.len());
             let path = &rest[..end];
-            // Verify it looks like a valid thread path (has a numeric ID)
             let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+            // parts: ["test", "read.cgi", "<board>", "<key>", ...]
             if parts.len() >= 4 && parts[3].chars().all(|c| c.is_ascii_digit()) {
-                // Build clean URL without suffixes like l50
-                let clean_path = format!("/test/read.cgi/{}/{}/", parts[2], parts[3]);
-                Some(format!("{}://{}{}", parsed.scheme(), host, clean_path))
+                Some(location.thread_url(parts[3]))
             } else {
                 None
             }
@@ -1012,8 +1083,9 @@ pub async fn submit_post_finalize_from_confirm(
 #[cfg(test)]
 mod tests {
     use super::{
-        cookie_names_for_url, normalize_5ch_url, parse_confirm_submit_form, parse_post_form_tokens,
-        probe_post_cookie_scope, resolve_dat_url_from_thread_url, resolve_subject_url_from_thread_url, seed_cookie,
+        cookie_names_for_url, normalize_5ch_url, parse_board_location, parse_confirm_submit_form,
+        parse_post_form_tokens, probe_post_cookie_scope, resolve_dat_url_from_thread_url,
+        resolve_subject_url_from_thread_url, seed_cookie,
     };
     use reqwest::cookie::Jar;
 
@@ -1177,6 +1249,106 @@ mod tests {
         let u = resolve_dat_url_from_thread_url("https://mao.5ch.net/test/read.cgi/ngt/9240230711/")
             .expect("dat url");
         assert_eq!(u, "https://mao.5ch.io/ngt/dat/9240230711.dat");
+    }
+
+    #[test]
+    fn parse_board_location_5ch_thread_url() {
+        let loc = parse_board_location("https://mao.5ch.io/test/read.cgi/news4vip/1234567890/")
+            .expect("location");
+        assert_eq!(loc.host, "mao.5ch.io");
+        assert_eq!(loc.mount_path, "/");
+        assert_eq!(loc.board, "news4vip");
+        assert_eq!(loc.thread_key.as_deref(), Some("1234567890"));
+    }
+
+    #[test]
+    fn parse_board_location_5ch_board_url() {
+        let loc = parse_board_location("https://mao.5ch.io/news4vip/").expect("location");
+        assert_eq!(loc.mount_path, "/");
+        assert_eq!(loc.board, "news4vip");
+        assert!(loc.thread_key.is_none());
+    }
+
+    #[test]
+    fn parse_board_location_ex0ch_thread_url() {
+        let loc = parse_board_location("https://bbspink.org/ex0ch/test/read.cgi/operate/1775635309/")
+            .expect("location");
+        assert_eq!(loc.host, "bbspink.org");
+        assert_eq!(loc.mount_path, "/ex0ch/");
+        assert_eq!(loc.board, "operate");
+        assert_eq!(loc.thread_key.as_deref(), Some("1775635309"));
+    }
+
+    #[test]
+    fn parse_board_location_ex0ch_board_url() {
+        let loc = parse_board_location("https://bbspink.org/ex0ch/operate/").expect("location");
+        assert_eq!(loc.mount_path, "/ex0ch/");
+        assert_eq!(loc.board, "operate");
+    }
+
+    #[test]
+    fn parse_board_location_ex0ch_subject_url() {
+        let loc =
+            parse_board_location("https://bbspink.org/ex0ch/operate/subject.txt").expect("location");
+        assert_eq!(loc.mount_path, "/ex0ch/");
+        assert_eq!(loc.board, "operate");
+    }
+
+    #[test]
+    fn resolve_subject_url_ex0ch_thread_url() {
+        let u = resolve_subject_url_from_thread_url(
+            "https://bbspink.org/ex0ch/test/read.cgi/operate/1775635309/",
+        )
+        .expect("subject url");
+        assert_eq!(u, "https://bbspink.org/ex0ch/operate/subject.txt");
+    }
+
+    #[test]
+    fn resolve_dat_url_ex0ch_thread_url() {
+        let u = resolve_dat_url_from_thread_url(
+            "https://bbspink.org/ex0ch/test/read.cgi/operate/1775635309/",
+        )
+        .expect("dat url");
+        assert_eq!(u, "https://bbspink.org/ex0ch/operate/dat/1775635309.dat");
+    }
+
+    #[test]
+    fn parse_post_form_tokens_ex0ch_thread_html() {
+        let html = r#"
+        <form method="POST" action="/ex0ch/test/bbs.cgi" enctype="multipart/form-data">
+          <input type="hidden" name="bbs" value="operate">
+          <input type="hidden" name="key" value="1775635309">
+          <input type="hidden" name="time" value="1780391993">
+          <input type="hidden" name="from_index" value="0">
+          <input type="submit" value="書き込む">
+          <input type="text" name="MESSAGE" value="">
+        </form>
+        "#;
+        let tokens = parse_post_form_tokens(
+            "https://bbspink.org/ex0ch/test/read.cgi/operate/1775635309/",
+            html,
+        )
+        .expect("tokens");
+        assert_eq!(tokens.post_url, "https://bbspink.org/ex0ch/test/bbs.cgi");
+        assert_eq!(tokens.bbs, "operate");
+        assert_eq!(tokens.key, "1775635309");
+        assert_eq!(tokens.from_index.as_deref(), Some("0"));
+        assert!(tokens.oekaki_thread1.is_none());
+        assert!(tokens.has_message_textarea);
+    }
+
+    #[test]
+    fn is_post_success_page_detects_ex0ch_success_html() {
+        let html = r#"<html><head><title>書き込みました。</title></head><body>書き込みが完了しました。</body></html>"#;
+        assert!(super::is_post_success_page(html));
+    }
+
+    #[test]
+    fn is_post_success_page_rejects_confirm_or_error() {
+        let confirm = r#"<form action="/test/bbs.cgi"><input name="bbs"><input name="key"></form>"#;
+        let err = r#"<html><body>ＥＲＲＯＲ：規制中です</body></html>"#;
+        assert!(!super::is_post_success_page(confirm));
+        assert!(!super::is_post_success_page(err));
     }
 }
 

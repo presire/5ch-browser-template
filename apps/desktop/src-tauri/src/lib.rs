@@ -1,9 +1,11 @@
 ﻿use core_auth::{login_be_front, login_donguri, login_uplift, LoginOutcome};
 use core_fetch::{
-    build_cookie_client, create_thread, fetch_bbsmenu_json, fetch_post_form_tokens, fetch_subject_threads,
-    fetch_thread_responses, normalize_5ch_url, parse_confirm_submit_form, probe_post_cookie_scope, seed_cookie, submit_post_confirm,
-    submit_post_confirm_with_html, submit_post_finalize_from_confirm, CreateThreadResult, PostConfirmResult, PostCookieReport,
-    PostFinalizePreview, PostFormTokens, PostSubmitResult,
+    build_cookie_client, create_thread, fetch_bbsmenu_from, fetch_bbsmenu_json,
+    fetch_post_form_tokens, fetch_subject_threads, fetch_thread_responses, is_post_success_page,
+    normalize_5ch_url, parse_confirm_submit_form, probe_post_cookie_scope, seed_cookie,
+    submit_post_confirm, submit_post_confirm_with_html, submit_post_finalize_from_confirm,
+    CreateThreadResult, PostConfirmResult, PostCookieReport, PostFinalizePreview, PostFormTokens,
+    PostSubmitResult, EX0CH_BBSMENU_URL,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -584,11 +586,8 @@ async fn probe_post_flow_trace(
 
     // curl_post_5ch already handles confirm form auto-submit and consent pages internally.
     // Check if the final response indicates success.
-    let is_ok = |html: &str| -> bool {
-        html.contains("書きこみが終わりました")
-            || html.contains("書き込みが終わりました")
-            || html.contains("投稿が完了")
-    };
+    // 5ch と bbspink.org/ex0ch/ の両方の成功表記を core-fetch::is_post_success_page で吸収する。
+    let is_ok = is_post_success_page;
     let is_error = |html: &str| -> bool {
         html.contains("ＥＲＲＯＲ")
             || html.contains("ERROR")
@@ -801,35 +800,26 @@ fn open_external_url(url: String) -> Result<(), String> {
     Err("unsupported platform".to_string())
 }
 
-#[tauri::command]
-async fn fetch_board_categories() -> Result<Vec<BoardCategory>, String> {
-    let client = reqwest::Client::builder()
-        .user_agent("Monazilla/1.00 Ember/0.1")
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let menu = fetch_bbsmenu_json(&client).await.map_err(|e| e.to_string())?;
-
-    // bbsmenu.json structure: { "menu_list": [ { "category_name": "...", "category_content": [...] } ] }
-    let menu_list = menu
-        .get("menu_list")
-        .and_then(|v| v.as_array())
-        .ok_or("bbsmenu missing menu_list array")?;
-
-    let mut categories: Vec<BoardCategory> = Vec::new();
-
+fn collect_categories_from_menu(
+    menu: &serde_json::Value,
+    out: &mut Vec<BoardCategory>,
+    category_prefix: Option<&str>,
+) {
+    let Some(menu_list) = menu.get("menu_list").and_then(|v| v.as_array()) else {
+        return;
+    };
     for cat_obj in menu_list {
-        let category_name = cat_obj
+        let raw_name = cat_obj
             .get("category_name")
             .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-
-        let content = match cat_obj.get("category_content").and_then(|v| v.as_array()) {
-            Some(arr) => arr,
-            None => continue,
+            .unwrap_or_default();
+        let category_name = match category_prefix {
+            Some(prefix) => format!("{prefix}{raw_name}"),
+            None => raw_name.to_string(),
         };
-
+        let Some(content) = cat_obj.get("category_content").and_then(|v| v.as_array()) else {
+            continue;
+        };
         let mut boards: Vec<BoardEntry> = Vec::new();
         for item in content {
             let board_name = item
@@ -846,12 +836,40 @@ async fn fetch_board_categories() -> Result<Vec<BoardCategory>, String> {
                 boards.push(BoardEntry { board_name, url });
             }
         }
-
         if !boards.is_empty() {
-            categories.push(BoardCategory {
+            out.push(BoardCategory {
                 category_name,
                 boards,
             });
+        }
+    }
+}
+
+#[tauri::command]
+async fn fetch_board_categories(enable_ex0ch: Option<bool>) -> Result<Vec<BoardCategory>, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Monazilla/1.00 Ember/0.1")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let menu = fetch_bbsmenu_json(&client).await.map_err(|e| e.to_string())?;
+
+    let mut categories: Vec<BoardCategory> = Vec::new();
+    collect_categories_from_menu(&menu, &mut categories, None);
+
+    // EXおろちつねる (bbspink.org/ex0ch/) は独自 bbsmenu を持ち、
+    // 5ch.io 側と同名 (例: "BBSPINK") のカテゴリを含むため、
+    // 衝突回避のため一律 "EXおろちつねる / " プレフィックスを付ける。
+    // 設定で OFF (enable_ex0ch=false) のときは取得自体をスキップ。
+    // 取得失敗時はサイレントにスキップ (5ch.io 側だけで動かす)。
+    if enable_ex0ch.unwrap_or(true) {
+        match fetch_bbsmenu_from(&client, EX0CH_BBSMENU_URL).await {
+            Ok(ex0ch_menu) => collect_categories_from_menu(
+                &ex0ch_menu,
+                &mut categories,
+                Some("EXおろちつねる / "),
+            ),
+            Err(e) => eprintln!("fetch_board_categories: ex0ch bbsmenu fetch failed: {e}"),
         }
     }
 

@@ -207,6 +207,7 @@ type PostFormTokens = {
   key: string;
   time: string;
   oekakiThread1: string | null;
+  fromIndex: string | null;
   hasMessageTextarea: boolean;
 };
 type PostConfirmResult = {
@@ -426,6 +427,7 @@ const NAME_HISTORY_KEY = "desktop.nameHistory.v1";
 const BOOKMARK_KEY = "desktop.bookmarks.v1";
 const BOARD_CACHE_KEY = "desktop.boardCategories.v1";
 const EXPANDED_CATS_KEY = "desktop.expandedCategories.v1";
+const EX0CH_ENABLED_KEY = "desktop.ex0chEnabled.v1";
 const LANDING_PAGE_URL = "https://ember-5ch.pages.dev";
 const BUY_ME_A_COFFEE_URL = "https://buymeacoffee.com/votepurchase";
 const BOARD_TREE_SCROLL_KEY = "desktop.boardTreeScrollTop.v1";
@@ -542,12 +544,19 @@ const highlightEntriesPreservingTags = (html: string, entries: { value: string; 
   return out;
 };
 const rewrite5chNet = (url: string): string => url.replace(/\.5ch\.net\b/gi, ".5ch.io");
-const parseThreadPath = (url: string): { board: string; key: string } | null => {
+// マウントパス対応: 5ch.io 系は `/test/read.cgi/<board>/<key>/`, bbspink.org/ex0ch/ は
+// `/ex0ch/test/read.cgi/<board>/<key>/` のように `test/read.cgi` がパスの途中に
+// 出現することがある。パス先頭固定で判定すると ex0ch のスレ URL が誤判定され、
+// 既読状態の保存キーがずれて消える。
+const parseThreadPath = (url: string): { board: string; key: string; mountPath: string } | null => {
   try {
     const u = new URL(rewrite5chNet(url));
     const parts = u.pathname.split("/").filter(Boolean);
-    if (parts.length >= 4 && parts[0] === "test" && parts[1] === "read.cgi") {
-      return { board: parts[2], key: parts[3] };
+    for (let i = 0; i < parts.length; i++) {
+      if (parts[i] === "test" && parts[i + 1] === "read.cgi" && parts[i + 2] && parts[i + 3]) {
+        const mountPath = i === 0 ? "/" : `/${parts.slice(0, i).join("/")}/`;
+        return { board: parts[i + 2], key: parts[i + 3], mountPath };
+      }
     }
   } catch {
     // ignore
@@ -558,7 +567,9 @@ const normalizeThreadUrl = (url: string): string => {
   try {
     const u = new URL(rewrite5chNet(url));
     const parsed = parseThreadPath(u.toString());
-    if (parsed) return `${u.origin}/test/read.cgi/${parsed.board}/${parsed.key}/`;
+    if (parsed) {
+      return `${u.origin}${parsed.mountPath}test/read.cgi/${parsed.board}/${parsed.key}/`;
+    }
     return u.toString();
   } catch {
     return rewrite5chNet(url);
@@ -1022,6 +1033,15 @@ export default function App() {
   const [fetchedResponses, setFetchedResponses] = useState<ThreadResponseItem[]>([]);
   const [boardCategories, setBoardCategories] = useState<BoardCategory[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [ex0chEnabled, setEx0chEnabled] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem(EX0CH_ENABLED_KEY);
+      if (raw === null) return true;
+      return raw === "true";
+    } catch {
+      return true;
+    }
+  });
   const [favorites, setFavorites] = useState<FavoritesData>({ boards: [], threads: [] });
   const [ngFilters, setNgFilters] = useState<NgFilters>({ words: [], ids: [], names: [], thread_words: [] });
   const [highlightFilters, setHighlightFilters] = useState<HighlightFilters>({ words: [], ids: [], names: [] });
@@ -1416,20 +1436,31 @@ export default function App() {
     }
   };
 
-  const fetchBoardCategories = async () => {
+  const fetchBoardCategories = async (overrideEx0chEnabled?: boolean) => {
     if (!isTauriRuntime()) {
       setStatus("board fetch requires tauri runtime");
       return;
     }
     setStatus("loading boards...");
     try {
-      const cats = await invoke<BoardCategory[]>("fetch_board_categories");
+      const cats = await invoke<BoardCategory[]>("fetch_board_categories", {
+        enableEx0ch: overrideEx0chEnabled ?? ex0chEnabled,
+      });
       setBoardCategories(cats);
       try { localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify(cats)); } catch { /* ignore */ }
       setStatus(`boards loaded: ${cats.length} categories, ${cats.reduce((s, c) => s + c.boards.length, 0)} boards`);
     } catch (error) {
       setStatus(`board load error: ${String(error)}`);
     }
+  };
+
+  const toggleEx0chEnabled = () => {
+    setEx0chEnabled((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(EX0CH_ENABLED_KEY, String(next)); } catch { /* ignore */ }
+      void fetchBoardCategories(next);
+      return next;
+    });
   };
 
   const persistReadStatus = async (boardUrl: string, threadKey: string, lastReadNo: number) => {
@@ -2847,7 +2878,7 @@ export default function App() {
       const u = new URL(normalizeThreadUrl(url));
       const parsed = parseThreadPath(u.toString());
       if (parsed) {
-        return `${u.origin}/${parsed.board}/`;
+        return `${u.origin}${parsed.mountPath}${parsed.board}/`;
       }
       const parts = u.pathname.split("/").filter(Boolean);
       return `${u.origin}/${parts[0] || ""}/`;
@@ -6064,6 +6095,8 @@ export default function App() {
           ]},
           { label: "板", items: [
             { text: "板一覧を取得", action: () => fetchBoardCategories() },
+            { text: "sep" },
+            { text: ex0chEnabled ? "EXおろちつねるを非表示" : "EXおろちつねるを表示", action: toggleEx0chEnabled },
             { text: "sep" },
             { text: "板一覧タブ", action: () => setBoardPaneTab("boards") },
             { text: "お気に入りタブ", action: () => setBoardPaneTab("fav-threads") },
