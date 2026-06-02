@@ -2893,21 +2893,37 @@ export default function App() {
       return next;
     });
   };
+  const remapSavedThreadCounts = (prev: RecentThread[], next: RecentThread[]) => {
+    const newIndexByUrl = new Map<string, number>();
+    next.forEach((t, i) => newIndexByUrl.set(t.threadUrl, i));
+    const newReadMap: Record<number, boolean> = {};
+    const newLastReadMap: Record<number, number> = {};
+    prev.forEach((t, oldIdx) => {
+      const newIdx = newIndexByUrl.get(t.threadUrl);
+      if (newIdx == null) return;
+      const r = threadReadMap[oldIdx + 1];
+      const l = threadLastReadCount[oldIdx + 1];
+      if (r != null) newReadMap[newIdx + 1] = r;
+      if (l != null) newLastReadMap[newIdx + 1] = l;
+    });
+    setThreadReadMap(newReadMap);
+    setThreadLastReadCount(newLastReadMap);
+  };
   const removeRecentOpenedThread = (url: string) => {
     const target = normalizeThreadUrl(url);
-    setRecentOpenedThreads((prev) => {
-      const next = prev.filter((t) => t.threadUrl !== target);
-      try { localStorage.setItem(RECENT_OPENED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
+    const prev = recentOpenedThreads;
+    const next = prev.filter((t) => t.threadUrl !== target);
+    setRecentOpenedThreads(next);
+    try { localStorage.setItem(RECENT_OPENED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    if (showRecentOpenedOnly) remapSavedThreadCounts(prev, next);
   };
   const removeRecentPostedThread = (url: string) => {
     const target = normalizeThreadUrl(url);
-    setRecentPostedThreads((prev) => {
-      const next = prev.filter((t) => t.threadUrl !== target);
-      try { localStorage.setItem(RECENT_POSTED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
+    const prev = recentPostedThreads;
+    const next = prev.filter((t) => t.threadUrl !== target);
+    setRecentPostedThreads(next);
+    try { localStorage.setItem(RECENT_POSTED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    if (showRecentPostedOnly) remapSavedThreadCounts(prev, next);
   };
 
   const submitNewThread = async () => {
@@ -8372,7 +8388,11 @@ export default function App() {
           </button>
           <button onClick={() => {
             const t = threadItems.find((item) => item.id === threadMenu.threadId);
-            if (t && "threadUrl" in t && typeof t.threadUrl === "string") purgeThreadCache(t.threadUrl);
+            if (t && "threadUrl" in t && typeof t.threadUrl === "string") {
+              purgeThreadCache(t.threadUrl);
+              if (showRecentOpenedOnly) removeRecentOpenedThread(t.threadUrl);
+              else if (showRecentPostedOnly) removeRecentPostedThread(t.threadUrl);
+            }
             setThreadMenu(null);
           }}>キャッシュから削除</button>
           {(showRecentOpenedOnly || showRecentPostedOnly) && (
