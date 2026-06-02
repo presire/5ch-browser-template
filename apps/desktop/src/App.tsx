@@ -207,6 +207,7 @@ type PostFormTokens = {
   key: string;
   time: string;
   oekakiThread1: string | null;
+  fromIndex: string | null;
   hasMessageTextarea: boolean;
 };
 type PostConfirmResult = {
@@ -426,9 +427,14 @@ const NAME_HISTORY_KEY = "desktop.nameHistory.v1";
 const BOOKMARK_KEY = "desktop.bookmarks.v1";
 const BOARD_CACHE_KEY = "desktop.boardCategories.v1";
 const EXPANDED_CATS_KEY = "desktop.expandedCategories.v1";
+const EX0CH_ENABLED_KEY = "desktop.ex0chEnabled.v1";
 const LANDING_PAGE_URL = "https://ember-5ch.pages.dev";
 const BUY_ME_A_COFFEE_URL = "https://buymeacoffee.com/votepurchase";
 const BOARD_TREE_SCROLL_KEY = "desktop.boardTreeScrollTop.v1";
+const BOARD_PANE_TAB_KEY = "desktop.boardPaneTab.v1";
+const FAV_RECENT_EXPANDED_KEY = "desktop.favRecentExpanded.v1";
+const FAV_RECENT_POSTED_EXPANDED_KEY = "desktop.favRecentPostedExpanded.v1";
+const FAV_THREADS_SCROLL_KEY = "desktop.favThreadsScrollTop.v1";
 const SCROLL_POS_KEY = "desktop.scrollPositions.v1";
 const NEW_THREAD_SIZE_KEY = "desktop.newThreadDialogSize.v1";
 const THREAD_FETCH_TIMES_KEY = "desktop.threadFetchTimes.v1";
@@ -542,12 +548,19 @@ const highlightEntriesPreservingTags = (html: string, entries: { value: string; 
   return out;
 };
 const rewrite5chNet = (url: string): string => url.replace(/\.5ch\.net\b/gi, ".5ch.io");
-const parseThreadPath = (url: string): { board: string; key: string } | null => {
+// マウントパス対応: 5ch.io 系は `/test/read.cgi/<board>/<key>/`, bbspink.org/ex0ch/ は
+// `/ex0ch/test/read.cgi/<board>/<key>/` のように `test/read.cgi` がパスの途中に
+// 出現することがある。パス先頭固定で判定すると ex0ch のスレ URL が誤判定され、
+// 既読状態の保存キーがずれて消える。
+const parseThreadPath = (url: string): { board: string; key: string; mountPath: string } | null => {
   try {
     const u = new URL(rewrite5chNet(url));
     const parts = u.pathname.split("/").filter(Boolean);
-    if (parts.length >= 4 && parts[0] === "test" && parts[1] === "read.cgi") {
-      return { board: parts[2], key: parts[3] };
+    for (let i = 0; i < parts.length; i++) {
+      if (parts[i] === "test" && parts[i + 1] === "read.cgi" && parts[i + 2] && parts[i + 3]) {
+        const mountPath = i === 0 ? "/" : `/${parts.slice(0, i).join("/")}/`;
+        return { board: parts[i + 2], key: parts[i + 3], mountPath };
+      }
     }
   } catch {
     // ignore
@@ -558,7 +571,9 @@ const normalizeThreadUrl = (url: string): string => {
   try {
     const u = new URL(rewrite5chNet(url));
     const parsed = parseThreadPath(u.toString());
-    if (parsed) return `${u.origin}/test/read.cgi/${parsed.board}/${parsed.key}/`;
+    if (parsed) {
+      return `${u.origin}${parsed.mountPath}test/read.cgi/${parsed.board}/${parsed.key}/`;
+    }
     return u.toString();
   } catch {
     return rewrite5chNet(url);
@@ -1022,6 +1037,15 @@ export default function App() {
   const [fetchedResponses, setFetchedResponses] = useState<ThreadResponseItem[]>([]);
   const [boardCategories, setBoardCategories] = useState<BoardCategory[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [ex0chEnabled, setEx0chEnabled] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem(EX0CH_ENABLED_KEY);
+      if (raw === null) return true;
+      return raw === "true";
+    } catch {
+      return true;
+    }
+  });
   const [favorites, setFavorites] = useState<FavoritesData>({ boards: [], threads: [] });
   const [ngFilters, setNgFilters] = useState<NgFilters>({ words: [], ids: [], names: [], thread_words: [] });
   const [highlightFilters, setHighlightFilters] = useState<HighlightFilters>({ words: [], ids: [], names: [] });
@@ -1067,9 +1091,19 @@ export default function App() {
   const restoreSessionRef = useRef(false);
   const hoverPreviewEnabledRef = useRef(hoverPreviewEnabled);
   hoverPreviewEnabledRef.current = hoverPreviewEnabled;
-  const [boardPaneTab, setBoardPaneTab] = useState<"boards" | "fav-threads">("boards");
-  const [favRecentExpanded, setFavRecentExpanded] = useState(false);
-  const [favRecentPostedExpanded, setFavRecentPostedExpanded] = useState(false);
+  const [boardPaneTab, setBoardPaneTab] = useState<"boards" | "fav-threads">(() => {
+    try {
+      const v = localStorage.getItem(BOARD_PANE_TAB_KEY);
+      if (v === "boards" || v === "fav-threads") return v;
+    } catch { /* ignore */ }
+    return "boards";
+  });
+  const [favRecentExpanded, setFavRecentExpanded] = useState(() => {
+    try { return localStorage.getItem(FAV_RECENT_EXPANDED_KEY) === "1"; } catch { return false; }
+  });
+  const [favRecentPostedExpanded, setFavRecentPostedExpanded] = useState(() => {
+    try { return localStorage.getItem(FAV_RECENT_POSTED_EXPANDED_KEY) === "1"; } catch { return false; }
+  });
   const [showCachedOnly, setShowCachedOnly] = useState(false);
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [showRecentOpenedOnly, setShowRecentOpenedOnly] = useState(false);
@@ -1269,6 +1303,8 @@ export default function App() {
   const threadScrollPositions = useRef<Record<string, number>>({});
   const boardTreeRef = useRef<HTMLDivElement | null>(null);
   const boardTreeScrollRestoreRef = useRef<number | null>(null);
+  const favThreadsRef = useRef<HTMLDivElement | null>(null);
+  const favThreadsScrollRestoreRef = useRef<number | null>(null);
   const responseLayoutRef = useRef<HTMLDivElement | null>(null);
   const threadTbodyRef = useRef<HTMLTableSectionElement | null>(null);
   const responseScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1416,20 +1452,31 @@ export default function App() {
     }
   };
 
-  const fetchBoardCategories = async () => {
+  const fetchBoardCategories = async (overrideEx0chEnabled?: boolean) => {
     if (!isTauriRuntime()) {
       setStatus("board fetch requires tauri runtime");
       return;
     }
     setStatus("loading boards...");
     try {
-      const cats = await invoke<BoardCategory[]>("fetch_board_categories");
+      const cats = await invoke<BoardCategory[]>("fetch_board_categories", {
+        enableEx0ch: overrideEx0chEnabled ?? ex0chEnabled,
+      });
       setBoardCategories(cats);
       try { localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify(cats)); } catch { /* ignore */ }
       setStatus(`boards loaded: ${cats.length} categories, ${cats.reduce((s, c) => s + c.boards.length, 0)} boards`);
     } catch (error) {
       setStatus(`board load error: ${String(error)}`);
     }
+  };
+
+  const toggleEx0chEnabled = () => {
+    setEx0chEnabled((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(EX0CH_ENABLED_KEY, String(next)); } catch { /* ignore */ }
+      void fetchBoardCategories(next);
+      return next;
+    });
   };
 
   const persistReadStatus = async (boardUrl: string, threadKey: string, lastReadNo: number) => {
@@ -2847,7 +2894,7 @@ export default function App() {
       const u = new URL(normalizeThreadUrl(url));
       const parsed = parseThreadPath(u.toString());
       if (parsed) {
-        return `${u.origin}/${parsed.board}/`;
+        return `${u.origin}${parsed.mountPath}${parsed.board}/`;
       }
       const parts = u.pathname.split("/").filter(Boolean);
       return `${u.origin}/${parts[0] || ""}/`;
@@ -2893,21 +2940,37 @@ export default function App() {
       return next;
     });
   };
+  const remapSavedThreadCounts = (prev: RecentThread[], next: RecentThread[]) => {
+    const newIndexByUrl = new Map<string, number>();
+    next.forEach((t, i) => newIndexByUrl.set(t.threadUrl, i));
+    const newReadMap: Record<number, boolean> = {};
+    const newLastReadMap: Record<number, number> = {};
+    prev.forEach((t, oldIdx) => {
+      const newIdx = newIndexByUrl.get(t.threadUrl);
+      if (newIdx == null) return;
+      const r = threadReadMap[oldIdx + 1];
+      const l = threadLastReadCount[oldIdx + 1];
+      if (r != null) newReadMap[newIdx + 1] = r;
+      if (l != null) newLastReadMap[newIdx + 1] = l;
+    });
+    setThreadReadMap(newReadMap);
+    setThreadLastReadCount(newLastReadMap);
+  };
   const removeRecentOpenedThread = (url: string) => {
     const target = normalizeThreadUrl(url);
-    setRecentOpenedThreads((prev) => {
-      const next = prev.filter((t) => t.threadUrl !== target);
-      try { localStorage.setItem(RECENT_OPENED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
+    const prev = recentOpenedThreads;
+    const next = prev.filter((t) => t.threadUrl !== target);
+    setRecentOpenedThreads(next);
+    try { localStorage.setItem(RECENT_OPENED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    if (showRecentOpenedOnly) remapSavedThreadCounts(prev, next);
   };
   const removeRecentPostedThread = (url: string) => {
     const target = normalizeThreadUrl(url);
-    setRecentPostedThreads((prev) => {
-      const next = prev.filter((t) => t.threadUrl !== target);
-      try { localStorage.setItem(RECENT_POSTED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
+    const prev = recentPostedThreads;
+    const next = prev.filter((t) => t.threadUrl !== target);
+    setRecentPostedThreads(next);
+    try { localStorage.setItem(RECENT_POSTED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    if (showRecentPostedOnly) remapSavedThreadCounts(prev, next);
   };
 
   const submitNewThread = async () => {
@@ -3923,6 +3986,10 @@ export default function App() {
     const top = event.currentTarget.scrollTop;
     try { localStorage.setItem(BOARD_TREE_SCROLL_KEY, String(top)); } catch { /* ignore */ }
   };
+  const onFavThreadsScroll: UIEventHandler<HTMLDivElement> = (event) => {
+    const top = event.currentTarget.scrollTop;
+    try { localStorage.setItem(FAV_THREADS_SCROLL_KEY, String(top)); } catch { /* ignore */ }
+  };
   const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onResponseScroll: UIEventHandler<HTMLDivElement> = () => {
     if (scrollSaveTimerRef.current) clearTimeout(scrollSaveTimerRef.current);
@@ -4373,6 +4440,13 @@ export default function App() {
         if (Number.isFinite(n) && n >= 0) boardTreeScrollRestoreRef.current = n;
       }
     } catch { /* ignore */ }
+    try {
+      const saved = localStorage.getItem(FAV_THREADS_SCROLL_KEY);
+      if (saved != null) {
+        const n = Number(saved);
+        if (Number.isFinite(n) && n >= 0) favThreadsScrollRestoreRef.current = n;
+      }
+    } catch { /* ignore */ }
     // Load thread fetch times
     try {
       const ftRaw = localStorage.getItem(THREAD_FETCH_TIMES_KEY);
@@ -4479,6 +4553,24 @@ export default function App() {
     if (saved == null) return;
     boardTreeRef.current.scrollTop = saved;
   }, [boardPaneTab, boardCategories]);
+
+  useEffect(() => {
+    if (boardPaneTab !== "fav-threads") return;
+    if (!favThreadsRef.current) return;
+    const saved = favThreadsScrollRestoreRef.current;
+    if (saved == null) return;
+    favThreadsRef.current.scrollTop = saved;
+  }, [boardPaneTab, favorites.threads, recentOpenedThreads, recentPostedThreads, favRecentExpanded, favRecentPostedExpanded]);
+
+  useEffect(() => {
+    try { localStorage.setItem(BOARD_PANE_TAB_KEY, boardPaneTab); } catch { /* ignore */ }
+  }, [boardPaneTab]);
+  useEffect(() => {
+    try { localStorage.setItem(FAV_RECENT_EXPANDED_KEY, favRecentExpanded ? "1" : "0"); } catch { /* ignore */ }
+  }, [favRecentExpanded]);
+  useEffect(() => {
+    try { localStorage.setItem(FAV_RECENT_POSTED_EXPANDED_KEY, favRecentPostedExpanded ? "1" : "0"); } catch { /* ignore */ }
+  }, [favRecentPostedExpanded]);
 
   const handlePopupImageClick = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
@@ -6049,6 +6141,8 @@ export default function App() {
           { label: "板", items: [
             { text: "板一覧を取得", action: () => fetchBoardCategories() },
             { text: "sep" },
+            { text: ex0chEnabled ? "EXおろちつねるを非表示" : "EXおろちつねるを表示", action: toggleEx0chEnabled },
+            { text: "sep" },
             { text: "板一覧タブ", action: () => setBoardPaneTab("boards") },
             { text: "お気に入りタブ", action: () => setBoardPaneTab("fav-threads") },
           ]},
@@ -6534,7 +6628,7 @@ export default function App() {
               </ul>
             )
           ) : (
-            <div className="fav-threads-list">
+            <div className="fav-threads-list" ref={favThreadsRef} onScroll={onFavThreadsScroll}>
               <input
                 className="fav-search"
                 value={favSearchQuery}
@@ -8372,7 +8466,11 @@ export default function App() {
           </button>
           <button onClick={() => {
             const t = threadItems.find((item) => item.id === threadMenu.threadId);
-            if (t && "threadUrl" in t && typeof t.threadUrl === "string") purgeThreadCache(t.threadUrl);
+            if (t && "threadUrl" in t && typeof t.threadUrl === "string") {
+              purgeThreadCache(t.threadUrl);
+              if (showRecentOpenedOnly) removeRecentOpenedThread(t.threadUrl);
+              else if (showRecentPostedOnly) removeRecentPostedThread(t.threadUrl);
+            }
             setThreadMenu(null);
           }}>キャッシュから削除</button>
           {(showRecentOpenedOnly || showRecentPostedOnly) && (
