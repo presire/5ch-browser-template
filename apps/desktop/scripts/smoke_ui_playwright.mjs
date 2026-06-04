@@ -1,22 +1,72 @@
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import path from "node:path";
 import process from "node:process";
-import { pathToFileURL } from "node:url";
 import { chromium } from "playwright";
 
 function assert(cond, message) {
   if (!cond) throw new Error(message);
 }
 
+const MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
+
 let browser;
+let server;
 try {
   const envUrl = process.env.SMOKE_UI_URL?.trim();
-  const targetUrl = envUrl && envUrl.length > 0 ? envUrl : pathToFileURL(path.resolve(process.cwd(), "dist", "index.html")).href;
-  if (!envUrl) {
-    const distPath = path.resolve(process.cwd(), "dist", "index.html");
-    if (!existsSync(distPath)) {
+  let targetUrl;
+  if (envUrl && envUrl.length > 0) {
+    targetUrl = envUrl;
+  } else {
+    const distDir = path.resolve(process.cwd(), "dist");
+    const distIndex = path.join(distDir, "index.html");
+    if (!existsSync(distIndex)) {
       throw new Error("dist/index.html not found. run `npm run build` before smoke test.");
     }
+    server = createServer(async (req, res) => {
+      try {
+        const requestPath = (req.url || "/").split("?")[0];
+        const safePath = path.normalize(requestPath === "/" ? "/index.html" : requestPath).replace(/^([/\\])+/, "");
+        const filePath = path.join(distDir, safePath);
+        if (!filePath.startsWith(distDir)) {
+          res.writeHead(403);
+          res.end();
+          return;
+        }
+        const data = await readFile(filePath);
+        const mime = MIME_TYPES[path.extname(filePath).toLowerCase()] || "application/octet-stream";
+        res.writeHead(200, { "Content-Type": mime });
+        res.end(data);
+      } catch {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        server.removeListener("error", reject);
+        resolve();
+      });
+    });
+    const addr = server.address();
+    targetUrl = `http://127.0.0.1:${addr.port}/index.html`;
+    console.log("smoke-ui: serving dist from " + targetUrl);
   }
 
   browser = await chromium.launch({ headless: true });
@@ -28,6 +78,7 @@ try {
   const page = await context.newPage();
   await page.goto(targetUrl, { waitUntil: "load" });
   console.log("smoke-ui: page loaded");
+  await page.waitForSelector(".status-bar");
   const statusBarText = await page.$eval(".status-bar", (el) => el.textContent || "");
   assert(statusBarText.includes("Runtime:WEB"), "status bar should indicate WEB runtime in smoke environment");
   console.log("smoke-ui: runtime indicator ok");
@@ -956,5 +1007,8 @@ try {
 } finally {
   if (browser) {
     await browser.close();
+  }
+  if (server) {
+    await new Promise((resolve) => server.close(() => resolve()));
   }
 }

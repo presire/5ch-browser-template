@@ -444,6 +444,8 @@ const MY_POSTS_KEY = "desktop.myPosts.v1";
 const THREAD_TABS_KEY = "desktop.threadTabs.v1";
 const RECENT_OPENED_THREADS_KEY = "desktop.recentOpenedThreads.v1";
 const RECENT_POSTED_THREADS_KEY = "desktop.recentPostedThreads.v1";
+const THREAD_SORT_PERSIST_KEY = "desktop.threadSortPersistEnabled.v1";
+const THREAD_SORT_PREFS_KEY = "desktop.threadSortPrefs.v1";
 const MAX_SEARCH_HISTORY = 20;
 const MAX_RECENT_THREADS = 100;
 const MENU_EDGE_PADDING = 8;
@@ -1143,8 +1145,46 @@ export default function App() {
   } | null>(null);
   const gestureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const gestureBlockContextRef = useRef(false);
-  const [threadSortKey, setThreadSortKey] = useState<"fetched" | "id" | "datNumber" | "title" | "res" | "got" | "new" | "lastFetch" | "speed">("id");
-  const [threadSortAsc, setThreadSortAsc] = useState(true);
+  const [threadSortPersistEnabled, setThreadSortPersistEnabled] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem(THREAD_SORT_PERSIST_KEY);
+      if (raw === null) return false;
+      return raw === "true";
+    } catch {
+      return false;
+    }
+  });
+  const threadSortPersistEnabledRef = useRef(threadSortPersistEnabled);
+  threadSortPersistEnabledRef.current = threadSortPersistEnabled;
+  const [threadSortKey, setThreadSortKey] = useState<"fetched" | "id" | "datNumber" | "title" | "res" | "got" | "new" | "lastFetch" | "speed">(() => {
+    try {
+      const persistEnabled = localStorage.getItem(THREAD_SORT_PERSIST_KEY) === "true";
+      if (!persistEnabled) return "id";
+      const raw = localStorage.getItem(THREAD_SORT_PREFS_KEY);
+      if (!raw) return "id";
+      const parsed = JSON.parse(raw) as { key?: string; asc?: boolean };
+      const valid = ["fetched", "id", "datNumber", "title", "res", "got", "new", "lastFetch", "speed"] as const;
+      if (parsed.key && (valid as readonly string[]).includes(parsed.key)) {
+        return parsed.key as typeof valid[number];
+      }
+      return "id";
+    } catch {
+      return "id";
+    }
+  });
+  const [threadSortAsc, setThreadSortAsc] = useState<boolean>(() => {
+    try {
+      const persistEnabled = localStorage.getItem(THREAD_SORT_PERSIST_KEY) === "true";
+      if (!persistEnabled) return true;
+      const raw = localStorage.getItem(THREAD_SORT_PREFS_KEY);
+      if (!raw) return true;
+      const parsed = JSON.parse(raw) as { key?: string; asc?: boolean };
+      return typeof parsed.asc === "boolean" ? parsed.asc : true;
+    } catch {
+      return true;
+    }
+  });
+  const autoUpdateCheckedRef = useRef(false);
   const cachedSortOrderRef = useRef<string[]>([]);
   const prevSortSnapshotRef = useRef({ key: "", asc: true, urls: "", favFetched: false, newUrls: 0 });
   const [threadTabs, setThreadTabs] = useState<ThreadTab[]>([]);
@@ -1227,6 +1267,21 @@ export default function App() {
       console.warn("desktop.aiPrefs.v1 save failed", e);
     }
   }, [aiInferenceBackend, translationEnabled]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(THREAD_SORT_PERSIST_KEY, String(threadSortPersistEnabled));
+    } catch (e) {
+      console.warn("desktop.threadSortPersistEnabled.v1 save failed", e);
+    }
+  }, [threadSortPersistEnabled]);
+  useEffect(() => {
+    if (!threadSortPersistEnabled) return;
+    try {
+      localStorage.setItem(THREAD_SORT_PREFS_KEY, JSON.stringify({ key: threadSortKey, asc: threadSortAsc }));
+    } catch (e) {
+      console.warn("desktop.threadSortPrefs.v1 save failed", e);
+    }
+  }, [threadSortPersistEnabled, threadSortKey, threadSortAsc]);
   // Clear the compose translation when the compose window closes. If a compose
   // translation is in flight, cancel it so late-arriving tokens don't repopulate
   // a hidden state. Order matters: drop the ref first so the token handler
@@ -2344,7 +2399,7 @@ export default function App() {
         setNewThreadUrls(new Set());
       }
       knownThreadUrlsRef.current.set(url, currentUrls);
-      if (!keepSortOnRefreshRef.current) {
+      if (!keepSortOnRefreshRef.current && !threadSortPersistEnabledRef.current) {
         setThreadSortKey("id");
         setThreadSortAsc(true);
       }
@@ -3043,6 +3098,13 @@ export default function App() {
       setStatus(`更新確認に失敗しました: ${String(error)}`);
     }
   };
+
+  useEffect(() => {
+    if (autoUpdateCheckedRef.current) return;
+    if (!isTauriRuntime()) return;
+    autoUpdateCheckedRef.current = true;
+    void checkForUpdates();
+  }, []);
 
   const openDownloadPage = async () => {
     if (!updateResult?.downloadPageUrl) return;
@@ -9129,6 +9191,10 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={keepSortOnRefresh} onChange={(e) => setKeepSortOnRefresh(e.target.checked)} />
                   <span>スレ一覧の更新時にソートを維持</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={threadSortPersistEnabled} onChange={(e) => setThreadSortPersistEnabled(e.target.checked)} />
+                  <span>スレ一覧のソート状態を再起動後も保持</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={threadAgeColorEnabled} onChange={(e) => setThreadAgeColorEnabled(e.target.checked)} />
