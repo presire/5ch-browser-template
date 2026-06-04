@@ -1154,6 +1154,8 @@ export default function App() {
       return false;
     }
   });
+  const threadSortPersistEnabledRef = useRef(threadSortPersistEnabled);
+  threadSortPersistEnabledRef.current = threadSortPersistEnabled;
   const [threadSortKey, setThreadSortKey] = useState<"fetched" | "id" | "datNumber" | "title" | "res" | "got" | "new" | "lastFetch" | "speed">(() => {
     try {
       const persistEnabled = localStorage.getItem(THREAD_SORT_PERSIST_KEY) === "true";
@@ -2397,7 +2399,7 @@ export default function App() {
         setNewThreadUrls(new Set());
       }
       knownThreadUrlsRef.current.set(url, currentUrls);
-      if (!keepSortOnRefreshRef.current) {
+      if (!keepSortOnRefreshRef.current && !threadSortPersistEnabledRef.current) {
         setThreadSortKey("id");
         setThreadSortAsc(true);
       }
