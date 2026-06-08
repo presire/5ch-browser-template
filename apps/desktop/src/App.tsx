@@ -446,6 +446,7 @@ const RECENT_OPENED_THREADS_KEY = "desktop.recentOpenedThreads.v1";
 const RECENT_POSTED_THREADS_KEY = "desktop.recentPostedThreads.v1";
 const THREAD_SORT_PERSIST_KEY = "desktop.threadSortPersistEnabled.v1";
 const THREAD_SORT_PREFS_KEY = "desktop.threadSortPrefs.v1";
+const POST_LOG_PREFS_KEY = "desktop.postLogPrefs.v1";
 const MAX_SEARCH_HISTORY = 20;
 const MAX_RECENT_THREADS = 100;
 const MENU_EDGE_PADDING = 8;
@@ -1069,6 +1070,25 @@ export default function App() {
   const [keepSortOnRefresh, setKeepSortOnRefresh] = useState(false);
   const keepSortOnRefreshRef = useRef(keepSortOnRefresh);
   keepSortOnRefreshRef.current = keepSortOnRefresh;
+  const [postLogEnabled, setPostLogEnabled] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem(POST_LOG_PREFS_KEY);
+      if (raw === null) return false;
+      const parsed = JSON.parse(raw);
+      return parsed?.enabled === true;
+    } catch {
+      return false;
+    }
+  });
+  const postLogEnabledRef = useRef(postLogEnabled);
+  postLogEnabledRef.current = postLogEnabled;
+  useEffect(() => {
+    try {
+      localStorage.setItem(POST_LOG_PREFS_KEY, JSON.stringify({ enabled: postLogEnabled }));
+    } catch (e) {
+      console.warn("failed to save postLogPrefs", e);
+    }
+  }, [postLogEnabled]);
   const [composeSubmitKey, setComposeSubmitKey] = useState<"shift" | "ctrl">("shift");
   const [typingConfettiEnabled, setTypingConfettiEnabled] = useState(false);
   const [imageSizeLimit, setImageSizeLimit] = useState(0); // KB, 0 = unlimited
@@ -2909,6 +2929,14 @@ export default function App() {
         const postedTitle = threadTabs.find((t) => t.threadUrl === postTargetUrl)?.title ?? postTargetUrl;
         pushRecentPostedThread(postTargetUrl, postedTitle);
         const postedBody = composeBody;
+        void appendKakikomiLog({
+          kind: "post",
+          threadUrl: postTargetUrl,
+          threadTitle: postedTitle,
+          name: composeName,
+          mail: composeMailValue,
+          body: postedBody,
+        });
         setComposeBody("");
         if (composeName.trim()) {
           setNameHistory((prev) => {
@@ -3028,6 +3056,33 @@ export default function App() {
     if (showRecentPostedOnly) remapSavedThreadCounts(prev, next);
   };
 
+  const appendKakikomiLog = async (entry: {
+    kind: "post" | "new_thread";
+    threadUrl: string;
+    threadTitle: string;
+    name: string;
+    mail: string;
+    body: string;
+  }) => {
+    if (!postLogEnabledRef.current) return;
+    if (!isTauriRuntime()) return;
+    try {
+      await invoke("append_kakikomi_log", { entry });
+    } catch (e) {
+      console.warn("failed to append kakikomi log", e);
+    }
+  };
+
+  const openKakikomiLog = async () => {
+    if (!isTauriRuntime()) return;
+    try {
+      await invoke("open_kakikomi_log");
+    } catch (e) {
+      console.warn("failed to open kakikomi log", e);
+      setStatus(`書き込みログを開けません: ${String(e)}`);
+    }
+  };
+
   const submitNewThread = async () => {
     if (!newThreadSubject.trim() || !newThreadBody.trim()) {
       setNewThreadResult({ ok: false, message: "スレタイと本文は必須です" });
@@ -3048,6 +3103,14 @@ export default function App() {
         setNewThreadResult({ ok: false, message: `エラー: ${r.bodyPreview}` });
       } else {
         setNewThreadResult({ ok: true, message: `スレ立て成功 (status=${r.status})` });
+        void appendKakikomiLog({
+          kind: "new_thread",
+          threadUrl: r.threadUrl ?? boardUrl,
+          threadTitle: newThreadSubject,
+          name: newThreadName,
+          mail: newThreadMail,
+          body: newThreadBody,
+        });
         if (newThreadName.trim()) {
           setNameHistory((prev) => {
             const next = [newThreadName.trim(), ...prev.filter((n) => n !== newThreadName.trim())].slice(0, 20);
@@ -9270,6 +9333,14 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={typingConfettiEnabled} onChange={(e) => setTypingConfettiEnabled(e.target.checked)} />
                   <span>入力時コンフェティ</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={postLogEnabled} onChange={(e) => setPostLogEnabled(e.target.checked)} />
+                  <span>書き込みログをテキストファイルに保存 (kakikomi.txt)</span>
+                </label>
+                <label className="settings-row">
+                  <span>書き込みログ</span>
+                  <button type="button" onClick={openKakikomiLog}>書き込みログを開く</button>
                 </label>
               </fieldset>
               <fieldset>

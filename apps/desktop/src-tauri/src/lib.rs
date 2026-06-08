@@ -1842,6 +1842,103 @@ fn reveal_data_dir() -> Result<(), String> {
     reveal_dir_in_file_manager(&dir)
 }
 
+fn kakikomi_log_path() -> Result<PathBuf, String> {
+    let dir = core_store::portable_data_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("kakikomi.txt"))
+}
+
+fn open_file_with_default_app(path: &std::path::Path) -> Result<(), String> {
+    let p = path.as_os_str();
+
+    #[cfg(target_os = "windows")]
+    {
+        // `start "" "<path>"` opens the file with the registered default app.
+        // The empty quoted string is the window title arg cmd /c start requires.
+        Command::new("cmd")
+            .args(["/c", "start", ""])
+            .arg(p)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(p)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(p)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("unsupported platform".to_string())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KakikomiLogEntry {
+    /// "post" or "new_thread"
+    kind: String,
+    thread_url: String,
+    thread_title: String,
+    name: String,
+    mail: String,
+    body: String,
+}
+
+#[tauri::command]
+fn append_kakikomi_log(entry: KakikomiLogEntry) -> Result<(), String> {
+    use std::io::Write;
+    let path = kakikomi_log_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let kind_label = if entry.kind == "new_thread" { "スレ立て" } else { "返信" };
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let mut content = String::new();
+    content.push_str(&format!("===== {} =====\n", now));
+    content.push_str(&format!("種別: {}\n", kind_label));
+    content.push_str(&format!("スレタイ: {}\n", entry.thread_title));
+    content.push_str(&format!("スレURL: {}\n", entry.thread_url));
+    content.push_str(&format!("名前: {}\n", entry.name));
+    content.push_str(&format!("メール: {}\n", entry.mail));
+    content.push_str("---\n");
+    content.push_str(&entry.body);
+    if !entry.body.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push('\n');
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_kakikomi_log() -> Result<(), String> {
+    let path = kakikomi_log_path()?;
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::File::create(&path).map_err(|e| e.to_string())?;
+    }
+    open_file_with_default_app(&path)
+}
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct AiDownloadProgress {
@@ -2387,7 +2484,9 @@ pub fn run() {
             get_data_dir_info,
             set_data_dir,
             clear_data_dir,
-            reveal_data_dir
+            reveal_data_dir,
+            append_kakikomi_log,
+            open_kakikomi_log
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
