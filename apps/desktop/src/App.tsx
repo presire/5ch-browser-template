@@ -7038,6 +7038,9 @@ export default function App() {
                       <button onClick={() => { setResponseReloadMenuOpen(false); reloadResponsesAfterCachePurge(); }}>
                         キャッシュから削除して再読み込み
                       </button>
+                      <button onClick={() => { setResponseReloadMenuOpen(false); void searchNextThread(); }}>
+                        次スレを検索
+                      </button>
                     </div>
                   )}
                 </div>
@@ -7482,11 +7485,15 @@ export default function App() {
                   </Fragment>
                 );
               })}
-              {fetchedResponses.length >= 950 && !responsesLoading && (
+              {(fetchedResponses.length >= 950 || nextThreadSearching || nextThreadSearched) && !responsesLoading && (
                 <div className="next-thread-banner">
                   <div className="next-thread-banner-header">
                     <span className="next-thread-banner-title">
-                      {fetchedResponses.length >= 1000 ? "このスレは埋まりました" : "このスレはまもなく埋まります"}
+                      {fetchedResponses.length >= 1000
+                        ? "このスレは埋まりました"
+                        : fetchedResponses.length >= 950
+                          ? "このスレはまもなく埋まります"
+                          : "次スレ検索結果"}
                     </span>
                     <button
                       type="button"
