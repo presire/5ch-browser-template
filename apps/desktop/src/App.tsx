@@ -195,7 +195,7 @@ function buildTranslationPrompt(text: string, targetLangNativeName: string): str
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon, Sparkles, BrainCircuit, FolderOpen, PanelLeft, PanelTop,
+  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon, Sparkles, BrainCircuit, FolderOpen, PanelLeft, PanelTop, User,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -1404,7 +1404,7 @@ export default function App() {
   const [newResponseStart, setNewResponseStart] = useState<number | null>(null);
   const threadFetchTimesRef = useRef<Record<string, string>>({});
   const [responseSearchQuery, setResponseSearchQuery] = useState("");
-  const [responseLinkFilter, setResponseLinkFilter] = useState<"" | "image" | "video" | "link">("");
+  const [responseLinkFilter, setResponseLinkFilter] = useState<"" | "image" | "video" | "link" | "mine">("");
   const threadSearchRef = useRef<HTMLInputElement | null>(null);
   const responseSearchRef = useRef<HTMLInputElement | null>(null);
   const [threadSearchHistory, setThreadSearchHistory] = useState<string[]>([]);
@@ -3534,7 +3534,9 @@ export default function App() {
       const nameText = r.name.toLowerCase();
       if (!(plainText.includes(q) || nameText.includes(q) || r.time.toLowerCase().includes(q))) return false;
     }
-    if (responseLinkFilter) {
+    if (responseLinkFilter === "mine") {
+      if (!myPostNos.has(r.id)) return false;
+    } else if (responseLinkFilter) {
       const plain = r.text.replace(/<[^>]+>/g, "");
       const urlRe = /(?:https?:\/\/|ttps?:\/\/|ps:\/\/|s:\/\/|(?<![a-zA-Z]):\/\/)[^\s<>&"]+|(?<!\S)(?:[a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}\/[^\s<>&"]+/gi;
       const imageRe = /\.(?:jpg|jpeg|png|gif|webp)(?:\?|$)/i;
@@ -7989,6 +7991,7 @@ export default function App() {
                 <button className={`link-filter-btn ${responseLinkFilter === "image" ? "active" : ""}`} onClick={() => setResponseLinkFilter((p) => p === "image" ? "" : "image")} title="画像リンク"><Image size={13} /></button>
                 <button className={`link-filter-btn ${responseLinkFilter === "video" ? "active" : ""}`} onClick={() => setResponseLinkFilter((p) => p === "video" ? "" : "video")} title="動画リンク"><Film size={13} /></button>
                 <button className={`link-filter-btn ${responseLinkFilter === "link" ? "active" : ""}`} onClick={() => setResponseLinkFilter((p) => p === "link" ? "" : "link")} title="外部リンク"><ExternalLink size={13} /></button>
+                <button className={`link-filter-btn ${responseLinkFilter === "mine" ? "active" : ""}`} onClick={() => setResponseLinkFilter((p) => p === "mine" ? "" : "mine")} title="自分のレスのみ"><User size={13} /></button>
               </span>
               <span className="nav-buttons">
                 <button onClick={() => { if (visibleResponseItems.length > 0) setSelectedResponse(visibleResponseItems[0].id); }}>Top</button>
