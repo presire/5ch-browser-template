@@ -9,11 +9,35 @@ import {
   type MouseEvent as ReactMouseEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type UIEventHandler,
+  type RefObject,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
+import EmojiPicker, {
+  Theme as EmojiPickerTheme,
+  EmojiStyle as EmojiPickerStyle,
+  Categories as EmojiPickerCategories,
+  type EmojiClickData,
+  type CategoryIcons as EmojiPickerCategoryIcons,
+} from "emoji-picker-react";
+// 日本語データを直接読み込む (英語のままだとカテゴリ名・検索ワードも英語になるため)
+// EmojiData 型は index.d.ts で再エクスポートされていないため、unknown 経由で渡す。
+import emojiJaDataRaw from "emoji-picker-react/src/data/emojis-ja.json";
+const EMOJI_JA_DATA = emojiJaDataRaw as unknown as never;
+
+const EMOJI_CATEGORY_ICONS: EmojiPickerCategoryIcons = {
+  [EmojiPickerCategories.SUGGESTED]: <span className="emoji-cat-icon">🕐</span>,
+  [EmojiPickerCategories.SMILEYS_PEOPLE]: <span className="emoji-cat-icon">😀</span>,
+  [EmojiPickerCategories.ANIMALS_NATURE]: <span className="emoji-cat-icon">🐶</span>,
+  [EmojiPickerCategories.FOOD_DRINK]: <span className="emoji-cat-icon">🍔</span>,
+  [EmojiPickerCategories.TRAVEL_PLACES]: <span className="emoji-cat-icon">✈️</span>,
+  [EmojiPickerCategories.ACTIVITIES]: <span className="emoji-cat-icon">⚽</span>,
+  [EmojiPickerCategories.OBJECTS]: <span className="emoji-cat-icon">💡</span>,
+  [EmojiPickerCategories.SYMBOLS]: <span className="emoji-cat-icon">❤️</span>,
+  [EmojiPickerCategories.FLAGS]: <span className="emoji-cat-icon">🏳️</span>,
+};
 
 type AiModelEntry = {
   id: string;
@@ -195,7 +219,7 @@ function buildTranslationPrompt(text: string, targetLangNativeName: string): str
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
   Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
-  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon, Sparkles, BrainCircuit, FolderOpen, PanelLeft, PanelTop, User,
+  Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon, Sparkles, BrainCircuit, FolderOpen, PanelLeft, PanelTop, User, Smile,
 } from "lucide-react";
 
 type MenuInfo = { topLevelKeys: number; normalizedSample: string };
@@ -1426,6 +1450,37 @@ export default function App() {
   const [uploadResults, setUploadResults] = useState<{ fileName: string; sourceUrl?: string; thumbnail?: string; error?: string }[]>([]);
   const [uploadHistory, setUploadHistory] = useState<{ sourceUrl: string; thumbnail: string; pageUrl: string; fileName: string; uploadedAt: string }[]>([]);
   const uploadFileRef = useRef<HTMLInputElement | null>(null);
+
+  // Emoji picker state — フローティング別ウィンドウ
+  const [emojiPickerTarget, setEmojiPickerTarget] = useState<"compose" | "newThread" | null>(null);
+  const [emojiPickerPos, setEmojiPickerPos] = useState<{ x: number; y: number } | null>(null);
+  const emojiPickerDragRef = useRef<{ startX: number; startY: number; startPosX: number; startPosY: number } | null>(null);
+  const composeBodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const newThreadBodyRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const insertEmojiAtCursor = (
+    textareaRef: RefObject<HTMLTextAreaElement>,
+    currentValue: string,
+    setter: (next: string) => void,
+    emoji: string,
+  ) => {
+    const ta = textareaRef.current;
+    if (!ta) {
+      setter(currentValue + emoji);
+      return;
+    }
+    const start = ta.selectionStart ?? currentValue.length;
+    const end = ta.selectionEnd ?? currentValue.length;
+    const next = currentValue.slice(0, start) + emoji + currentValue.slice(end);
+    setter(next);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
 
   // Detect own post after re-fetch
   useEffect(() => {
@@ -4875,6 +4930,14 @@ export default function App() {
         });
         return;
       }
+      const edrag = emojiPickerDragRef.current;
+      if (edrag) {
+        setEmojiPickerPos({
+          x: edrag.startPosX + (event.clientX - edrag.startX),
+          y: edrag.startPosY + (event.clientY - edrag.startY),
+        });
+        return;
+      }
       const cresize = composeResizeRef.current;
       if (cresize) {
         const dx = event.clientX - cresize.startX;
@@ -4949,6 +5012,12 @@ export default function App() {
     const onMouseUp = () => {
       if (composeDragRef.current) {
         composeDragRef.current = null;
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        return;
+      }
+      if (emojiPickerDragRef.current) {
+        emojiPickerDragRef.current = null;
         document.body.style.userSelect = "";
         document.body.style.cursor = "";
         return;
@@ -8068,6 +8137,63 @@ export default function App() {
         <span>Runtime:{runtimeState}</span>
       </footer>
       )}
+      {emojiPickerTarget && (
+        <section
+          className="emoji-picker-window"
+          role="dialog"
+          aria-label="絵文字ピッカー"
+          style={emojiPickerPos ? { left: emojiPickerPos.x, top: emojiPickerPos.y, right: "auto", bottom: "auto" } : {}}
+        >
+          <header
+            className="emoji-picker-window-header"
+            onMouseDown={(e) => {
+              if ((e.target as HTMLElement).tagName === "BUTTON") return;
+              e.preventDefault();
+              const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+              emojiPickerDragRef.current = {
+                startX: e.clientX,
+                startY: e.clientY,
+                startPosX: rect.left,
+                startPosY: rect.top,
+              };
+              if (!emojiPickerPos) setEmojiPickerPos({ x: rect.left, y: rect.top });
+              document.body.style.userSelect = "none";
+              document.body.style.cursor = "move";
+            }}
+          >
+            <Smile size={12} />
+            <strong>絵文字</strong>
+            <span className="emoji-picker-window-target">
+              {emojiPickerTarget === "compose" ? "→ 書き込み" : "→ スレ立て"}
+            </span>
+            <button
+              className="emoji-picker-window-close"
+              onClick={() => setEmojiPickerTarget(null)}
+              title="閉じる"
+            ><X size={12} /></button>
+          </header>
+          <EmojiPicker
+            onEmojiClick={(data: EmojiClickData) => {
+              if (emojiPickerTarget === "compose") {
+                insertEmojiAtCursor(composeBodyRef, composeBody, setComposeBody, data.emoji);
+              } else if (emojiPickerTarget === "newThread") {
+                insertEmojiAtCursor(newThreadBodyRef, newThreadBody, setNewThreadBody, data.emoji);
+              }
+            }}
+            theme={darkMode ? EmojiPickerTheme.DARK : EmojiPickerTheme.LIGHT}
+            emojiStyle={EmojiPickerStyle.NATIVE}
+            width="100%"
+            height={340}
+            autoFocusSearch={false}
+            previewConfig={{ showPreview: false }}
+            categoryIcons={EMOJI_CATEGORY_ICONS}
+            emojiData={EMOJI_JA_DATA}
+            searchPlaceHolder="検索"
+            searchClearButtonLabel="クリア"
+            lazyLoadEmojis
+          />
+        </section>
+      )}
       {composeOpen && (
         <section
           className="compose-window"
@@ -8100,7 +8226,7 @@ export default function App() {
               {threadTabs[activeTabIndex]?.title ?? threadUrl}
             </span>
             <button className="compose-header-icon" title="サイズをリセット" onClick={() => { setComposeSize(null); setComposePos(null); }}><RotateCcw size={14} /></button>
-            <button onClick={() => { setComposeOpen(false); setComposeResult(null); setUploadPanelOpen(false); setUploadResults([]); }}>閉じる</button>
+            <button onClick={() => { setComposeOpen(false); setComposeResult(null); setUploadPanelOpen(false); setUploadResults([]); setEmojiPickerTarget((t) => (t === "compose" ? null : t)); }}>閉じる</button>
           </header>
           <div className="compose-grid">
             <label>
@@ -8120,6 +8246,7 @@ export default function App() {
             </label>
           </div>
           <textarea
+            ref={composeBodyRef}
             className="compose-body"
             value={composeBody}
             onChange={(e) => setComposeBody(e.target.value)}
@@ -8150,6 +8277,11 @@ export default function App() {
                 : "AI チェック"
               }
             </button>
+            <button
+              onClick={() => setEmojiPickerTarget((t) => (t === "compose" ? null : "compose"))}
+              title="絵文字を挿入"
+              className={emojiPickerTarget === "compose" ? "active-toggle" : ""}
+            ><Smile size={14} /></button>
             <button onClick={() => setUploadPanelOpen((v) => { if (v) setUploadResults([]); return !v; })} title="画像アップロード"><Upload size={14} /></button>
             <button onClick={probePostFlowTraceFromCompose} disabled={composeSubmitting}>{composeSubmitting ? "送信中..." : `送信 (${composeSubmitKey === "shift" ? "Shift" : "Ctrl"}+Enter)`}</button>
             <button onClick={async () => {
@@ -9830,6 +9962,7 @@ export default function App() {
               <label style={{ flex: 1, display: "flex", flexDirection: "column" }}>
                 本文
                 <textarea
+                  ref={newThreadBodyRef}
                   value={newThreadBody}
                   onChange={(e) => setNewThreadBody(e.target.value)}
                   placeholder="本文を入力"
@@ -9839,6 +9972,13 @@ export default function App() {
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <button onClick={submitNewThread} disabled={newThreadSubmitting}>
                   {newThreadSubmitting ? "送信中..." : "スレ立て"}
+                </button>
+                <button
+                  onClick={() => setEmojiPickerTarget((t) => (t === "newThread" ? null : "newThread"))}
+                  title="絵文字を挿入"
+                  className={emojiPickerTarget === "newThread" ? "active-toggle" : ""}
+                >
+                  <Smile size={14} />
                 </button>
                 <span style={{ fontSize: "0.85em", color: "var(--sub)" }}>
                   板: {getBoardUrlFromThreadUrl(threadUrl)}

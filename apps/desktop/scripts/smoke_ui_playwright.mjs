@@ -135,6 +135,20 @@ try {
   const composeText = await page.$eval(".compose-window textarea.compose-body", (el) => el.value);
   assert(composeText.includes(">>1"), "quote action did not append response anchor");
 
+  // emoji picker toggle: button in compose actions opens a separate floating window
+  const emojiToggle = await page.$('.compose-window .compose-actions button[title="絵文字を挿入"]');
+  assert(emojiToggle, "compose actions should have 絵文字を挿入 button");
+  await emojiToggle.click();
+  await page.waitForSelector(".emoji-picker-window", { timeout: 5000 });
+  const pickerWindowOutsideCompose = await page.$(".emoji-picker-window");
+  assert(pickerWindowOutsideCompose, "emoji picker should render as a separate floating window");
+  // close via the window's own close button
+  await page.click('.emoji-picker-window .emoji-picker-window-close');
+  await new Promise((r) => setTimeout(r, 100));
+  const pickerClosed = await page.$(".emoji-picker-window");
+  assert(!pickerClosed, "emoji picker window should hide after close");
+  console.log("smoke-ui: emoji picker toggle ok");
+
   // close compose window if open
   const composeWin = await page.$(".compose-window");
   if (composeWin) {
