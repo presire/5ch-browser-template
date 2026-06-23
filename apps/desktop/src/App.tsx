@@ -484,6 +484,8 @@ const RECENT_OPENED_THREADS_KEY = "desktop.recentOpenedThreads.v1";
 const RECENT_POSTED_THREADS_KEY = "desktop.recentPostedThreads.v1";
 const THREAD_SORT_PERSIST_KEY = "desktop.threadSortPersistEnabled.v1";
 const THREAD_SORT_PREFS_KEY = "desktop.threadSortPrefs.v1";
+const AUTO_REFRESH_PERSIST_KEY = "desktop.autoRefreshPersistEnabled.v1";
+const AUTO_REFRESH_ENABLED_KEY = "desktop.autoRefreshEnabled.v1";
 const POST_LOG_PREFS_KEY = "desktop.postLogPrefs.v1";
 const THREAD_CATEGORIES_KEY = "desktop.threadCategories.v2";
 const DISMISSED_UPDATE_VERSION_KEY = "desktop.dismissedUpdateVersion.v1";
@@ -1259,7 +1261,21 @@ export default function App() {
   const [ngBulkOpen, setNgBulkOpen] = useState(false);
   const [ngBulkText, setNgBulkText] = useState("");
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
+  const [autoRefreshPersistEnabled, setAutoRefreshPersistEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(AUTO_REFRESH_PERSIST_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState<boolean>(() => {
+    try {
+      if (localStorage.getItem(AUTO_REFRESH_PERSIST_KEY) !== "true") return false;
+      return localStorage.getItem(AUTO_REFRESH_ENABLED_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(60);
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const [mouseGestureEnabled, setMouseGestureEnabled] = useState(false);
@@ -5532,6 +5548,24 @@ export default function App() {
     return () => clearInterval(id);
   }, [autoRefreshEnabled, autoRefreshInterval, threadUrl]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(AUTO_REFRESH_PERSIST_KEY, autoRefreshPersistEnabled ? "true" : "false");
+      if (!autoRefreshPersistEnabled) localStorage.removeItem(AUTO_REFRESH_ENABLED_KEY);
+    } catch (e) {
+      console.warn("desktop.autoRefreshPersistEnabled.v1 save failed", e);
+    }
+  }, [autoRefreshPersistEnabled]);
+
+  useEffect(() => {
+    if (!autoRefreshPersistEnabled) return;
+    try {
+      localStorage.setItem(AUTO_REFRESH_ENABLED_KEY, autoRefreshEnabled ? "true" : "false");
+    } catch (e) {
+      console.warn("desktop.autoRefreshEnabled.v1 save failed", e);
+    }
+  }, [autoRefreshEnabled, autoRefreshPersistEnabled]);
+
   const fetchedResponsesCountRef = useRef(0);
   fetchedResponsesCountRef.current = fetchedResponses.length;
   useEffect(() => {
@@ -9749,6 +9783,10 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={threadSortPersistEnabled} onChange={(e) => setThreadSortPersistEnabled(e.target.checked)} />
                   <span>スレ一覧のソート状態を再起動後も保持</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={autoRefreshPersistEnabled} onChange={(e) => setAutoRefreshPersistEnabled(e.target.checked)} />
+                  <span>「自動更新」のオン/オフを再起動後も保持</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={threadAgeColorEnabled} onChange={(e) => setThreadAgeColorEnabled(e.target.checked)} />
