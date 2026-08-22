@@ -1664,6 +1664,9 @@ export default function App() {
   const [patrolLoading, setPatrolLoading] = useState(false);
   const [favSearchQuery, setFavSearchQuery] = useState("");
   const [cachedThreadList, setCachedThreadList] = useState<{ threadUrl: string; title: string; resCount: number }[]>([]);
+  // 保存ログ一覧 (全板) を表示中かどうか。false のときは従来どおり現在の板の dat落ちのみ。
+  // showCachedOnly が false の間は参照しないので、解除時にリセットしなくてよい。
+  const [cacheListAllBoards, setCacheListAllBoards] = useState(false);
   const [boardSearchQuery, setBoardSearchQuery] = useState("");
   const [responsesLoading, setResponsesLoading] = useState(false);
   const [ngInput, setNgInput] = useState("");
@@ -2150,16 +2153,44 @@ export default function App() {
     });
   };
 
-  const persistReadStatus = async (boardUrl: string, threadKey: string, lastReadNo: number) => {
-    if (!isTauriRuntime()) return;
-    try {
-      const current = await invoke<Record<string, Record<string, number>>>("load_read_status");
-      if (!current[boardUrl]) current[boardUrl] = {};
-      current[boardUrl][threadKey] = lastReadNo;
-      await invoke("save_read_status", { status: current });
-    } catch {
-      // ignore persistence errors
-    }
+  // read_status.json への保存は load → 変更 → save の読み書きなので、複数タブの
+  // 自動更新や巡回が重なると後勝ちで他スレの既読が巻き戻る。書き込みを直列化し、
+  // さらに既読位置を前進のみに制限して取りこぼしを防ぐ。
+  // (スレ単位の既読解除は purge_thread_cache 側で該当キーを直接削除している)
+  const readStatusQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const persistReadStatus = (boardUrl: string, threadKey: string, lastReadNo: number): Promise<void> => {
+    if (!isTauriRuntime()) return Promise.resolve();
+    const next = readStatusQueueRef.current.then(async () => {
+      try {
+        const current = await invoke<Record<string, Record<string, number>>>("load_read_status");
+        if (!current[boardUrl]) current[boardUrl] = {};
+        if (lastReadNo <= (current[boardUrl][threadKey] ?? 0)) return;
+        current[boardUrl][threadKey] = lastReadNo;
+        await invoke("save_read_status", { status: current });
+      } catch (e) {
+        console.warn("save_read_status failed", e);
+      }
+    });
+    readStatusQueueRef.current = next;
+    return next;
+  };
+
+  // 1スレの既読位置を消す (キャッシュ削除時)。persistReadStatus は前進のみなので、
+  // 巻き戻しはこちらで明示的に行う。同じキューに載せて読み書き競合を避ける。
+  const clearReadStatus = (boardUrl: string, threadKey: string): Promise<void> => {
+    if (!isTauriRuntime()) return Promise.resolve();
+    const next = readStatusQueueRef.current.then(async () => {
+      try {
+        const current = await invoke<Record<string, Record<string, number>>>("load_read_status");
+        if (!current[boardUrl] || current[boardUrl][threadKey] == null) return;
+        delete current[boardUrl][threadKey];
+        await invoke("save_read_status", { status: current });
+      } catch (e) {
+        console.warn("save_read_status failed", e);
+      }
+    });
+    readStatusQueueRef.current = next;
+    return next;
   };
 
   const loadReadMarkers = async () => {
@@ -2707,6 +2738,29 @@ export default function App() {
     } catch { /* ignore */ }
     return 0;
   };
+  // タブを閉じる / 切り替えるときの読書位置保存。
+  //  - アクティブタブは DOM から現在位置を取れる。裏タブの DOM は表示されていないため
+  //    getVisibleResponseNo() はアクティブタブの位置を返してしまうので、切替時に記録した
+  //    tabCache の scrollResponseNo を使う。
+  //  - 栞 (bookmark) もスクロール位置と同じ値で保存する。以前は selectedResponse で
+  //    上書きしていたため、レスを1つも選択せずに読んだスレはタブを閉じた時点で
+  //    栞が >>1 に巻き戻り、次に開くと先頭から表示されていた。
+  //  - getVisibleResponseNo() の 0 は「位置を特定できなかった」(未描画など)、1 は
+  //    「先頭を表示している」。0 のときは保存済みの値を壊さないよう何もしない。
+  //    1 は永続側 (scrollPos / bookmark) では 0 と区別できないので保存しないが、
+  //    メモリ上のタブキャッシュには記録し、先頭に戻したタブが戻ってきたときに
+  //    古い位置へ飛ばされないようにする。
+  const saveTabReadPosition = (url: string, isActive: boolean) => {
+    const cached = tabCacheRef.current.get(url);
+    const no = isActive ? getVisibleResponseNo() : (cached?.scrollResponseNo ?? 0);
+    if (isActive && cached) {
+      cached.selectedResponse = selectedResponse;
+      if (no > 0) cached.scrollResponseNo = no;
+    }
+    if (no <= 1) return;
+    saveScrollPos(url, no);
+    saveBookmark(url, no);
+  };
   const scrollAnchorSeqRef = useRef(0);
   const scrollToResponseNo = (no: number) => {
     if (no <= 1) return;
@@ -2850,17 +2904,38 @@ export default function App() {
         setNewResponseStart(cached.newResponseStart ?? null);
         scrollToResponseNo(cached.scrollResponseNo ?? loadScrollPos(url));
       } else if (isTauriRuntime()) {
+        // メモリ上のタブキャッシュが無い状態で既存タブを開き直す経路。
+        // WebView の再読み込み (右クリック→「最新の情報に更新」) 直後や、起動時のタブ復元後は
+        // アクティブタブ以外のキャッシュが空なのでここに来る。SQLite から読み直すだけで
+        // 栞も読書位置も復元していなかったため、必ず先頭に戻っていた。
+        const bm = loadBookmark(url);
+        const savedNo = loadScrollPos(url);
         invoke<string | null>("load_thread_cache", { threadUrl: url }).then((json) => {
+          let restored = false;
           if (json) {
             try {
               const rows = JSON.parse(json) as ThreadResponseItem[];
               if (rows.length > 0) {
+                // 選択の更新はレス差し替えと同じバッチで行う。先に選択だけ変えると
+                // 前のタブのレス一覧に対して自動スクロールが走ってしまう。
                 setFetchedResponses(rows);
-                tabCacheRef.current.set(url, { responses: rows, selectedResponse: 1 });
+                setSelectedResponse(bm ?? 1);
+                tabCacheRef.current.set(url, {
+                  responses: rows,
+                  selectedResponse: bm ?? 1,
+                  scrollResponseNo: savedNo > 1 ? savedNo : undefined,
+                });
+                if (savedNo > 1) scrollToResponseNo(savedNo);
+                restored = true;
               }
-            } catch { /* ignore */ }
+            } catch (e) { console.warn("load_thread_cache parse failed", e); }
           }
-        }).catch(() => {});
+          // ローカルキャッシュが無いときは前のタブのレスが残ったままになるので取得し直す
+          if (!restored) void fetchResponsesFromCurrent(url);
+        }).catch((e) => {
+          console.warn("load_thread_cache failed", e);
+          void fetchResponsesFromCurrent(url);
+        });
       }
       setThreadUrl(url);
       setLocationInput(url);
@@ -2915,10 +2990,9 @@ export default function App() {
     const closing = threadTabs[index];
     closedTabsRef.current.push({ threadUrl: closing.threadUrl, title: closing.title });
     if (closedTabsRef.current.length > 20) closedTabsRef.current.shift();
-    if (index === activeTabIndex) {
-      saveBookmark(closing.threadUrl, selectedResponse);
-      saveScrollPos(closing.threadUrl);
-    }
+    // 裏タブ (中クリック / 非アクティブタブの ×) も保存する。以前はアクティブタブしか
+    // 保存しておらず、裏タブを閉じると読書位置が失われて次回先頭から表示されていた。
+    saveTabReadPosition(closing.threadUrl, index === activeTabIndex);
     tabCacheRef.current.delete(closing.threadUrl);
     const nextTabs = threadTabs.filter((_, i) => i !== index);
     setThreadTabs(nextTabs);
@@ -2942,7 +3016,13 @@ export default function App() {
     if (cached) {
       setFetchedResponses(cached.responses);
       setSelectedResponse(cached.selectedResponse);
-      scrollToResponseNo(cached.scrollResponseNo ?? 0);
+      // メモリ上に位置が無ければ永続化した読書位置へ戻す (?? 0 だと先頭のままだった)
+      scrollToResponseNo(cached.scrollResponseNo ?? loadScrollPos(tab.threadUrl));
+    } else {
+      // タブ復元直後などキャッシュが無い場合。取得側で読書位置まで復元される
+      setFetchedResponses([]);
+      setSelectedResponse(loadBookmark(tab.threadUrl) ?? 1);
+      void fetchResponsesFromCurrent(tab.threadUrl);
     }
     setThreadUrl(tab.threadUrl);
     setLocationInput(tab.threadUrl);
@@ -2951,13 +3031,7 @@ export default function App() {
   const onTabClick = (index: number) => {
     if (index === activeTabIndex) return;
     if (activeTabIndex >= 0 && activeTabIndex < threadTabs.length) {
-      const curUrl = threadTabs[activeTabIndex].threadUrl;
-      const cached = tabCacheRef.current.get(curUrl);
-      if (cached) {
-        cached.selectedResponse = selectedResponse;
-        cached.scrollResponseNo = getVisibleResponseNo();
-        saveScrollPos(curUrl);
-      }
+      saveTabReadPosition(threadTabs[activeTabIndex].threadUrl, true);
     }
     setActiveTabIndex(index);
     const tab = threadTabs[index];
@@ -2965,10 +3039,11 @@ export default function App() {
     if (cached) {
       setFetchedResponses(cached.responses);
       setSelectedResponse(cached.selectedResponse);
-      scrollToResponseNo(cached.scrollResponseNo ?? 0);
+      // メモリ上に位置が無ければ永続化した読書位置へ戻す (?? 0 だと先頭のままだった)
+      scrollToResponseNo(cached.scrollResponseNo ?? loadScrollPos(tab.threadUrl));
     } else {
       setFetchedResponses([]);
-      setSelectedResponse(1);
+      setSelectedResponse(loadBookmark(tab.threadUrl) ?? 1);
       void fetchResponsesFromCurrent(tab.threadUrl);
     }
     setThreadUrl(tab.threadUrl);
@@ -2978,21 +3053,37 @@ export default function App() {
   const closeOtherTabs = (keepIndex: number) => {
     const kept = threadTabs[keepIndex];
     if (!kept) return;
-    for (const tab of threadTabs) {
-      if (tab.threadUrl !== kept.threadUrl) tabCacheRef.current.delete(tab.threadUrl);
-    }
+    // 閉じるタブの読書位置を保存してから捨てる (以前は保存せずに破棄していた)
+    threadTabs.forEach((tab, i) => {
+      if (tab.threadUrl === kept.threadUrl) return;
+      saveTabReadPosition(tab.threadUrl, i === activeTabIndex);
+      tabCacheRef.current.delete(tab.threadUrl);
+    });
+    const wasActiveUrl = activeTabIndex >= 0 && activeTabIndex < threadTabs.length
+      ? threadTabs[activeTabIndex].threadUrl
+      : null;
     setThreadTabs([kept]);
     setActiveTabIndex(0);
     const cached = tabCacheRef.current.get(kept.threadUrl);
     if (cached) {
       setFetchedResponses(cached.responses);
       setSelectedResponse(cached.selectedResponse);
+      // 表示中でなかったタブを残した場合は読書位置も復元する (以前は先頭のままだった)
+      if (kept.threadUrl !== wasActiveUrl) {
+        scrollToResponseNo(cached.scrollResponseNo ?? loadScrollPos(kept.threadUrl));
+      }
+    } else if (kept.threadUrl !== wasActiveUrl) {
+      setFetchedResponses([]);
+      setSelectedResponse(loadBookmark(kept.threadUrl) ?? 1);
+      void fetchResponsesFromCurrent(kept.threadUrl);
     }
     setThreadUrl(kept.threadUrl);
     setLocationInput(kept.threadUrl);
   };
 
   const closeAllTabs = () => {
+    // 全タブぶんの読書位置を保存してから捨てる (以前は保存せずに破棄していた)
+    threadTabs.forEach((tab, i) => saveTabReadPosition(tab.threadUrl, i === activeTabIndex));
     tabCacheRef.current.clear();
     setThreadTabs([]);
     setActiveTabIndex(-1);
@@ -3540,18 +3631,40 @@ export default function App() {
       setLastFetchTime(timeStr);
       threadFetchTimesRef.current[url] = timeStr;
       try { localStorage.setItem(THREAD_FETCH_TIMES_KEY, JSON.stringify(threadFetchTimesRef.current)); } catch { /* ignore */ }
+      // 既読位置はスレ一覧に載っているかどうかに関わらず永続化する。以前は現在読み込み中の
+      // 板の一覧 (fetchedThreads) に一致する行がある場合のみ保存していたため、お気に入り・
+      // 最近読んだ・セッション復元・URL 直接入力から開いたスレは最後まで読んでも
+      // read_status.json が更新されず、タブを閉じると未読に戻っていた。
+      const normalizedUrl = normalizeThreadUrl(url);
+      const boardUrl = getBoardUrlFromThreadUrl(url);
+      const threadKey = getThreadKeyFromThreadUrl(url);
+      if (threadKey) void persistReadStatus(boardUrl, threadKey, rows.length);
+
       // Update thread list read counts and response count
-      const threadListIndex = fetchedThreads.findIndex((ft) => ft.threadUrl === url);
-      if (threadListIndex >= 0) {
-        const tid = threadListIndex + 1;
+      // URL は表記ゆれ (末尾スラッシュ有無・5ch.net 表記) があるので正規化して突き合わせる
+      const threadListIndex = fetchedThreads.findIndex(
+        (ft) => ft.threadUrl === url || normalizeThreadUrl(ft.threadUrl) === normalizedUrl
+      );
+      if (threadListIndex >= 0 && rows.length > fetchedThreads[threadListIndex].responseCount) {
+        setFetchedThreads((prev) => prev.map((ft, i) => i === threadListIndex ? { ...ft, responseCount: rows.length } : ft));
+      }
+      // 一覧に表示中の行の既読数を更新する。threadReadMap / threadLastReadCount のキーは
+      // 「今表示しているリストでの並び順 (index + 1)」なので、保存リスト表示中は
+      // fetchedThreads ではなくそのリスト側の index を使う。
+      const sameThread = (u: string) => normalizeThreadUrl(u) === normalizedUrl;
+      const listIndex = showCachedOnly
+        ? cachedThreadList.findIndex((ct) => sameThread(ct.threadUrl))
+        : showRecentOpenedOnly
+        ? recentOpenedThreads.findIndex((ft) => sameThread(ft.threadUrl))
+        : showRecentPostedOnly
+        ? recentPostedThreads.findIndex((ft) => sameThread(ft.threadUrl))
+        : showFavoritesOnly
+        ? favorites.threads.findIndex((ft) => sameThread(ft.threadUrl))
+        : threadListIndex;
+      if (listIndex >= 0) {
+        const tid = listIndex + 1;
         setThreadReadMap((prev) => ({ ...prev, [tid]: true }));
         setThreadLastReadCount((prev) => ({ ...prev, [tid]: rows.length }));
-        if (rows.length > fetchedThreads[threadListIndex].responseCount) {
-          setFetchedThreads((prev) => prev.map((ft, i) => i === threadListIndex ? { ...ft, responseCount: rows.length } : ft));
-        }
-        const ft = fetchedThreads[threadListIndex];
-        const boardUrl = getBoardUrlFromThreadUrl(url);
-        void persistReadStatus(boardUrl, ft.threadKey, rows.length);
       }
       if (prevCount > 0 && rows.length > prevCount) {
         setNewResponseStart(prevCount + 1);
@@ -4924,8 +5037,52 @@ export default function App() {
     }
   };
 
+  // 保存済みログ (cache.db の thread_cache) をスレ一覧ペインに出す。
+  // allBoards=false: 従来の「dat落ちキャッシュ」= 今開いている板のうち、現在のスレ一覧に
+  //   載っていないものだけ。allBoards=true: 板を横断した全件で、板を開いていなくても使える。
+  const openCacheList = (allBoards: boolean) => {
+    if (!isTauriRuntime()) return;
+    const extractBoardName = (url: string): string => {
+      try {
+        const parts = new URL(url).pathname.split("/").filter(Boolean);
+        if (parts.length >= 3 && parts[0] === "test" && parts[1] === "read.cgi") return parts[2];
+        return parts[0] || "";
+      } catch { return ""; }
+    };
+    invoke<[string, string, number][]>("load_all_cached_threads").then((list) => {
+      const currentBoard = extractBoardName(threadUrl);
+      const activeUrls = new Set(fetchedThreads.map((t) => t.threadUrl));
+      const target = allBoards
+        ? list
+        : list
+            .filter(([url]) => extractBoardName(url) === currentBoard)
+            .filter(([url]) => !activeUrls.has(url));
+      setCachedThreadList(target.map(([threadUrl, title, count]) => {
+        const displayTitle = title && title.trim() !== "" ? title : (() => {
+          try {
+            const parts = new URL(threadUrl).pathname.split("/").filter(Boolean);
+            return parts[parts.length - 1] || threadUrl;
+          } catch { return threadUrl; }
+        })();
+        // 板をまたぐ一覧では板名が分からないと選べないので、タイトルの頭に付ける
+        // (スレ一覧に板の列が無いため)
+        const board = allBoards ? extractBoardName(threadUrl) : "";
+        return { threadUrl, title: board ? `[${board}] ${displayTitle}` : displayTitle, resCount: count };
+      }));
+      setCacheListAllBoards(allBoards);
+      setShowCachedOnly(true);
+      setShowFavoritesOnly(false);
+      setShowRecentOpenedOnly(false);
+      setShowRecentPostedOnly(false);
+      if (allBoards) setStatus(`保存ログ ${target.length}件`);
+    }).catch((e) => {
+      console.warn("load_all_cached_threads failed", e);
+      setStatus("保存ログの一覧取得に失敗しました");
+    });
+  };
+
   const purgeThreadCache = (url: string) => {
-    invoke("delete_thread_cache", { threadUrl: url }).catch(() => {});
+    invoke("delete_thread_cache", { threadUrl: url }).catch((e) => console.warn("delete_thread_cache failed", e));
     // close tab
     const tabIdx = threadTabs.findIndex((t) => t.threadUrl === url);
     if (tabIdx >= 0) closeTab(tabIdx);
@@ -4941,24 +5098,36 @@ export default function App() {
       setThreadLastReadCount((prev) => { const next = { ...prev }; delete next[threadId]; return next; });
     }
     // clear persisted read status
+    // スレキーはパス固定 (parts[3]) ではなく getThreadKeyFromThreadUrl で取る。
+    // ex0ch のようにマウントパス配下に test/read.cgi がある URL でキーがずれるため。
     const bUrl = getBoardUrlFromThreadUrl(url);
-    try {
-      const parts = new URL(url).pathname.split("/").filter(Boolean);
-      const tKey = parts.length >= 4 ? parts[3] : "";
-      if (tKey) {
-        invoke<Record<string, Record<string, number>>>("load_read_status").then((current) => {
-          if (current[bUrl] && current[bUrl][tKey] != null) {
-            delete current[bUrl][tKey];
-            invoke("save_read_status", { status: current }).catch((e) => console.warn("save_read_status error", e));
-          }
-        }).catch((e) => console.warn("load_read_status error", e));
-      }
-    } catch { /* invalid url — skip */ }
+    const tKey = getThreadKeyFromThreadUrl(url);
+    if (tKey) void clearReadStatus(bUrl, tKey);
+    // 保存ログ一覧を見ながら消せるよう、一覧の行も即座に取り除く。
+    // threadReadMap / threadLastReadCount のキーは「一覧での index + 1」なので、
+    // 行を詰めたぶん後続の id をずらさないと既読マークが1行ずれる。
+    const cacheIdx = cachedThreadList.findIndex((ct) => ct.threadUrl === url);
+    if (cacheIdx >= 0) {
+      const removedId = cacheIdx + 1;
+      setCachedThreadList((prev) => prev.filter((ct) => ct.threadUrl !== url));
+      const shiftIds = <T,>(m: Record<number, T>): Record<number, T> => {
+        const next: Record<number, T> = {};
+        for (const [k, v] of Object.entries(m)) {
+          const id = Number(k);
+          if (id === removedId) continue;
+          next[id > removedId ? id - 1 : id] = v;
+        }
+        return next;
+      };
+      setThreadReadMap(shiftIds);
+      setThreadLastReadCount(shiftIds);
+      setSelectedThread((prev) => (prev != null && prev > removedId ? prev - 1 : prev));
+    }
     setStatus("キャッシュから削除しました");
   };
 
   const clearThreadCacheOnly = (url: string) => {
-    invoke("delete_thread_cache", { threadUrl: url }).catch(() => {});
+    invoke("delete_thread_cache", { threadUrl: url }).catch((e) => console.warn("delete_thread_cache failed", e));
     tabCacheRef.current.delete(url);
     delete threadFetchTimesRef.current[url];
     try { localStorage.setItem(THREAD_FETCH_TIMES_KEY, JSON.stringify(threadFetchTimesRef.current)); } catch { /* ignore */ }
@@ -5219,6 +5388,28 @@ export default function App() {
       }
     }, 300);
   };
+  // WebView の再読み込み (右クリック→「最新の情報に更新」) やアプリ終了で離脱する直前に、
+  // 300ms デバウンス待ちの読書位置を取りこぼさないよう同期的に書き出す。
+  useEffect(() => {
+    const flush = () => {
+      if (scrollSaveTimerRef.current) {
+        clearTimeout(scrollSaveTimerRef.current);
+        scrollSaveTimerRef.current = null;
+      }
+      const url = threadUrl.trim();
+      if (!url) return;
+      const no = getVisibleResponseNo();
+      if (no <= 1) return;
+      saveScrollPos(url, no);
+      saveBookmark(url, no);
+    };
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+    };
+  }, [threadUrl]);
 
   const beginResponseRowResize = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -5718,15 +5909,24 @@ export default function App() {
                   if (json) {
                     const responses = JSON.parse(json) as ThreadResponseItem[];
                     const bm = loadBookmark(activeTab.threadUrl);
+                    const savedNo = loadScrollPos(activeTab.threadUrl);
                     tabCacheRef.current.set(activeTab.threadUrl, {
                       responses,
                       selectedResponse: bm ?? 1,
+                      scrollResponseNo: savedNo > 1 ? savedNo : undefined,
                     });
                     setFetchedResponses(responses);
-                    if (bm) selectResponseAndScroll(bm);
+                    // 画像・OGP は遅延ロードで位置がずれるため、復元は再アンカー付きの
+                    // scrollToResponseNo を優先する (栞しか無いときだけ選択スクロール)
+                    if (savedNo > 1) {
+                      setSelectedResponse(bm ?? savedNo);
+                      scrollToResponseNo(savedNo);
+                    } else if (bm) {
+                      selectResponseAndScroll(bm);
+                    }
                   }
                 })
-                .catch(() => {});
+                .catch((e) => console.warn("load_thread_cache failed", e));
             }
           }
         }
@@ -7733,7 +7933,7 @@ export default function App() {
                 setThreadFilterMenuOpen((v) => !v);
               }
             }}
-            title={showCachedOnly ? "dat落ちキャッシュ表示中 (クリックで解除)" : showFavoritesOnly ? "お気に入りスレ表示中 (クリックで解除)" : showRecentOpenedOnly ? `最近開いたスレ表示中 (${recentOpenedThreads.length}/${MAX_RECENT_THREADS}, クリックで解除)` : showRecentPostedOnly ? `最近書き込んだスレ表示中 (${recentPostedThreads.length}/${MAX_RECENT_THREADS}, クリックで解除)` : "スレ一覧フィルタ"}
+            title={showCachedOnly ? (cacheListAllBoards ? `保存ログ一覧表示中 (${cachedThreadList.length}件, クリックで解除)` : "dat落ちキャッシュ表示中 (クリックで解除)") : showFavoritesOnly ? "お気に入りスレ表示中 (クリックで解除)" : showRecentOpenedOnly ? `最近開いたスレ表示中 (${recentOpenedThreads.length}/${MAX_RECENT_THREADS}, クリックで解除)` : showRecentPostedOnly ? `最近書き込んだスレ表示中 (${recentPostedThreads.length}/${MAX_RECENT_THREADS}, クリックで解除)` : "スレ一覧フィルタ"}
           >{showCachedOnly ? <Save size={14} /> : showFavoritesOnly ? <Star size={14} /> : showRecentOpenedOnly ? <History size={14} /> : showRecentPostedOnly ? <Pencil size={14} /> : <ClipboardList size={14} />}</button>
           <button
             className="title-action-btn title-split-toggle"
@@ -7745,37 +7945,14 @@ export default function App() {
             <div className="title-split-menu">
               <button onClick={() => {
                 setThreadFilterMenuOpen(false);
-                if (showCachedOnly) { setShowCachedOnly(false); setCachedThreadList([]); return; }
-                if (isTauriRuntime()) {
-                  invoke<[string, string, number][]>("load_all_cached_threads").then((list) => {
-                    const extractBoardName = (url: string): string => {
-                      try {
-                        const parts = new URL(url).pathname.split("/").filter(Boolean);
-                        if (parts.length >= 3 && parts[0] === "test" && parts[1] === "read.cgi") return parts[2];
-                        return parts[0] || "";
-                      } catch { return ""; }
-                    };
-                    const currentBoard = extractBoardName(threadUrl);
-                    const activeUrls = new Set(fetchedThreads.map((t) => t.threadUrl));
-                    const datOchiList = list
-                      .filter(([url]) => extractBoardName(url) === currentBoard)
-                      .filter(([url]) => !activeUrls.has(url));
-                    setCachedThreadList(datOchiList.map(([threadUrl, title, count]) => {
-                      const displayTitle = title && title.trim() !== "" ? title : (() => {
-                        try {
-                          const parts = new URL(threadUrl).pathname.split("/").filter(Boolean);
-                          return parts[parts.length - 1] || threadUrl;
-                        } catch { return threadUrl; }
-                      })();
-                      return { threadUrl, title: displayTitle, resCount: count };
-                    }));
-                    setShowCachedOnly(true);
-                    setShowFavoritesOnly(false);
-                    setShowRecentOpenedOnly(false);
-                    setShowRecentPostedOnly(false);
-                  }).catch(() => {});
-                }
-              }}>{showCachedOnly ? "\u2713 " : ""}dat落ちキャッシュ</button>
+                if (showCachedOnly && !cacheListAllBoards) { setShowCachedOnly(false); setCachedThreadList([]); return; }
+                openCacheList(false);
+              }}>{showCachedOnly && !cacheListAllBoards ? "\u2713 " : ""}dat落ちキャッシュ</button>
+              <button onClick={() => {
+                setThreadFilterMenuOpen(false);
+                if (showCachedOnly && cacheListAllBoards) { setShowCachedOnly(false); setCachedThreadList([]); return; }
+                openCacheList(true);
+              }}>{showCachedOnly && cacheListAllBoards ? "\u2713 " : ""}保存ログ一覧 (全板)</button>
               <button onClick={() => {
                 setThreadFilterMenuOpen(false);
                 const willEnable = !showFavoritesOnly;
