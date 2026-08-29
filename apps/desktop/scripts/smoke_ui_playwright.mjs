@@ -675,6 +675,47 @@ try {
   await page.waitForSelector(".compose-window");
   const composeHeader = await page.$(".compose-header");
   assert(composeHeader, "compose window should have draggable header");
+
+  // ヘッダーをドラッグすると位置が layoutPrefs に永続化される
+  const headerBox = await composeHeader.boundingBox();
+  assert(headerBox, "compose header should have a bounding box");
+  await page.mouse.move(headerBox.x + headerBox.width / 2, headerBox.y + headerBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(headerBox.x + headerBox.width / 2 - 60, headerBox.y + headerBox.height / 2 - 40, { steps: 5 });
+  await page.mouse.up();
+  await new Promise((r) => setTimeout(r, 150));
+  const composePos = await page.evaluate(() => {
+    try {
+      return JSON.parse(localStorage.getItem("desktop.layoutPrefs.v1") || "{}").composePos;
+    } catch {
+      return undefined;
+    }
+  });
+  assert(
+    composePos && typeof composePos.x === "number" && typeof composePos.y === "number",
+    `compose window position should persist, got ${JSON.stringify(composePos)}`,
+  );
+  console.log("smoke-ui: compose window position persistence ok");
+
+  // 閉じて開き直しても位置は既定位置に戻らない (openCompose が位置をリセットしない)
+  const draggedBox = await page.$eval(".compose-window", (el) => {
+    const r = el.getBoundingClientRect();
+    return { left: Math.round(r.left), top: Math.round(r.top) };
+  });
+  await page.click(".compose-header button:has-text('閉じる')");
+  await page.waitForSelector(".compose-window", { state: "detached" });
+  await page.click(".thread-title-actions button[title='書き込み']");
+  await page.waitForSelector(".compose-window");
+  const reopenedBox = await page.$eval(".compose-window", (el) => {
+    const r = el.getBoundingClientRect();
+    return { left: Math.round(r.left), top: Math.round(r.top) };
+  });
+  assert(
+    reopenedBox.left === draggedBox.left && reopenedBox.top === draggedBox.top,
+    `compose window should reopen at the dragged position, got ${JSON.stringify(reopenedBox)} expected ${JSON.stringify(draggedBox)}`,
+  );
+  console.log("smoke-ui: compose window position kept on reopen ok");
+
   await page.click(".compose-header button:has-text('閉じる')");
   console.log("smoke-ui: draggable compose ok");
 
@@ -1320,6 +1361,7 @@ try {
       "https://rio2016.5ch.io/base/": "板A太郎",
       "https://rio2016.5ch.io/news4vip/": "板B太郎",
     }));
+    localStorage.setItem("desktop.nameHistory.v1", JSON.stringify(["板A太郎", "板B太郎"]));
     localStorage.setItem("desktop.threadTabs.v1", JSON.stringify({
       tabs: [
         { threadUrl: "https://rio2016.5ch.io/test/read.cgi/base/1111111111/", title: "板Aのスレ" },
@@ -1366,6 +1408,95 @@ try {
   assert(newThreadNameValue === "板A太郎", `new thread name should come from board A, got ${newThreadNameValue}`);
   await page.click(".settings-panel .settings-header button");
   console.log("smoke-ui: per-board compose name ok");
+
+  // --- 名前を記憶しない ---
+  const fileMenuForForgetName = await page.$('.menu-item:has-text("ファイル")');
+  await fileMenuForForgetName.click();
+  await new Promise((r) => setTimeout(r, 100));
+  await page.click('.menu-dropdown button:has-text("設定")');
+  await page.waitForSelector(".settings-panel");
+  const forgetNameToggle = await page.$('.settings-body label:has-text("名前を記憶しない") input[type="checkbox"]');
+  assert(forgetNameToggle, "settings should have the forget-name toggle");
+  assert(!(await forgetNameToggle.isChecked()), "forget-name should default to off");
+  await forgetNameToggle.check();
+  await new Promise((r) => setTimeout(r, 200));
+  const forgetPrefs = JSON.parse(await page.evaluate(() => localStorage.getItem("desktop.composePrefs.v1")));
+  assert(forgetPrefs.forgetName === true, `forgetName should be persisted, got ${forgetPrefs.forgetName}`);
+  assert(forgetPrefs.name === "", `name should not be persisted while forgetName is on, got ${forgetPrefs.name}`);
+  await page.click(".settings-panel .settings-header button");
+  await new Promise((r) => setTimeout(r, 100));
+
+  // 板ごとに名前を記憶していても、ON のあいだは名前欄が空で開く
+  await page.click("button[title='書き込み']");
+  await page.waitForSelector(".compose-grid input");
+  const forgottenName = await page.$eval(".compose-grid input", (el) => el.value);
+  assert(forgottenName === "", `compose name should be empty while forgetName is on, got ${forgottenName}`);
+  await page.click(".compose-header button:last-child");
+  await new Promise((r) => setTimeout(r, 100));
+  await page.click("button[title='スレ立て']");
+  await page.waitForSelector(".settings-panel input[list='name-history-list-newthread']");
+  const forgottenNewThreadName = await page.$eval(
+    ".settings-panel input[list='name-history-list-newthread']",
+    (el) => el.value,
+  );
+  assert(
+    forgottenNewThreadName === "",
+    `new thread name should be empty while forgetName is on, got ${forgottenNewThreadName}`,
+  );
+  await page.click(".settings-panel .settings-header button");
+  console.log("smoke-ui: forget compose name ok");
+
+  // --- 記憶した名前を削除 ---
+  const fileMenuForNameClear = await page.$('.menu-item:has-text("ファイル")');
+  await fileMenuForNameClear.click();
+  await new Promise((r) => setTimeout(r, 100));
+  await page.click('.menu-dropdown button:has-text("設定")');
+  await page.waitForSelector(".settings-panel");
+  const clearNameBtn = await page.$('.settings-body button:has-text("記憶した名前を削除")');
+  assert(clearNameBtn, "settings should have the clear-remembered-names button");
+  // 1回目のクリックでは消さず、確認待ちになる
+  await clearNameBtn.click();
+  await new Promise((r) => setTimeout(r, 100));
+  assert(
+    await page.$('.settings-body button:has-text("本当に削除する")'),
+    "the first click should only arm the confirmation",
+  );
+  assert(
+    await page.evaluate(() => localStorage.getItem("desktop.boardNames.v1") !== null),
+    "board names should survive the first click",
+  );
+  // キャンセルで元に戻る
+  await page.click('.settings-body button:has-text("キャンセル")');
+  await new Promise((r) => setTimeout(r, 100));
+  assert(
+    await page.$('.settings-body button:has-text("記憶した名前を削除")'),
+    "cancel should return the button to its initial label",
+  );
+  // 2回目のクリック → 確定で削除
+  await page.click('.settings-body button:has-text("記憶した名前を削除")');
+  await new Promise((r) => setTimeout(r, 100));
+  await page.click('.settings-body button:has-text("本当に削除する")');
+  await new Promise((r) => setTimeout(r, 200));
+  const clearedNames = await page.evaluate(() => ({
+    boardNames: localStorage.getItem("desktop.boardNames.v1"),
+    nameHistory: localStorage.getItem("desktop.nameHistory.v1"),
+    composeName: JSON.parse(localStorage.getItem("desktop.composePrefs.v1")).name,
+  }));
+  assert(clearedNames.boardNames === null, `board names should be cleared, got ${clearedNames.boardNames}`);
+  assert(clearedNames.nameHistory === null, `name history should be cleared, got ${clearedNames.nameHistory}`);
+  assert(clearedNames.composeName === "", `compose name should be cleared, got ${clearedNames.composeName}`);
+  assert(
+    await page.$('.settings-body button:has-text("記憶した名前を削除")'),
+    "the button should return to its initial label after clearing",
+  );
+  assert(
+    await page.$('.settings-body .settings-row:has-text("削除しました")'),
+    "clearing should show a completion message",
+  );
+  // 完了メッセージは数秒で自動的に消える
+  await page.waitForSelector('.settings-body .settings-row:has-text("削除しました")', { state: "detached", timeout: 6000 });
+  await page.click(".settings-panel .settings-header button");
+  console.log("smoke-ui: clear remembered names ok");
 
   console.log("smoke-ui: ok");
 } finally {

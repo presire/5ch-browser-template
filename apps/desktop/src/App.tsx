@@ -533,6 +533,26 @@ const NG_ID_EXPIRE_DAYS_KEY = "desktop.ngIdExpireDays.v1";
 // "" は「フィルタなし = 板のスレ一覧」。dat落ちキャッシュは板依存で起動時に
 // 再取得が要るため対象外。
 const THREAD_FILTER_MODE_KEY = "desktop.threadFilterMode.v1";
+// localStorage に置いていた UI 状態のうち、ユーザーが手で開いて書き換えたり
+// 消したりしたくなるものは data/<file>.json を実体にする。localStorage 側は
+// 同期的に読める副本として残し (Tauri なしのスモークテストもこれで動く)、
+// 起動時に bootstrapUiJson() がファイルの内容を流し込む。
+const UI_JSON_FILES: Record<string, string> = {
+  [BOARD_NAMES_KEY]: "board_names",
+  [NAME_HISTORY_KEY]: "name_history",
+  [COMPOSE_PREFS_KEY]: "compose_prefs",
+  [BOOKMARK_KEY]: "bookmarks",
+  [MY_POSTS_KEY]: "my_posts",
+  [THREAD_CATEGORIES_KEY]: "thread_categories",
+  [SEARCH_HISTORY_KEY]: "search_history",
+  [RECENT_OPENED_THREADS_KEY]: "recent_opened_threads",
+  [RECENT_POSTED_THREADS_KEY]: "recent_posted_threads",
+  [THREAD_TABS_KEY]: "thread_tabs",
+};
+// 旧バージョンの localStorage から data/*.json へ移し終えたかどうか。移行前は
+// ファイルが無くても localStorage を残すが、移行後にファイルが無ければ
+// 「ユーザーが消した」とみなして副本も落とす。
+const UI_JSON_MIGRATED_KEY = "desktop.uiJsonMigrated.v1";
 // NG ID 自動削除の選択肢 (日数)。0 = 無効 (既定)。5ch の ID は日替わりなので
 // NG ID だけが際限なく溜まる。ワード / 名前は恒久的なものなので対象外。
 const NG_ID_EXPIRE_DAY_OPTIONS = [0, 1, 3, 7, 30];
@@ -650,6 +670,102 @@ function useMenuReclamp<T extends { x: number; y: number }>(
 }
 const isTauriRuntime = () =>
   typeof window !== "undefined" && Boolean((globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+
+// 名前欄のように 1 打鍵ごとに変わる状態があるので、ファイル書き込みはキー単位で
+// まとめる。読書位置の保存と同じ間隔にし、離脱時は flushUiJson() で取りこぼさない。
+const UI_JSON_WRITE_DELAY_MS = 300;
+const uiJsonPending = new Map<string, string>();
+const uiJsonTimers = new Map<string, number>();
+
+const cancelUiJsonWrite = (file: string) => {
+  const timer = uiJsonTimers.get(file);
+  if (timer !== undefined) {
+    window.clearTimeout(timer);
+    uiJsonTimers.delete(file);
+  }
+  uiJsonPending.delete(file);
+};
+
+// 保留中の書き込みを実行する。file を省略すると全件。
+const flushUiJson = (file?: string) => {
+  for (const target of file ? [file] : [...uiJsonPending.keys()]) {
+    const payload = uiJsonPending.get(target);
+    cancelUiJsonWrite(target);
+    if (payload === undefined) continue;
+    void invoke("save_ui_json", { name: target, json: payload }).catch((e) => {
+      console.warn(`save_ui_json ${target} failed`, e);
+    });
+  }
+};
+
+// UI 状態を localStorage と data/<file>.json の両方へ書く。ファイル側は非同期かつ
+// デバウンスされるので、同期的に読む既存コードのために localStorage も必ず更新する。
+const saveUiJson = (key: string, payload: string) => {
+  try {
+    localStorage.setItem(key, payload);
+  } catch (e) {
+    console.warn(`failed to save ${key}`, e);
+  }
+  const file = UI_JSON_FILES[key];
+  if (!file || !isTauriRuntime()) return;
+  cancelUiJsonWrite(file);
+  uiJsonPending.set(file, payload);
+  uiJsonTimers.set(file, window.setTimeout(() => flushUiJson(file), UI_JSON_WRITE_DELAY_MS));
+};
+
+// UI 状態を localStorage と data/<file>.json の両方から消す。
+const removeUiJson = (key: string) => {
+  try {
+    localStorage.removeItem(key);
+  } catch (e) {
+    console.warn(`failed to remove ${key}`, e);
+  }
+  const file = UI_JSON_FILES[key];
+  if (!file || !isTauriRuntime()) return;
+  cancelUiJsonWrite(file);
+  void invoke("delete_ui_json", { name: file }).catch((e) => {
+    console.warn(`delete_ui_json ${file} failed`, e);
+  });
+};
+
+// data/<file>.json の内容を localStorage へ流し込む。App を描画する前に
+// main.tsx から呼ぶので、以降は既存の同期的な localStorage 読み出しが
+// そのままファイルの内容を見ることになる。
+export async function bootstrapUiJson(): Promise<void> {
+  if (!isTauriRuntime()) return;
+  // WebView の再読み込みやアプリ終了でデバウンス待ちの書き込みを落とさない。
+  window.addEventListener("pagehide", () => flushUiJson());
+  window.addEventListener("beforeunload", () => flushUiJson());
+  let migrated = false;
+  try {
+    migrated = localStorage.getItem(UI_JSON_MIGRATED_KEY) === "1";
+  } catch (e) {
+    console.warn("failed to read the ui json migration flag", e);
+  }
+  for (const [key, file] of Object.entries(UI_JSON_FILES)) {
+    try {
+      const raw = await invoke<string>("load_ui_json", { name: file });
+      if (raw) {
+        localStorage.setItem(key, raw);
+      } else if (!migrated) {
+        // 旧バージョンからの初回起動。localStorage 側をファイルへ書き出す。
+        const legacy = localStorage.getItem(key);
+        if (legacy) await invoke("save_ui_json", { name: file, json: legacy });
+      } else {
+        // 移行済みなのにファイルが無い = ユーザーが消した。副本も落とす。
+        localStorage.removeItem(key);
+      }
+    } catch (e) {
+      // 読めなかっただけかもしれないので localStorage 側はそのまま残す。
+      console.warn(`bootstrapUiJson ${file} failed`, e);
+    }
+  }
+  try {
+    localStorage.setItem(UI_JSON_MIGRATED_KEY, "1");
+  } catch (e) {
+    console.warn("failed to save the ui json migration flag", e);
+  }
+}
 const isTypingTarget = (target: EventTarget | null) => {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName.toLowerCase();
@@ -1469,6 +1585,12 @@ export default function App() {
   const boardNamesRef = useRef<Record<string, string>>({});
   // 名前欄をユーザーが自分で書き換えたか。書き換えた名前は板を移っても勝手に差し替えない
   const composeNameEditedRef = useRef(false);
+  // ON のとき名前欄を記憶しない (開くたびに空、板ごとの名前も入力履歴も使わない)
+  const [composeForgetName, setComposeForgetName] = useState(false);
+  // 「記憶した名前を削除」の確認待ち状態 (2段階クリックで誤操作を防ぐ)
+  const [nameClearArmed, setNameClearArmed] = useState(false);
+  // 削除完了メッセージ。数秒で自動的に消す
+  const [nameClearMsg, setNameClearMsg] = useState("");
   const [composeMail, setComposeMail] = useState("");
   const [composeSage, setComposeSage] = useState(false);
   const [composeBody, setComposeBody] = useState("");
@@ -1553,11 +1675,7 @@ export default function App() {
     }
   });
   useEffect(() => {
-    try {
-      localStorage.setItem(THREAD_CATEGORIES_KEY, JSON.stringify(threadCategories));
-    } catch (e) {
-      console.warn("desktop.threadCategories.v1 save failed", e);
-    }
+    saveUiJson(THREAD_CATEGORIES_KEY, JSON.stringify(threadCategories));
   }, [threadCategories]);
   const [threadCategoryPanelOpen, setThreadCategoryPanelOpen] = useState(false);
   const [categoryAddKeyword, setCategoryAddKeyword] = useState("");
@@ -2062,7 +2180,7 @@ export default function App() {
         const list = prev[pending.threadUrl] ?? [];
         if (list.includes(matched.responseNo)) return prev;
         const next = { ...prev, [pending.threadUrl]: [...list, matched.responseNo] };
-        try { localStorage.setItem(MY_POSTS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+        saveUiJson(MY_POSTS_KEY, JSON.stringify(next));
         return next;
       });
     }
@@ -2721,7 +2839,7 @@ export default function App() {
       const raw = localStorage.getItem(BOOKMARK_KEY);
       const data: Record<string, number> = raw ? JSON.parse(raw) : {};
       data[url] = responseNo;
-      localStorage.setItem(BOOKMARK_KEY, JSON.stringify(data));
+      saveUiJson(BOOKMARK_KEY, JSON.stringify(data));
     } catch { /* ignore */ }
   };
 
@@ -3966,11 +4084,11 @@ export default function App() {
           body: postedBody,
         });
         setComposeBody("");
-        rememberBoardName(getBoardUrlFromThreadUrl(postTargetUrl), composeName);
-        if (composeName.trim()) {
+        if (!composeForgetName) rememberBoardName(getBoardUrlFromThreadUrl(postTargetUrl), composeName);
+        if (!composeForgetName && composeName.trim()) {
           setNameHistory((prev) => {
             const next = [composeName.trim(), ...prev.filter((n) => n !== composeName.trim())].slice(0, 20);
-            try { localStorage.setItem(NAME_HISTORY_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+            saveUiJson(NAME_HISTORY_KEY, JSON.stringify(next));
             return next;
           });
         }
@@ -4026,7 +4144,21 @@ export default function App() {
     if (boardNamesRef.current[boardUrl] === trimmed) return;
     const next = { ...boardNamesRef.current, [boardUrl]: trimmed };
     boardNamesRef.current = next;
-    try { localStorage.setItem(BOARD_NAMES_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    saveUiJson(BOARD_NAMES_KEY, JSON.stringify(next));
+  };
+  // 記憶した名前 (板ごとの名前・入力履歴・前回の名前) をまとめて消す
+  const clearRememberedNames = () => {
+    boardNamesRef.current = {};
+    composeNameEditedRef.current = false;
+    setNameHistory([]);
+    setComposeName("");
+    setNewThreadName("");
+    try {
+      removeUiJson(BOARD_NAMES_KEY);
+      removeUiJson(NAME_HISTORY_KEY);
+    } catch (e) {
+      console.warn("failed to clear remembered names", e);
+    }
   };
   const normalizeThreadTitle = (title: string, url: string): string => {
     const raw = decodeHtmlEntities((title || "").trim());
@@ -4048,7 +4180,7 @@ export default function App() {
     };
     setRecentOpenedThreads((prev) => {
       const next = upsertRecentThread(prev, entry);
-      try { localStorage.setItem(RECENT_OPENED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      saveUiJson(RECENT_OPENED_THREADS_KEY, JSON.stringify(next));
       return next;
     });
   };
@@ -4062,7 +4194,7 @@ export default function App() {
     };
     setRecentPostedThreads((prev) => {
       const next = upsertRecentThread(prev, entry);
-      try { localStorage.setItem(RECENT_POSTED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      saveUiJson(RECENT_POSTED_THREADS_KEY, JSON.stringify(next));
       return next;
     });
   };
@@ -4087,7 +4219,7 @@ export default function App() {
     const prev = recentOpenedThreads;
     const next = prev.filter((t) => t.threadUrl !== target);
     setRecentOpenedThreads(next);
-    try { localStorage.setItem(RECENT_OPENED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    saveUiJson(RECENT_OPENED_THREADS_KEY, JSON.stringify(next));
     if (showRecentOpenedOnly) remapSavedThreadCounts(prev, next);
   };
   const removeRecentPostedThread = (url: string) => {
@@ -4095,7 +4227,7 @@ export default function App() {
     const prev = recentPostedThreads;
     const next = prev.filter((t) => t.threadUrl !== target);
     setRecentPostedThreads(next);
-    try { localStorage.setItem(RECENT_POSTED_THREADS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    saveUiJson(RECENT_POSTED_THREADS_KEY, JSON.stringify(next));
     if (showRecentPostedOnly) remapSavedThreadCounts(prev, next);
   };
 
@@ -4154,11 +4286,11 @@ export default function App() {
           mail: newThreadMail,
           body: newThreadBody,
         });
-        rememberBoardName(boardUrl, newThreadName);
-        if (newThreadName.trim()) {
+        if (!composeForgetName) rememberBoardName(boardUrl, newThreadName);
+        if (!composeForgetName && newThreadName.trim()) {
           setNameHistory((prev) => {
             const next = [newThreadName.trim(), ...prev.filter((n) => n !== newThreadName.trim())].slice(0, 20);
-            try { localStorage.setItem(NAME_HISTORY_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+            saveUiJson(NAME_HISTORY_KEY, JSON.stringify(next));
             return next;
           });
         }
@@ -4990,7 +5122,7 @@ export default function App() {
   const searchHistoryRef = useRef({ thread: threadSearchHistory, response: responseSearchHistory });
   searchHistoryRef.current = { thread: threadSearchHistory, response: responseSearchHistory };
   const persistSearchHistory = (thread: string[], response: string[]) => {
-    try { localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify({ thread, response })); } catch { /* ignore */ }
+    saveUiJson(SEARCH_HISTORY_KEY, JSON.stringify({ thread, response }));
   };
   const addSearchHistory = (type: "thread" | "response", word: string) => {
     const trimmed = word.trim();
@@ -5229,21 +5361,28 @@ export default function App() {
   // 書き込み欄を開く。投稿先の板に記憶した名前があれば名前欄に入れる (未登録の板は直近使った名前のまま)
   const openCompose = (opts?: { keepBody?: boolean }) => {
     composeNameEditedRef.current = false;
-    const targetUrl = threadTabs[activeTabIndex]?.threadUrl ?? threadUrl;
-    if (targetUrl) {
-      const saved = getBoardName(getBoardUrlFromThreadUrl(targetUrl));
-      if (saved !== null) setComposeName(saved);
+    if (composeForgetName) {
+      setComposeName("");
+    } else {
+      const targetUrl = threadTabs[activeTabIndex]?.threadUrl ?? threadUrl;
+      if (targetUrl) {
+        const saved = getBoardName(getBoardUrlFromThreadUrl(targetUrl));
+        if (saved !== null) setComposeName(saved);
+      }
     }
     setComposeOpen(true);
     if (!opts?.keepBody) {
-      setComposePos(null);
+      // 位置 (composePos) はここでリセットしない — 前回動かした位置を保持する。
+      // 既定位置に戻すのはヘッダーの「サイズと位置をリセット」ボタン。
       setComposeBody("");
       setComposeResult(null);
     }
   };
 
   const openNewThreadDialog = () => {
-    if (threadUrl) {
+    if (composeForgetName) {
+      setNewThreadName("");
+    } else if (threadUrl) {
       const saved = getBoardName(getBoardUrlFromThreadUrl(threadUrl));
       if (saved !== null) setNewThreadName(saved);
     }
@@ -5772,6 +5911,7 @@ export default function App() {
           gestureBindings?: Record<string, GestureActionId>;
           threadAgeColorEnabled?: boolean;
           composeSize?: { w: number; h: number };
+          composePos?: { x: number; y: number };
           threadColVisible?: Record<string, boolean>;
           threadColOrder?: string[];
           responseBodyBottomPad?: boolean;
@@ -5844,6 +5984,16 @@ export default function App() {
         }
         if (typeof parsed.threadAgeColorEnabled === "boolean") setThreadAgeColorEnabled(parsed.threadAgeColorEnabled);
         if (parsed.composeSize && typeof parsed.composeSize.w === "number" && typeof parsed.composeSize.h === "number") setComposeSize(parsed.composeSize);
+        if (parsed.composePos && typeof parsed.composePos.x === "number" && typeof parsed.composePos.y === "number") {
+          // 解像度やウィンドウサイズが変わってもヘッダーを掴めるように、画面内へ補正して復元する
+          const cw = typeof parsed.composeSize?.w === "number" ? parsed.composeSize.w : 560;
+          const maxX = Math.max(0, window.innerWidth - Math.min(cw, 160));
+          const maxY = Math.max(0, window.innerHeight - 32);
+          setComposePos({
+            x: Math.min(Math.max(0, parsed.composePos.x), maxX),
+            y: Math.min(Math.max(0, parsed.composePos.y), maxY),
+          });
+        }
         if (parsed.threadColVisible && typeof parsed.threadColVisible === "object") setThreadColVisible((prev) => ({ ...prev, ...parsed.threadColVisible }));
         if (Array.isArray(parsed.threadColOrder)) setThreadColOrder(normalizeThreadColOrder(parsed.threadColOrder));
         if (typeof parsed.responseBodyBottomPad === "boolean") setResponseBodyBottomPad(parsed.responseBodyBottomPad);
@@ -5869,8 +6019,9 @@ export default function App() {
     try {
       const composeRaw = localStorage.getItem(COMPOSE_PREFS_KEY);
       if (composeRaw) {
-        const cp = JSON.parse(composeRaw) as { name?: string; mail?: string; sage?: boolean; fontSize?: number };
-        if (typeof cp.name === "string") setComposeName(cp.name);
+        const cp = JSON.parse(composeRaw) as { name?: string; mail?: string; sage?: boolean; fontSize?: number; forgetName?: boolean };
+        if (typeof cp.forgetName === "boolean") setComposeForgetName(cp.forgetName);
+        if (typeof cp.name === "string" && !cp.forgetName) setComposeName(cp.name);
         if (typeof cp.fontSize === "number") setComposeFontSize(cp.fontSize);
         if (typeof cp.mail === "string") setComposeMail(cp.mail);
         if (typeof cp.sage === "boolean") setComposeSage(cp.sage);
@@ -6069,10 +6220,14 @@ export default function App() {
   }, [authSaveMsg]);
 
   useEffect(() => {
+    if (!nameClearMsg) return;
+    const timer = window.setTimeout(() => setNameClearMsg(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [nameClearMsg]);
+
+  useEffect(() => {
     if (!tabsRestoredRef.current) return;
-    try {
-      localStorage.setItem(THREAD_TABS_KEY, JSON.stringify({ tabs: threadTabs, activeIndex: activeTabIndex }));
-    } catch { /* ignore */ }
+    saveUiJson(THREAD_TABS_KEY, JSON.stringify({ tabs: threadTabs, activeIndex: activeTabIndex }));
   }, [threadTabs, activeTabIndex]);
 
 
@@ -6618,6 +6773,7 @@ export default function App() {
       gestureBindings,
       threadAgeColorEnabled,
       composeSize: composeSize ?? undefined,
+      composePos: composePos ?? undefined,
       threadColVisible,
       threadColOrder,
       responseBodyBottomPad,
@@ -6631,7 +6787,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, composeSize, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, composeSize, composePos, threadColVisible, threadColOrder, responseBodyBottomPad, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -6691,15 +6847,21 @@ export default function App() {
   // 板が変わったら名前欄もその板の名前に差し替える。ただし手入力した名前は消さない
   useEffect(() => {
     if (!composeOpen || !composeTargetBoardUrl) return;
+    if (composeForgetName) return;
     if (composeNameEditedRef.current) return;
     const saved = getBoardName(composeTargetBoardUrl);
     if (saved === null || saved === composeName) return;
     setComposeName(saved);
-  }, [composeOpen, composeTargetBoardUrl, composeName]);
+  }, [composeOpen, composeTargetBoardUrl, composeName, composeForgetName]);
+
+  // 設定を閉じたら「記憶した名前を削除」の確認待ちは取り消す
+  useEffect(() => {
+    if (!settingsOpen) setNameClearArmed(false);
+  }, [settingsOpen]);
 
   useEffect(() => {
-    localStorage.setItem(COMPOSE_PREFS_KEY, JSON.stringify({ name: composeName, mail: composeMail, sage: composeSage, fontSize: composeFontSize }));
-  }, [composeName, composeMail, composeSage, composeFontSize]);
+    saveUiJson(COMPOSE_PREFS_KEY, JSON.stringify({ name: composeForgetName ? "" : composeName, mail: composeMail, sage: composeSage, fontSize: composeFontSize, forgetName: composeForgetName }));
+  }, [composeName, composeMail, composeSage, composeFontSize, composeForgetName]);
 
   useEffect(() => {
     if (suppressThreadScrollRef.current) {
@@ -9701,7 +9863,7 @@ export default function App() {
             <span className="compose-target" title={threadTabs[activeTabIndex]?.threadUrl ?? threadUrl}>
               {threadTabs[activeTabIndex]?.title ?? threadUrl}
             </span>
-            <button className="compose-header-icon" title="サイズをリセット" onClick={() => { setComposeSize(null); setComposePos(null); }}><RotateCcw size={14} /></button>
+            <button className="compose-header-icon" title="サイズと位置をリセット" onClick={() => { setComposeSize(null); setComposePos(null); }}><RotateCcw size={14} /></button>
             <button onClick={() => { setComposeOpen(false); setComposeResult(null); setUploadPanelOpen(false); setUploadResults([]); setEmojiPickerTarget((t) => (t === "compose" ? null : t)); }}>閉じる</button>
           </header>
           <div className="compose-grid">
@@ -11245,6 +11407,31 @@ export default function App() {
                   <input type="checkbox" checked={composeSage} onChange={(e) => setComposeSage(e.target.checked)} />
                   <span>sage</span>
                 </label>
+                <label className="settings-row">
+                  <input
+                    type="checkbox"
+                    checked={composeForgetName}
+                    onChange={(e) => {
+                      setComposeForgetName(e.target.checked);
+                      if (e.target.checked) { setComposeName(""); setNewThreadName(""); }
+                    }}
+                  />
+                  <span>名前を記憶しない</span>
+                  <span className="settings-hint">開くたびに名前欄を空にする</span>
+                </label>
+                <div className="settings-row">
+                  <span>記憶した名前</span>
+                  {nameClearArmed ? (
+                    <>
+                      <button type="button" onClick={() => { clearRememberedNames(); setNameClearArmed(false); setStatus("記憶した名前を削除しました"); setNameClearMsg("削除しました"); }}>本当に削除する</button>
+                      <button type="button" onClick={() => setNameClearArmed(false)}>キャンセル</button>
+                    </>
+                  ) : (
+                    <button type="button" onClick={() => setNameClearArmed(true)}>記憶した名前を削除</button>
+                  )}
+                  <span className="settings-hint">板ごとの名前・入力履歴・前回の名前をまとめて消す</span>
+                </div>
+                {nameClearMsg && <div className="settings-row"><span>{nameClearMsg}</span></div>}
                 <label className="settings-row">
                   <span>書き込み文字サイズ</span>
                   <input type="number" value={composeFontSize} min={10} max={24} onChange={(e) => setComposeFontSize(Number(e.target.value))} />
