@@ -412,6 +412,18 @@ type ThreadTab = {
 const stripHtmlForMatch = (html: string): string =>
   html.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, " ").trim();
 
+// 5ch は Be ログイン中の書き込みに Be アイコン (sssp://img.5ch.io/ico/xxx.gif) を
+// 本文の先頭へ差し込む。送信した本文側には無いので、自分のレスの照合ではこれを
+// 落とした形でも比較する。
+const stripBeIconPrefix = (text: string): string =>
+  text.replace(/^sssp:\/\/\S+\.(?:gif|png|jpe?g)\s*/i, "");
+
+// 書き込み後に自分のレスを本文で照合するときの部分一致ガード。完全一致が取れない
+// 場合だけ使うフォールバックなので、短い文字列の包含 (他人の短文レスが自分の本文に
+// 含まれるケース) は弾き、長さが十分あって かつ 近いものだけ自分のレスとみなす。
+const MY_POST_MIN_PARTIAL_LEN = 8;
+const MY_POST_MIN_PARTIAL_RATIO = 0.8;
+
 const MIN_BOARD_PANE_PX = 160;
 const MIN_THREAD_PANE_PX = 120;
 const MIN_RESPONSE_PANE_PX = 360;
@@ -514,6 +526,8 @@ const FAV_RECENT_POSTED_EXPANDED_KEY = "desktop.favRecentPostedExpanded.v1";
 const FAV_THREADS_SCROLL_KEY = "desktop.favThreadsScrollTop.v1";
 const SCROLL_POS_KEY = "desktop.scrollPositions.v1";
 const NEW_THREAD_SIZE_KEY = "desktop.newThreadDialogSize.v1";
+const NEW_THREAD_POS_KEY = "desktop.newThreadDialogPos.v1";
+const NEW_THREAD_DEFAULT_SIZE = { w: 520, h: 420 };
 const THREAD_FETCH_TIMES_KEY = "desktop.threadFetchTimes.v1";
 const WINDOW_STATE_KEY = "desktop.windowState.v1";
 const SEARCH_HISTORY_KEY = "desktop.searchHistory.v1";
@@ -1707,9 +1721,26 @@ export default function App() {
   const [newThreadSubmitting, setNewThreadSubmitting] = useState(false);
   const [newThreadDialogSize, setNewThreadDialogSize] = useState<{ w: number; h: number }>(() => {
     try { const v = localStorage.getItem(NEW_THREAD_SIZE_KEY); if (v) return JSON.parse(v); } catch { /* ignore */ }
-    return { w: 520, h: 420 };
+    return { ...NEW_THREAD_DEFAULT_SIZE };
+  });
+  const [newThreadDialogPos, setNewThreadDialogPos] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const v = localStorage.getItem(NEW_THREAD_POS_KEY);
+      if (v) {
+        const p = JSON.parse(v);
+        if (typeof p?.x === "number" && typeof p?.y === "number") {
+          // 解像度やウィンドウサイズが変わってもヘッダーを掴めるように、画面内へ補正して復元する
+          const maxX = Math.max(0, window.innerWidth - 160);
+          const maxY = Math.max(0, window.innerHeight - 32);
+          return { x: Math.min(Math.max(0, p.x), maxX), y: Math.min(Math.max(0, p.y), maxY) };
+        }
+      }
+    } catch { /* ignore */ }
+    return null;
   });
   const newThreadPanelRef = useRef<HTMLDivElement>(null);
+  const newThreadDragRef = useRef<{ startX: number; startY: number; startPosX: number; startPosY: number; last: { x: number; y: number } | null } | null>(null);
+  const newThreadNameEditedRef = useRef(false);
   const [postHistory, setPostHistory] = useState<{ time: string; threadUrl: string; body: string; ok: boolean }[]>([]);
   const [postHistoryOpen, setPostHistoryOpen] = useState(false);
   const [myPosts, setMyPosts] = useState<Record<string, number[]>>(() => {
@@ -2255,16 +2286,42 @@ export default function App() {
     if (fetchedResponses.length <= pending.prevCount) return;
     pendingMyPostRef.current = null;
     const normalizedBody = pending.body.replace(/\s+/g, " ").trim();
-    const newResponses = fetchedResponses.slice(pending.prevCount);
-    const matched = newResponses.find((r) => {
-      const stripped = stripHtmlForMatch(r.body || "");
-      return stripped === normalizedBody || stripped.includes(normalizedBody) || normalizedBody.includes(stripped);
-    });
+    // 送信から再取得までの間に他人のレスが挟まるので、この候補列には自分以外も入る。
+    // 自分のレスは必ず末尾側にあるため新しい順に見て、完全一致を最優先する。
+    const candidates = fetchedResponses
+      .slice(pending.prevCount)
+      .map((r) => {
+        const stripped = stripHtmlForMatch(r.body || "");
+        // Be アイコン付きの形と外した形の両方で照合する。外した形だけにすると、
+        // 本文が sssp:// で始まる書き込みを取り違える。
+        return { res: r, texts: [stripped, stripBeIconPrefix(stripped)] };
+      })
+      .reverse();
+    let matched: ThreadResponseItem | null = null;
+    for (const c of candidates) {
+      if (c.texts.includes(normalizedBody)) { matched = c.res; break; }
+    }
+    if (!matched) {
+      // 5ch 側で末尾が削られる等のズレ用のフォールバック。
+      for (const c of candidates) {
+        for (const t of c.texts) {
+          if (!t.includes(normalizedBody) && !normalizedBody.includes(t)) continue;
+          const shorter = Math.min(t.length, normalizedBody.length);
+          const longer = Math.max(t.length, normalizedBody.length);
+          if (shorter < MY_POST_MIN_PARTIAL_LEN) continue;
+          if (shorter / longer < MY_POST_MIN_PARTIAL_RATIO) continue;
+          matched = c.res;
+          break;
+        }
+        if (matched) break;
+      }
+    }
     if (matched) {
+      const myNo = matched.responseNo;
       setMyPosts((prev) => {
         const list = prev[pending.threadUrl] ?? [];
-        if (list.includes(matched.responseNo)) return prev;
-        const next = { ...prev, [pending.threadUrl]: [...list, matched.responseNo] };
+        if (list.includes(myNo)) return prev;
+        const next = { ...prev, [pending.threadUrl]: [...list, myNo] };
         saveUiJson(MY_POSTS_KEY, JSON.stringify(next));
         return next;
       });
@@ -4235,6 +4292,7 @@ export default function App() {
   const clearRememberedNames = () => {
     boardNamesRef.current = {};
     composeNameEditedRef.current = false;
+    newThreadNameEditedRef.current = false;
     setNameHistory([]);
     setComposeName("");
     setNewThreadName("");
@@ -5464,7 +5522,17 @@ export default function App() {
     }
   };
 
+  const resetNewThreadLayout = () => {
+    setNewThreadDialogPos(null);
+    setNewThreadDialogSize({ ...NEW_THREAD_DEFAULT_SIZE });
+    try {
+      localStorage.removeItem(NEW_THREAD_POS_KEY);
+      localStorage.removeItem(NEW_THREAD_SIZE_KEY);
+    } catch { /* ignore */ }
+  };
+
   const openNewThreadDialog = () => {
+    newThreadNameEditedRef.current = false;
     if (composeForgetName) {
       setNewThreadName("");
     } else if (threadUrl) {
@@ -6502,6 +6570,17 @@ export default function App() {
         });
         return;
       }
+      const ntdrag = newThreadDragRef.current;
+      if (ntdrag) {
+        const pos = {
+          x: ntdrag.startPosX + (event.clientX - ntdrag.startX),
+          y: ntdrag.startPosY + (event.clientY - ntdrag.startY),
+        };
+        // mousemove ごとに localStorage へ書くと重いので、位置は覚えておいて mouseup で保存する
+        ntdrag.last = pos;
+        setNewThreadDialogPos(pos);
+        return;
+      }
       const edrag = emojiPickerDragRef.current;
       if (edrag) {
         setEmojiPickerPos({
@@ -6595,6 +6674,16 @@ export default function App() {
         composeDragRef.current = null;
         document.body.style.userSelect = "";
         document.body.style.cursor = "";
+        return;
+      }
+      if (newThreadDragRef.current) {
+        const last = newThreadDragRef.current.last;
+        newThreadDragRef.current = null;
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+        if (last) {
+          try { localStorage.setItem(NEW_THREAD_POS_KEY, JSON.stringify(last)); } catch { /* ignore */ }
+        }
         return;
       }
       if (emojiPickerDragRef.current) {
@@ -6938,6 +7027,22 @@ export default function App() {
     if (saved === null || saved === composeName) return;
     setComposeName(saved);
   }, [composeOpen, composeTargetBoardUrl, composeName, composeForgetName]);
+
+  // スレ立ての投稿先は「今表示している板」なので、開いたまま板を切り替えると投稿先も変わる
+  const newThreadTargetBoardUrl = useMemo(
+    () => (threadUrl ? getBoardUrlFromThreadUrl(threadUrl) : ""),
+    [threadUrl],
+  );
+
+  // 板が変わったら名前欄もその板の名前に差し替える。ただし手入力した名前は消さない
+  useEffect(() => {
+    if (!showNewThreadDialog || !newThreadTargetBoardUrl) return;
+    if (composeForgetName) return;
+    if (newThreadNameEditedRef.current) return;
+    const saved = getBoardName(newThreadTargetBoardUrl);
+    if (saved === null || saved === newThreadName) return;
+    setNewThreadName(saved);
+  }, [showNewThreadDialog, newThreadTargetBoardUrl, newThreadName, composeForgetName]);
 
   // 設定を閉じたら「記憶した名前を削除」の確認待ちは取り消す
   useEffect(() => {
@@ -11904,8 +12009,23 @@ export default function App() {
         </div>
       )}
       {showNewThreadDialog && (
-        <div className="lightbox-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowNewThreadDialog(false); }}>
-          <div ref={newThreadPanelRef} className="settings-panel" style={{ width: newThreadDialogSize.w, height: newThreadDialogSize.h, minWidth: 320, minHeight: 300, resize: "both", overflow: "auto", display: "flex", flexDirection: "column" }} onMouseUp={() => {
+        <div
+          ref={newThreadPanelRef}
+          className="settings-panel new-thread-window"
+          role="dialog"
+          aria-label="スレ立て"
+          style={{
+            width: newThreadDialogSize.w,
+            height: newThreadDialogSize.h,
+            minWidth: 320,
+            minHeight: 300,
+            resize: "both",
+            overflow: "auto",
+            display: "flex",
+            flexDirection: "column",
+            ...(newThreadDialogPos ? { right: "auto", bottom: "auto", left: newThreadDialogPos.x, top: newThreadDialogPos.y } : {}),
+          }}
+          onMouseUp={() => {
             const el = newThreadPanelRef.current;
             if (!el) return;
             const w = el.offsetWidth, h = el.offsetHeight;
@@ -11913,66 +12033,84 @@ export default function App() {
               setNewThreadDialogSize({ w, h });
               try { localStorage.setItem(NEW_THREAD_SIZE_KEY, JSON.stringify({ w, h })); } catch { /* ignore */ }
             }
-          }}>
-            <header className="settings-header">
-              <strong>スレ立て</strong>
-              <button onClick={() => { setShowNewThreadDialog(false); setNewThreadResult(null); }}>閉じる</button>
-            </header>
-            <div style={{ padding: "12px", display: "flex", flexDirection: "column", gap: 8, flex: 1, overflow: "hidden" }}>
-              <label>
-                スレタイ
+          }}
+        >
+          <header
+            className="settings-header new-thread-header"
+            onMouseDown={(e) => {
+              if ((e.target as HTMLElement).tagName === "BUTTON") return;
+              e.preventDefault();
+              const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+              newThreadDragRef.current = {
+                startX: e.clientX,
+                startY: e.clientY,
+                startPosX: rect.left,
+                startPosY: rect.top,
+                last: null,
+              };
+              if (!newThreadDialogPos) setNewThreadDialogPos({ x: rect.left, y: rect.top });
+              document.body.style.userSelect = "none";
+              document.body.style.cursor = "move";
+            }}
+          >
+            <strong>スレ立て</strong>
+            <button className="compose-header-icon" title="サイズと位置をリセット" onClick={resetNewThreadLayout}><RotateCcw size={14} /></button>
+            <button onClick={() => { setShowNewThreadDialog(false); setNewThreadResult(null); }}>閉じる</button>
+          </header>
+          <div style={{ padding: "12px", display: "flex", flexDirection: "column", gap: 8, flex: 1, overflow: "hidden" }}>
+            <label>
+              スレタイ
+              <input
+                value={newThreadSubject}
+                onChange={(e) => setNewThreadSubject(e.target.value)}
+                placeholder="スレッドタイトル"
+                style={{ width: "100%", boxSizing: "border-box" }}
+              />
+            </label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <label style={{ flex: 1 }}>
+                名前
                 <input
-                  value={newThreadSubject}
-                  onChange={(e) => setNewThreadSubject(e.target.value)}
-                  placeholder="スレッドタイトル"
+                  value={newThreadName}
+                  onChange={(e) => { newThreadNameEditedRef.current = true; setNewThreadName(e.target.value); }}
+                  list="name-history-list-newthread"
+                  style={{ width: "100%", boxSizing: "border-box" }}
+                />
+                <datalist id="name-history-list-newthread">
+                  {nameHistory.map((n) => <option key={n} value={n} />)}
+                </datalist>
+              </label>
+              <label style={{ flex: 1 }}>
+                メール
+                <input
+                  value={newThreadMail}
+                  onChange={(e) => setNewThreadMail(e.target.value)}
                   style={{ width: "100%", boxSizing: "border-box" }}
                 />
               </label>
-              <div style={{ display: "flex", gap: 8 }}>
-                <label style={{ flex: 1 }}>
-                  名前
-                  <input
-                    value={newThreadName}
-                    onChange={(e) => setNewThreadName(e.target.value)}
-                    list="name-history-list-newthread"
-                    style={{ width: "100%", boxSizing: "border-box" }}
-                  />
-                  <datalist id="name-history-list-newthread">
-                    {nameHistory.map((n) => <option key={n} value={n} />)}
-                  </datalist>
-                </label>
-                <label style={{ flex: 1 }}>
-                  メール
-                  <input
-                    value={newThreadMail}
-                    onChange={(e) => setNewThreadMail(e.target.value)}
-                    style={{ width: "100%", boxSizing: "border-box" }}
-                  />
-                </label>
-              </div>
-              <label style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-                本文
-                <textarea
-                  value={newThreadBody}
-                  onChange={(e) => setNewThreadBody(e.target.value)}
-                  placeholder="本文を入力"
-                  style={{ width: "100%", boxSizing: "border-box", flex: 1, minHeight: 100 }}
-                />
-              </label>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <button onClick={submitNewThread} disabled={newThreadSubmitting}>
-                  {newThreadSubmitting ? "送信中..." : "スレ立て"}
-                </button>
-                <span style={{ fontSize: "0.85em", color: "var(--sub)" }}>
-                  板: {getBoardUrlFromThreadUrl(threadUrl)}
-                </span>
-              </div>
-              {newThreadResult && (
-                <div style={{ padding: 8, background: newThreadResult.ok ? "var(--ok-bg, #e6ffe6)" : "var(--err-bg, #ffe6e6)", borderRadius: 4, fontSize: "0.9em", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-                  {newThreadResult.message}
-                </div>
-              )}
             </div>
+            <label style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              本文
+              <textarea
+                value={newThreadBody}
+                onChange={(e) => setNewThreadBody(e.target.value)}
+                placeholder="本文を入力"
+                style={{ width: "100%", boxSizing: "border-box", flex: 1, minHeight: 100 }}
+              />
+            </label>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button onClick={submitNewThread} disabled={newThreadSubmitting}>
+                {newThreadSubmitting ? "送信中..." : "スレ立て"}
+              </button>
+              <span className="new-thread-target" style={{ fontSize: "0.85em", color: "var(--sub)" }}>
+                板: {newThreadTargetBoardUrl}
+              </span>
+            </div>
+            {newThreadResult && (
+              <div style={{ padding: 8, background: newThreadResult.ok ? "var(--ok-bg, #e6ffe6)" : "var(--err-bg, #ffe6e6)", borderRadius: 4, fontSize: "0.9em", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                {newThreadResult.message}
+              </div>
+            )}
           </div>
         </div>
       )}
