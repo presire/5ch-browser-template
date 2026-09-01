@@ -23,16 +23,98 @@ static DB: Mutex<Option<Connection>> = Mutex::new(None);
 /// The built-in, per-machine data directory. This is the *anchor* location:
 /// it never moves, so the redirect pointer file (`location.json`) lives here
 /// even when the effective data dir has been redirected elsewhere.
+/// 一度だけ解決してキャッシュする (書き込み可否を毎回プローブしないため)。
 pub fn default_data_dir() -> Result<PathBuf, StoreError> {
+    Ok(DEFAULT_DATA_DIR.get_or_init(resolve_default_data_dir).clone())
+}
+
+static DEFAULT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// 持ち運び配置の `data` が作れずユーザー領域へ退避したときに、本来使うはずだった
+/// フォルダを覚えておく。設定画面で「なぜここに保存されているのか」を出すため。
+static DATA_DIR_FALLBACK_FROM: OnceLock<PathBuf> = OnceLock::new();
+
+/// `<user data>/Ember`。macOS / Linux ではそのまま使い、Windows では
+/// 持ち運び配置が使えないときの退避先にする。
+fn user_profile_data_dir() -> Option<PathBuf> {
+    dirs::data_dir().map(|base| base.join("Ember"))
+}
+
+fn resolve_default_data_dir() -> PathBuf {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        let base = dirs::data_dir().ok_or_else(|| StoreError::Other("failed to resolve data dir".into()))?;
-        Ok(base.join("Ember"))
+        user_profile_data_dir().unwrap_or_else(|| PathBuf::from("data"))
     }
 
+    // Windows は exe を展開したフォルダの下に `data` を作る「持ち運べる」配置。
+    // ただし Program Files のように書き込めない場所へ展開されると作成に失敗し、
+    // 設定・既読・ウィンドウ位置がどれも保存されないまま、アプリだけ普通に動いて
+    // しまう (保存の失敗は呼び出し側でログに落とすだけなので画面には出ない)。
+    // 作れないときは macOS / Linux と同じユーザー領域へ退避して、少なくとも
+    // 保存が効く状態で起動する。
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        Ok(std::env::current_dir()?.join("data"))
+        let portable = match std::env::current_dir() {
+            Ok(cwd) => cwd.join("data"),
+            Err(_) => return user_profile_data_dir().unwrap_or_else(|| PathBuf::from("data")),
+        };
+        if dir_is_usable(&portable) {
+            return portable;
+        }
+        match user_profile_data_dir() {
+            Some(fallback) if dir_is_usable(&fallback) => {
+                let _ = DATA_DIR_FALLBACK_FROM.set(portable.clone());
+                queue_data_dir_log(format!(
+                    "data dir not writable ({}), falling back to {}",
+                    portable.display(),
+                    fallback.display(),
+                ));
+                fallback
+            }
+            // 退避先まで駄目なら本来の場所を返す。どのみち書けないが、設定画面に
+            // 出るパスが実際に狙った場所になるので原因を追いやすい。
+            _ => portable,
+        }
+    }
+}
+
+/// 本来の保存先へ書き込めず自動的に退避したときの「書けなかったフォルダ」。
+/// 退避していなければ `None`。
+pub fn data_dir_fallback_from() -> Option<PathBuf> {
+    // 解決前に呼ばれると常に None になるので、先に解決させる。
+    let _ = default_data_dir();
+    DATA_DIR_FALLBACK_FROM.get().cloned()
+}
+
+/// いま使っている保存先に実際に書き込めるか。設定画面の警告表示用で、
+/// リダイレクト先が後から読み取り専用になった場合も拾える。
+pub fn data_dir_writable() -> bool {
+    portable_data_dir().map(|dir| dir_is_usable(&dir)).unwrap_or(false)
+}
+
+/// データディレクトリ解決中に出たメッセージの置き場。ここから直接 `append_log` を
+/// 呼ぶと `portable_data_dir()` 経由で解決中の `OnceLock` を再入してしまい、
+/// 初期化が終わらなくなる (`OnceLock::get_or_init` は再入不可)。起動時に
+/// `init_portable_layout` がまとめて書き出す。
+static PENDING_DATA_DIR_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn queue_data_dir_log(message: String) {
+    let mut pending = PENDING_DATA_DIR_LOG
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    pending.push(message);
+}
+
+fn take_data_dir_log() -> Vec<String> {
+    let mut pending = PENDING_DATA_DIR_LOG
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    std::mem::take(&mut *pending)
+}
+
+fn flush_data_dir_log() {
+    for message in take_data_dir_log() {
+        let _ = append_log(&message);
     }
 }
 
@@ -107,7 +189,9 @@ fn resolve_data_dir() -> PathBuf {
         if dir_is_usable(&target) {
             return target;
         }
-        let _ = append_log(&format!(
+        // ここで append_log を呼ぶと RESOLVED_DATA_DIR の初期化中に
+        // portable_data_dir() を再入して固まる。詳細は queue_data_dir_log を参照。
+        queue_data_dir_log(format!(
             "data dir redirect target not usable, falling back to default: {}",
             target.display()
         ));
@@ -182,6 +266,8 @@ pub fn models_base_dir() -> Result<PathBuf, StoreError> {
 
 pub fn init_portable_layout() -> Result<PathBuf, StoreError> {
     let data_dir = portable_data_dir()?;
+    // 保存先の解決中に溜めたメッセージをここで書き出す (詳細は queue_data_dir_log)
+    flush_data_dir_log();
     fs::create_dir_all(data_dir.join("logs"))?;
 
     let settings_path = data_dir.join("settings.json");
@@ -192,14 +278,64 @@ pub fn init_portable_layout() -> Result<PathBuf, StoreError> {
     Ok(data_dir)
 }
 
+/// 同じディレクトリの一時ファイルへ書いてから rename する。`fs::write` は先に
+/// 本体を 0 バイトへ切り詰めるので、書き込み中にアプリが落ちると壊れた JSON が
+/// 残り、次回の読み込みが失敗して既読やお気に入りが丸ごと消える。rename は
+/// 同一ボリューム内ならアトミックなので、途中で落ちても元のファイルが残る。
+/// (fsync はしていない。プロセスが死ぬケースは rename だけで防げる一方、
+///  read_status.json や layout_prefs.json は書き込み頻度が高く、毎回の
+///  ディスクフラッシュは体感に響くため。)
 pub fn save_json<T: Serialize>(relative_path: &str, value: &T) -> Result<(), StoreError> {
     let path = portable_data_dir()?.join(relative_path);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    fs::write(path, serde_json::to_vec_pretty(value)?)?;
+    let bytes = serde_json::to_vec_pretty(value)?;
+    write_atomic(&path, &bytes)
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
+    let tmp = sibling_path(path, ".tmp");
+    fs::write(&tmp, bytes)?;
+    // Windows でも MOVEFILE_REPLACE_EXISTING 相当なので既存ファイルを置き換えられる
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(())
+}
+
+/// `foo.json` に対する `foo.json<suffix>` のパス。拡張子を置き換えると
+/// `foo.json` と `foo.txt` が同じ一時ファイル名になってしまうため、
+/// ファイル名の末尾に足す。
+fn sibling_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    name.push(suffix);
+    path.with_file_name(name)
+}
+
+/// 壊れて読めなかった JSON を `<name>.bak` へ退避し、本体を消す。
+/// 呼び出し側が「読めなければ空データ」で続けると、次の保存でその空データが
+/// 上書き保存されて中身が完全に失われる。退避しておけば手で復旧できる。
+/// 退避できたときだけ退避先のパスを返す。
+pub fn quarantine_broken_json(relative_path: &str) -> Option<PathBuf> {
+    let path = portable_data_dir().ok()?.join(relative_path);
+    quarantine_path(&path)
+}
+
+fn quarantine_path(path: &Path) -> Option<PathBuf> {
+    if !path.exists() {
+        return None;
+    }
+    let bak = sibling_path(path, ".bak");
+    match fs::rename(path, &bak) {
+        Ok(()) => Some(bak),
+        Err(_) => None,
+    }
 }
 
 pub fn load_json<T: DeserializeOwned>(relative_path: &str) -> Result<T, StoreError> {
@@ -359,6 +495,74 @@ mod tests {
         let bad = file.join("subdir");
         assert!(!dir_is_usable(&bad));
         let _ = fs::remove_file(&file);
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ember_store_{}_{}", tag, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn user_profile_data_dir_is_under_the_user_area() {
+        let dir = user_profile_data_dir().expect("user data dir");
+        assert_eq!(dir.file_name().and_then(|n| n.to_str()), Some("Ember"));
+        assert!(dir.parent().is_some());
+    }
+
+    #[test]
+    fn data_dir_log_is_queued_and_drained_once() {
+        // 保存先の解決中は append_log を呼べない (再入して固まる) ので溜めておき、
+        // 起動時に一度だけ書き出す。二度目は空になること。
+        let _ = take_data_dir_log();
+        queue_data_dir_log("first".to_string());
+        queue_data_dir_log("second".to_string());
+        assert_eq!(
+            take_data_dir_log(),
+            vec!["first".to_string(), "second".to_string()]
+        );
+        assert!(take_data_dir_log().is_empty());
+    }
+
+    #[test]
+    fn sibling_path_appends_to_full_file_name() {
+        // 拡張子を置き換えると read_status.json と read_status.txt が
+        // 同じ一時ファイル名になってしまうので、末尾に足していることを確認する
+        let p = Path::new("/data/read_status.json");
+        assert_eq!(sibling_path(p, ".tmp"), PathBuf::from("/data/read_status.json.tmp"));
+        assert_eq!(sibling_path(p, ".bak"), PathBuf::from("/data/read_status.json.bak"));
+    }
+
+    #[test]
+    fn write_atomic_replaces_existing_and_leaves_no_temp() {
+        let dir = temp_dir("atomic");
+        let path = dir.join("read_status.json");
+        write_atomic(&path, b"{\"a\":1}").unwrap();
+        write_atomic(&path, b"{\"b\":2}").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"b\":2}");
+        assert!(!sibling_path(&path, ".tmp").exists(), "temp file must not be left behind");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quarantine_path_moves_broken_file_aside() {
+        let dir = temp_dir("quarantine");
+        let path = dir.join("read_status.json");
+        fs::write(&path, b"{ broken").unwrap();
+        let moved = quarantine_path(&path).expect("should have quarantined");
+        assert_eq!(moved, sibling_path(&path, ".bak"));
+        // 本体が残っていると、次の保存で空データが上書きされたことに気づけない
+        assert!(!path.exists());
+        assert_eq!(fs::read_to_string(&moved).unwrap(), "{ broken");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn quarantine_path_is_noop_when_file_is_missing() {
+        let dir = temp_dir("quarantine_missing");
+        assert!(quarantine_path(&dir.join("read_status.json")).is_none());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

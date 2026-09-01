@@ -1217,6 +1217,21 @@ type ReadStatusMap = HashMap<String, HashMap<String, u32>>;
 fn load_read_status() -> Result<ReadStatusMap, String> {
     match core_store::load_json::<ReadStatusMap>("read_status.json") {
         Ok(data) => Ok(data),
+        // JSON が壊れていた場合。ここで黙って空マップを返すと、次にスレを読んだ
+        // ときの保存が「空 + 1 件」で全体を上書きし、全板の既読が二度と戻らない。
+        // 壊れたファイルを退避してから空で続行し、ログに残す。
+        Err(core_store::StoreError::Json(e)) => {
+            let moved = core_store::quarantine_broken_json("read_status.json");
+            let _ = core_store::append_log(&format!(
+                "load_read_status: broken json ({}) -> {}",
+                e,
+                moved
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "quarantine failed".into()),
+            ));
+            Ok(HashMap::new())
+        }
+        // 未作成 (初回起動) など。これは異常ではないので触らない。
         Err(_) => Ok(HashMap::new()),
     }
 }
@@ -2014,6 +2029,12 @@ struct DataDirInfo {
     is_custom: bool,
     /// True when EMBER_DATA_DIR is set — GUI changes are disabled in that case.
     env_override: bool,
+    /// 本来の保存先に書き込めず自動退避したときの「書けなかったフォルダ」。
+    /// 退避していなければ None。
+    fallback_from: Option<String>,
+    /// 現在の保存先に実際に書き込めるか。false のときは設定・既読・ウィンドウ位置が
+    /// どれも保存されないので、設定画面で警告を出す。
+    writable: bool,
 }
 
 #[tauri::command]
@@ -2028,6 +2049,9 @@ fn get_data_dir_info() -> Result<DataDirInfo, String> {
         pointer_dir: pointer.as_ref().map(|p| p.to_string_lossy().to_string()),
         is_custom: pointer.is_some() && !env_override,
         env_override,
+        fallback_from: core_store::data_dir_fallback_from()
+            .map(|p| p.to_string_lossy().to_string()),
+        writable: core_store::data_dir_writable(),
     })
 }
 
@@ -2521,7 +2545,12 @@ pub fn run() {
         }
     }
 
-    let _ = core_store::init_portable_layout();
+    // 保存先を作れないと設定・既読・ウィンドウ位置がどれも保存されないまま
+    // アプリだけ動いてしまう。ここまで来て失敗しているならログにも書けないので
+    // 標準エラーへ出す (設定画面には get_data_dir_info の writable で出る)。
+    if let Err(e) = core_store::init_portable_layout() {
+        eprintln!("init_portable_layout failed: {e}");
+    }
     let _ = core_store::append_log("app started");
 
     // Safe-mode toggle (v0.0.164–v0.0.166 attempt) was removed in v0.0.167:
