@@ -774,6 +774,123 @@ try {
   assert(paneFontReset === "12px", `pane font size should be 12px after reset, got ${paneFontReset}`);
   console.log("smoke-ui: font size setting ok");
 
+  // --- submenu opens by click (issue #21: ホバーの無いタッチ環境から到達できなかった) ---
+  await viewMenuItem.click();
+  await new Promise((r) => setTimeout(r, 100));
+  // ドロップダウンから離れた位置へマウスを退避させ、:hover が絡まない状態で確かめる
+  await page.mouse.move(400, 400);
+  await new Promise((r) => setTimeout(r, 50));
+  const submenuBefore = await page.$eval(".menu-submenu", (el) => window.getComputedStyle(el).display);
+  assert(submenuBefore === "none", `submenu should be hidden without hover, got ${submenuBefore}`);
+  await page.$eval(".menu-submenu-trigger", (el) => el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await new Promise((r) => setTimeout(r, 100));
+  const submenuAfter = await page.$eval(".menu-submenu", (el) => window.getComputedStyle(el).display);
+  assert(submenuAfter === "grid", `submenu should open on click alone, got ${submenuAfter}`);
+  const submenuItems = await page.$$eval(".menu-submenu button", (els) => els.map((el) => el.textContent));
+  assert(submenuItems.length === 9, `column submenu should have 9 toggles, got ${submenuItems.length}`);
+  await page.keyboard.press("Escape");
+  await new Promise((r) => setTimeout(r, 100));
+  console.log("smoke-ui: submenu click open ok");
+
+  // --- pointer (touch) drag resizes panes (issue #21: mouse 系イベントでは指で動かせなかった) ---
+  for (const sel of [".pane-splitter", ".row-splitter"]) {
+    const ta = await page.$eval(sel, (el) => window.getComputedStyle(el).touchAction);
+    assert(ta === "none", `${sel} should set touch-action:none, got ${ta}`);
+  }
+  // 指のドラッグ相当を PointerEvent で再現する (タッチはマウスイベントを合成しない)
+  const dragByTouch = (selector, dx, dy) => page.evaluate(({ sel, dx, dy }) => {
+    const sp = document.querySelector(sel);
+    const r = sp.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+    const base = { bubbles: true, cancelable: true, pointerId: 1, pointerType: "touch", isPrimary: true, button: 0 };
+    sp.dispatchEvent(new PointerEvent("pointerdown", { ...base, buttons: 1, clientX: x, clientY: y }));
+    window.dispatchEvent(new PointerEvent("pointermove", { ...base, buttons: 1, clientX: x + dx, clientY: y + dy }));
+    window.dispatchEvent(new PointerEvent("pointerup", { ...base, buttons: 0, clientX: x + dx, clientY: y + dy }));
+  }, { sel: selector, dx, dy });
+  const dragSplitterByTouch = (dx) => dragByTouch(".pane-splitter", dx, 0);
+  const boardWidthBefore = await page.$eval(".pane.boards", (el) => el.getBoundingClientRect().width);
+  await dragSplitterByTouch(60);
+  await new Promise((r) => setTimeout(r, 150));
+  const boardWidthAfter = await page.$eval(".pane.boards", (el) => el.getBoundingClientRect().width);
+  const grew = boardWidthAfter - boardWidthBefore;
+  assert(grew > 40 && grew < 80, `board pane should widen ~60px by touch pointer drag, got ${boardWidthBefore} -> ${boardWidthAfter}`);
+  await dragSplitterByTouch(-grew);
+  await new Promise((r) => setTimeout(r, 150));
+  const boardWidthRestored = await page.$eval(".pane.boards", (el) => el.getBoundingClientRect().width);
+  assert(Math.abs(boardWidthRestored - boardWidthBefore) < 4, `board pane width should be restored, got ${boardWidthRestored} (expected ~${boardWidthBefore})`);
+  const threadHeightBefore = await page.$eval(".pane.threads", (el) => el.getBoundingClientRect().height);
+  await dragByTouch(".row-splitter", 0, 40);
+  await new Promise((r) => setTimeout(r, 150));
+  const threadHeightAfter = await page.$eval(".pane.threads", (el) => el.getBoundingClientRect().height);
+  const taller = threadHeightAfter - threadHeightBefore;
+  assert(taller > 25 && taller < 55, `thread pane should grow ~40px by touch pointer drag, got ${threadHeightBefore} -> ${threadHeightAfter}`);
+  await dragByTouch(".row-splitter", 0, -taller);
+  await new Promise((r) => setTimeout(r, 150));
+  console.log("smoke-ui: pointer drag resize ok");
+
+  // --- 分割線の当たり判定 (issue #21: .row-splitter は 6px の枠に 2px の帯しか無く掴めなかった) ---
+  for (const sel of [".pane-splitter", ".row-splitter"]) {
+    const box = await page.$eval(sel, (el) => {
+      const r = el.getBoundingClientRect();
+      return { w: r.width, h: r.height };
+    });
+    const thickness = Math.min(box.w, box.h);
+    assert(thickness >= 6, `${sel} should be at least 6px thick to be grabbable, got ${thickness}`);
+  }
+  console.log("smoke-ui: splitter hit target ok");
+
+  // --- 狭い画面ではペインを縦積みにする (issue #21: 川型が 3 カラムのまま潰れていた) ---
+  const layoutToggle = await page.$('button[aria-label="レイアウト切替"]');
+  assert(layoutToggle, "layout toggle button not found");
+  const assertStacked = async (label) => {
+    const r = await page.evaluate(() => {
+      const rp = document.querySelector(".right-pane");
+      const cs = window.getComputedStyle(rp);
+      const resp = document.querySelector(".pane.responses").getBoundingClientRect();
+      const boards = document.querySelector(".pane.boards").getBoundingClientRect();
+      const status = document.querySelector(".status-bar").getBoundingClientRect();
+      const layout = document.querySelector(".layout").getBoundingClientRect();
+      return {
+        statusHeight: status.height,
+        layoutHeight: layout.height,
+        display: cs.display,
+        direction: cs.flexDirection,
+        respWidth: resp.width,
+        respHeight: resp.height,
+        boardsHeight: boards.height,
+        statusBottom: status.bottom,
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+      };
+    });
+    assert(r.display === "flex" && r.direction === "column",
+      `${label}: right pane should stack vertically when narrow, got ${r.display}/${r.direction}`);
+    assert(r.respWidth > r.innerWidth * 0.9,
+      `${label}: responses pane should span the full width when stacked, got ${r.respWidth} of ${r.innerWidth}`);
+    assert(r.respHeight > 100,
+      `${label}: responses pane should keep a usable height when stacked, got ${r.respHeight}`);
+    assert(r.boardsHeight <= r.innerHeight * 0.31,
+      `${label}: boards pane should be capped at 30vh when stacked, got ${r.boardsHeight} of ${r.innerHeight}`);
+    assert(r.statusBottom <= r.innerHeight + 1,
+      `${label}: status bar should stay on screen when stacked, got bottom ${r.statusBottom} of ${r.innerHeight}`);
+    // 縦積みでペインが内容の高さまで伸びると、.layout が画面をはみ出すか逆に縮んでしまう
+    assert(r.statusHeight < 40,
+      `${label}: status bar should keep its own height when stacked, got ${r.statusHeight}`);
+    assert(r.layoutHeight > r.innerHeight * 0.8,
+      `${label}: layout should fill the viewport when stacked, got ${r.layoutHeight} of ${r.innerHeight}`);
+  };
+  await page.setViewportSize({ width: 853, height: 1280 });
+  await new Promise((r) => setTimeout(r, 250));
+  await assertStacked("classic");
+  await layoutToggle.click();
+  await new Promise((r) => setTimeout(r, 250));
+  await assertStacked("river");
+  await layoutToggle.click(); // 通常レイアウトへ戻す
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await new Promise((r) => setTimeout(r, 250));
+  console.log("smoke-ui: narrow viewport stacking ok");
+
   // --- body link rendering ---
   // Click on response #4 which has a URL in the fallback data
   // Close compose window if open
@@ -1025,6 +1142,12 @@ try {
   assert(legends.some((l) => l.includes("Ronin")), `settings should have Ronin/BE section, got ${legends}`);
   assert(legends.includes("データフォルダ"), `settings should have データフォルダ section, got ${legends}`);
   assert(legends.includes("情報"), `settings should have 情報 section, got ${legends}`);
+
+  // 通知は独立パネルへ移した。セットアップ手順ものを常用トグルの列に戻さないための歯止め。
+  assert(
+    !legends.some((l) => l.includes("通知")),
+    `notification settings should live in their own panel, not in 設定: ${legends}`,
+  );
   // ホイールスクロール行数の設定 (既定 OFF、ON のときだけ行数入力が出る)
   const wheelRowToggle = await page.$('.settings-body label:has-text("スレ一覧のホイールスクロールを行単位にする") input[type="checkbox"]');
   assert(wheelRowToggle, "settings should have wheel row scroll toggle");
@@ -1128,6 +1251,18 @@ try {
   });
   assert(dataDirWarningCss, "data dir warning CSS should exist in stylesheet");
   console.log("smoke-ui: data dir warning ok");
+  // WebView の保存先 (localStorage の実体) の案内。パスは Tauri 側の
+  // get_data_dir_info が返すので、静的 dist では行ごと出ないことを確認する。
+  const dataDirRowLabels = await page.$$eval(
+    '.settings-body fieldset:has(legend:text-is("データフォルダ")) .settings-row > span:first-child',
+    (els) => els.map((el) => el.textContent?.trim()),
+  );
+  assert(dataDirRowLabels.includes("現在の保存先"), "data folder section should list the current data dir");
+  assert(
+    !dataDirRowLabels.includes("WebView の保存先"),
+    "webview data dir row should stay hidden without tauri runtime",
+  );
+  console.log("smoke-ui: webview data dir row ok");
   // close settings
   await page.click('.settings-header button:has-text("閉じる")');
   await new Promise((r) => setTimeout(r, 100));
@@ -1166,7 +1301,7 @@ try {
   console.log("smoke-ui: response block striping ok");
 
   // --- fetched column ---
-  const fetchedHeader = await page.$('.threads th[title="取得済みスレを上にソート"]');
+  const fetchedHeader = await page.$('.threads th[title^="並び替え: "]');
   assert(fetchedHeader, "thread table should have fetched sort column");
   console.log("smoke-ui: fetched column ok");
 
@@ -1630,6 +1765,73 @@ try {
   );
   assert(savedMetaInline === true, `inline date/ID setting should persist, got ${savedMetaInline}`);
   console.log("smoke-ui: inline date/id ok");
+
+
+  // --- 通知設定パネル (Discord Webhook) ---
+  const fileMenuForNotify = await page.$('.menu-item:has-text("ファイル")');
+  await fileMenuForNotify.click();
+  await new Promise((r) => setTimeout(r, 100));
+  const notifyMenuBtn = await page.$('.menu-dropdown button:has-text("通知設定")');
+  assert(notifyMenuBtn, "file menu should have the notification settings entry");
+  await notifyMenuBtn.click();
+  await new Promise((r) => setTimeout(r, 200));
+  const notifyPanel = await page.$(".notify-settings-panel");
+  assert(notifyPanel, "notification settings should open in their own panel");
+  const notifyLegends = await page.$$eval(".notify-settings-panel legend", (els) =>
+    els.map((e) => e.textContent?.trim()),
+  );
+  // 送信先の用意と巡回の有効化は別の作業なので、節を分けてある。
+  assert(
+    notifyLegends.some((l) => l.includes("送信先")),
+    `notify panel should have a destination section, got ${notifyLegends}`,
+  );
+  assert(notifyLegends.includes("巡回"), `notify panel should have a patrol section, got ${notifyLegends}`);
+  const notifyToggle = await page.$('.notify-settings-panel label:has-text("自分宛のレスを通知する") input[type="checkbox"]');
+  assert(notifyToggle, "notify panel should have the reply notification toggle");
+  assert(
+    (await notifyToggle.isChecked()) === false,
+    "reply notification should be off until the user sets a webhook",
+  );
+  // 伏せ字にしない。貼り付けミスが画面で確認できず、テスト送信するまで気づけないため。
+  // 漏れても被害はこの通知先への投稿だけで、ウェブフックを作り直せば消える。
+  const webhookInput = await page.$(".notify-settings-panel input.notify-webhook-url");
+  assert(webhookInput, "notify panel should have the webhook url input");
+  assert(
+    (await webhookInput.getAttribute("type")) !== "password",
+    "webhook url should stay readable so a mistyped paste is visible",
+  );
+  assert(
+    await page.$(".notify-settings-panel input.notify-discord-user-id"),
+    "notify panel should have the discord user id input",
+  );
+  // 貼り間違いは実際に送らないと気づけないので、テスト送信は必須。
+  for (const label of ["テスト送信", "今すぐ巡回"]) {
+    assert(
+      await page.$(`.notify-settings-panel button:has-text("${label}")`),
+      `notify panel should have the ${label} button`,
+    );
+  }
+  // 入力は自動保存する。保存ボタンがあると押し忘れたまま閉じられ、再起動で消える。
+  assert(
+    !(await page.$('.notify-settings-panel button:has-text("保存")')),
+    "notify settings should autosave, not require a 保存 button",
+  );
+  const notifyInterval = await page.$eval(
+    '.notify-settings-panel label:has-text("巡回間隔") input[type="number"]',
+    (el) => el.value,
+  );
+  assert(notifyInterval === "10", `patrol interval should default to 10 minutes, got ${notifyInterval}`);
+  // 通知先 URL が localStorage に漏れていないこと (保存先は notify_config.json のみ)。
+  const notifyKeys = await page.evaluate(() =>
+    Object.keys(localStorage).filter((k) => k.toLowerCase().includes("notify")),
+  );
+  assert(
+    !notifyKeys.includes("desktop.notifyConfig.v1"),
+    `notify config must not be mirrored into localStorage, got ${notifyKeys}`,
+  );
+  await page.click(".notify-settings-panel .settings-header button");
+  await new Promise((r) => setTimeout(r, 150));
+  console.log("smoke-ui: notification settings ok");
 
   console.log("smoke-ui: ok");
 } finally {

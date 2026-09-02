@@ -6,6 +6,7 @@ import emberWindowsDark from "./assets/images/ember-windows-dark.jpg";
 import emberMacLight from "./assets/images/ember-mac-light.jpg";
 import emberMacDark from "./assets/images/ember-mac-dark.jpg";
 import emberImagePane from "./assets/images/ember-image-pane.jpeg";
+import discordNotification from "./assets/images/discord-notification.png";
 import emberRiberLayout1 from "./assets/images/ember-riber-layout-1.jpg";
 import emberRiberLayout2 from "./assets/images/ember-riber-layout-2.jpeg";
 import emberWindowsImagePane from "./assets/images/ember-windows-image-pane.jpeg";
@@ -728,11 +729,28 @@ export default function App() {
                 <img src={emberWindowsImagePane} alt="Windowsで動作するEmber" width={1468} height={932} loading="lazy" decoding="async" />
               </button>
             </article>
+
+            <article className="card feature-card reveal" data-delay="5">
+              <div className="feature-icon"><BellIcon /></div>
+              <h3>自分宛のレスを、Discord へ通知</h3>
+              <p>
+                自分が書き込んだスレを巡回し、自分のレスにアンカーが付いたら通知。
+                スマホの Discord アプリで受け取れるので、PC の前を離れていても気づけます。
+              </p>
+              <button
+                type="button"
+                className="shot-button feature-shot"
+                onClick={() => openZoom(discordNotification, "Discord への通知")}
+                aria-label="スクリーンショットを拡大"
+              >
+                <img src={discordNotification} alt="Discord への通知" width={1260} height={753} loading="lazy" decoding="async" />
+              </button>
+            </article>
           </div>
 
           <div className="features-cta reveal">
             <p className="features-cta-text">
-              ここに載っているのは代表的なものだけです。NG / ハイライト / マウスジェスチャ / オートスクロール / 画像 NG / YouTube PiP / データフォルダ共有など、全 80+ 機能の一覧は README をご覧ください。
+              ここに載っているのは代表的なものだけです。NG / ハイライト / マウスジェスチャ / オートスクロール / 画像 NG / YouTube PiP / Discord 通知 / データフォルダ共有など、全 80+ 機能の一覧は README をご覧ください。
             </p>
             <a
               className="features-cta-link"
@@ -1204,6 +1222,15 @@ function ZapIcon() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z" />
+    </svg>
+  );
+}
+
+function BellIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
     </svg>
   );
 }

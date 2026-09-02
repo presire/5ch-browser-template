@@ -9,6 +9,7 @@ import {
   type Dispatch,
   type KeyboardEventHandler,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type UIEventHandler,
   type RefObject,
@@ -315,6 +316,17 @@ type ThreadResponseItem = {
   dateAndId: string;
   body: string;
 };
+// 通知設定。webhookUrl は実質シークレットなので localStorage には置かず、
+// core-store の notify_config.json にだけ保存する (認証設定と同じ扱い)。
+type NotifyConfig = { enabled: boolean; webhookUrl: string; discordUserId: string; intervalMin: number };
+type NotifyItem = {
+  threadTitle: string;
+  threadUrl: string;
+  responseNo: number;
+  name: string;
+  dateAndId: string;
+  body: string;
+};
 type BoardEntry = { boardName: string; url: string };
 type BoardCategory = { categoryName: string; boards: BoardEntry[] };
 type FavoriteBoard = { boardName: string; url: string };
@@ -532,6 +544,9 @@ const THREAD_FETCH_TIMES_KEY = "desktop.threadFetchTimes.v1";
 const WINDOW_STATE_KEY = "desktop.windowState.v1";
 const SEARCH_HISTORY_KEY = "desktop.searchHistory.v1";
 const MY_POSTS_KEY = "desktop.myPosts.v1";
+// 通知の「ここまで確認済み」境界。スレURL -> レス番号。単調増加なので、これだけで
+// 重複通知を防げる (通知済みレスの集合を持たなくてよい)。
+const NOTIFY_STATE_KEY = "desktop.notifyState.v1";
 const THREAD_TABS_KEY = "desktop.threadTabs.v1";
 const RECENT_OPENED_THREADS_KEY = "desktop.recentOpenedThreads.v1";
 const RECENT_POSTED_THREADS_KEY = "desktop.recentPostedThreads.v1";
@@ -557,6 +572,7 @@ const UI_JSON_FILES: Record<string, string> = {
   [COMPOSE_PREFS_KEY]: "compose_prefs",
   [BOOKMARK_KEY]: "bookmarks",
   [MY_POSTS_KEY]: "my_posts",
+  [NOTIFY_STATE_KEY]: "notify_state",
   [THREAD_CATEGORIES_KEY]: "thread_categories",
   [SEARCH_HISTORY_KEY]: "search_history",
   [RECENT_OPENED_THREADS_KEY]: "recent_opened_threads",
@@ -1752,6 +1768,22 @@ export default function App() {
     return {};
   });
   const pendingMyPostRef = useRef<{ threadUrl: string; body: string; prevCount: number } | null>(null);
+  // 巡回は setInterval のクロージャから走るので、myPosts を直接読むと書き込み直後の
+  // スレを取りこぼす。ref に写して常に最新を見る。
+  const myPostsRef = useRef<Record<string, number[]>>({});
+  const [notifyConfig, setNotifyConfig] = useState<NotifyConfig>({
+    enabled: false, webhookUrl: "", discordUserId: "", intervalMin: 10,
+  });
+  const [notifyMsg, setNotifyMsg] = useState("");
+  const [notifyBusy, setNotifyBusy] = useState(false);
+  // 最後にディスクへ書いた内容 (JSON 文字列)。読み込み前は null。読んだ直後の
+  // 値をそのまま書き戻さないため、および保存に失敗したときに次の変更で
+  // 再試行させるために持つ。
+  const notifySavedRef = useRef<string | null>(null);
+  const notifyCheckedRef = useRef<Record<string, number>>((() => {
+    try { const v = localStorage.getItem(NOTIFY_STATE_KEY); if (v) return JSON.parse(v); } catch { /* ignore */ }
+    return {};
+  })());
   const [postFlowTraceProbe, setPostFlowTraceProbe] = useState("not run");
   const [threadListProbe, setThreadListProbe] = useState("not run");
   const [responseListProbe, setResponseListProbe] = useState("not run");
@@ -1823,7 +1855,8 @@ export default function App() {
     return pos ? { left: pos.x, top: pos.y, right: "auto", bottom: "auto" } : {};
   };
   // ヘッダ内のボタン等を押したときはドラッグ開始しない (閉じるボタンが効かなくなるため)
-  const startPanelDrag = (key: DraggablePanelKey) => (e: ReactMouseEvent<HTMLElement>) => {
+  const startPanelDrag = (key: DraggablePanelKey) => (e: ReactPointerEvent<HTMLElement>) => {
+    if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest("button, input, select, textarea")) return;
     e.preventDefault();
     const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
@@ -2072,11 +2105,18 @@ export default function App() {
   const [responseReloadMenuOpen, setResponseReloadMenuOpen] = useState(false);
   const [threadFilterMenuOpen, setThreadFilterMenuOpen] = useState(false);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  // サブメニューは以前 CSS の :hover だけで開いていたため、ホバーの無いタッチ環境から
+  // 到達できなかった。クリックでも開けるよう開いている項目名を保持する (ホバーは従来通り)。
+  const [openSubmenu, setOpenSubmenu] = useState<string | null>(null);
+  useEffect(() => { setOpenSubmenu(null); }, [openMenu]);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [gestureListOpen, setGestureListOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [threadColumnsOpen, setThreadColumnsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 通知は「Webhook を作る → URL を貼る → テスト送信」という一度きりのセットアップで、
+  // 日常的に触る他の設定とは使い方が違う。AI 設定と同じく独立したパネルに分ける。
+  const [notifySettingsOpen, setNotifySettingsOpen] = useState(false);
   const [dataDirInfo, setDataDirInfo] = useState<{
     currentDir: string;
     defaultDir: string;
@@ -2085,6 +2125,7 @@ export default function App() {
     envOverride: boolean;
     fallbackFrom: string | null;
     writable: boolean;
+    webviewDir: string | null;
   } | null>(null);
   const [dataDirMsg, setDataDirMsg] = useState<string | null>(null);
   const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
@@ -2590,7 +2631,7 @@ export default function App() {
   };
 
   const favDragOverIndexRef = useRef<number | null>(null);
-  const onFavItemMouseDown = (e: React.MouseEvent, type: "board" | "thread", index: number, containerSelector: string) => {
+  const onFavItemPointerDown = (e: React.PointerEvent, type: "board" | "thread", index: number, containerSelector: string) => {
     if (e.button !== 0) return;
     favDragRef.current = { type, srcIndex: index, startY: e.clientY };
     favDragOverIndexRef.current = null;
@@ -2619,8 +2660,9 @@ export default function App() {
       }
     };
     const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
       const drag = favDragRef.current;
       const dst = favDragOverIndexRef.current;
       favDragRef.current = null;
@@ -2639,8 +2681,9 @@ export default function App() {
         void persistFavorites({ ...favorites, threads: arr });
       }
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   };
 
   const isFavoriteBoard = (url: string) => favorites.boards.some((b) => b.url === url);
@@ -4644,8 +4687,13 @@ export default function App() {
     visibleThreadItems = [...filteredThreadItems].sort((a, b) => {
       let cmp = 0;
       if (threadSortKey === "fetched") {
-        const score = (t: typeof a) => newThreadUrls.has(t.threadUrl) ? 1 : threadReadMap[t.id] ? 0 : 2;
-        cmp = score(a) - score(b);
+        // 「!」列は昇順/降順ではなく、先頭に集めるものを既読 <-> 新着で切り替える (無印は常に最後)
+        const score = (t: typeof a) => newThreadUrls.has(t.threadUrl)
+          ? (threadSortAsc ? 1 : 0)
+          : threadReadMap[t.id]
+          ? (threadSortAsc ? 0 : 1)
+          : 2;
+        return score(a) - score(b);
       }
       else if (threadSortKey === "id") cmp = a.id - b.id;
       else if (threadSortKey === "datNumber") cmp = Number(a.datNumber || 0) - Number(b.datNumber || 0);
@@ -4702,10 +4750,16 @@ export default function App() {
           if (resizeSide === "left" && e.clientX <= r.left + COL_RESIZE_HANDLE_PX) return;
           toggleThreadSort(sortKey);
         }}
-        onMouseDown={(e) => beginColResize(colKey, resizeSide, e)}
+        onPointerDown={(e) => beginColResize(colKey, resizeSide, e)}
         onDoubleClick={(e) => resetColWidth(colKey, resizeSide, e)}
         onMouseMove={(e) => colResizeCursor(resizeSide, e)}
-        title={colKey === "fetched" ? "取得済みスレを上にソート" : undefined}
+        title={colKey === "fetched"
+          ? threadSortKey !== "fetched"
+            ? "並び替え: クリックで既読が上"
+            : threadSortAsc
+            ? "並び替え: 既読が上（クリックで新着が上）"
+            : "並び替え: 新着が上（クリックで既読が上）"
+          : undefined}
       >
         {THREAD_COL_LABELS[colKey]}{threadSortKey === sortKey ? (threadSortAsc ? " ▲" : " ▼") : ""}
       </th>
@@ -4836,6 +4890,219 @@ export default function App() {
       popupTopZRef.current = 610;
     }
   }, [idPopup, anchorPopup, backRefPopup, nestedPopups]);
+  useEffect(() => { myPostsRef.current = myPosts; }, [myPosts]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    invoke<NotifyConfig>("load_notify_config")
+      .then((cfg) => { notifySavedRef.current = JSON.stringify(cfg); setNotifyConfig(cfg); })
+      .catch((e) => {
+        console.warn("load_notify_config failed", e);
+        // 読めなくても入力は保存できるようにする。この時点の state は初期値なので、
+        // 利用者が何か変えるまでは保存が走らない (良いファイルを空で潰さない)。
+        notifySavedRef.current = JSON.stringify(notifyConfig);
+      });
+  }, []);
+
+  // 自分が書き込んだスレだけを巡回し、新着レスの中から自分宛 (>>自分のレス番号) を拾う。
+  // 書き込んでいないスレに自分宛は付かないので、dat を取る対象はごく少数で済む。
+  // 戻り値は実際に送った件数。
+  const patrolMyReplies = async (): Promise<number> => {
+    if (!isTauriRuntime()) return 0;
+    const myPostsNow = myPostsRef.current;
+    const targets = Object.keys(myPostsNow).filter(
+      (url) => Array.isArray(myPostsNow[url]) && myPostsNow[url].length > 0,
+    );
+    if (targets.length === 0) return 0;
+
+    // 板ごとに subject.txt を 1 回だけ叩く (既存の一括巡回と同じ方針)。
+    const boardMap = new Map<string, string[]>();
+    for (const url of targets) {
+      const boardUrl = getBoardUrlFromThreadUrl(url);
+      const arr = boardMap.get(boardUrl) ?? [];
+      arr.push(url);
+      boardMap.set(boardUrl, arr);
+    }
+    const serverInfo = new Map<string, { count: number; title: string }>();
+    await Promise.all(
+      Array.from(boardMap.entries()).map(async ([boardUrl, urls]) => {
+        let rows: ThreadListItem[] = [];
+        try {
+          rows = await invoke<ThreadListItem[]>("fetch_thread_list", { threadUrl: boardUrl, limit: null });
+        } catch (e) {
+          console.warn(`notify: fetch_thread_list failed for board: ${boardUrl}`, e);
+          return;
+        }
+        const byNorm = new Map<string, ThreadListItem>();
+        for (const row of rows) byNorm.set(normalizeThreadUrl(row.threadUrl), row);
+        for (const url of urls) {
+          const row = byNorm.get(normalizeThreadUrl(url));
+          if (row) serverInfo.set(url, { count: row.responseCount, title: decodeHtmlEntities(row.title) });
+        }
+      }),
+    );
+
+    const checked = notifyCheckedRef.current;
+    const items: NotifyItem[] = [];
+    // 送信に成功してから進める境界。失敗したら据え置いて次の巡回でやり直す。
+    const pendingAdvance: Record<string, number> = {};
+    // スレごとの「最後に積んだ items のインデックス」。送信先の上限で後ろが
+    // 切り捨てられたとき、どのスレまで届いたかを索くのに使う。
+    const lastItemIndex: Record<string, number> = {};
+    let committed = false;
+    for (const url of targets) {
+      const info = serverInfo.get(url);
+      // dat落ち・板の取得失敗はスキップ。境界を進めないので次回に持ち越す。
+      if (!info) continue;
+      const seen = checked[url];
+      if (seen === undefined) {
+        // 初回。ここより前は既に読んでいる前提にして、過去の自分宛を一気に送りつけない。
+        checked[url] = info.count;
+        committed = true;
+        continue;
+      }
+      if (info.count <= seen) continue;
+      const myNos = new Set(myPostsNow[url] ?? []);
+      let responses: ThreadResponseItem[] = [];
+      try {
+        const result = await invoke<{ responses: ThreadResponseItem[]; title: string | null }>(
+          "fetch_thread_responses_command", { threadUrl: url, limit: null },
+        );
+        responses = result.responses;
+      } catch (e) {
+        console.warn(`notify: fetch_thread_responses_command failed: ${url}`, e);
+        continue;
+      }
+      let found = 0;
+      for (const r of responses) {
+        if (r.responseNo <= seen) continue;
+        // 自分の書き込みそのものは通知しない (自分で自分にレスした場合)
+        if (myNos.has(r.responseNo)) continue;
+        const plain = decodeHtmlEntities(r.body.replace(/<[^>]+>/g, ""));
+        let hit = false;
+        for (const m of plain.matchAll(/>>?(\d+)/g)) {
+          if (myNos.has(Number(m[1]))) { hit = true; break; }
+        }
+        if (!hit) continue;
+        found++;
+        items.push({
+          threadTitle: info.title,
+          // 正規化した形 (末尾スラッシュ付きの read.cgi URL) で渡す。送信側はこれに
+          // レス番号を足して該当レスへのリンクを作るので、形が揃っていないと外れる。
+          threadUrl: normalizeThreadUrl(url),
+          responseNo: r.responseNo,
+          name: r.name,
+          dateAndId: r.dateAndId,
+          body: r.body,
+        });
+      }
+      // 自分宛が無かったスレは送信結果を待たずに進めてよい。
+      if (found === 0) { checked[url] = info.count; committed = true; }
+      else { pendingAdvance[url] = info.count; lastItemIndex[url] = items.length - 1; }
+    }
+
+    if (items.length === 0) {
+      if (committed) saveUiJson(NOTIFY_STATE_KEY, JSON.stringify(checked));
+      return 0;
+    }
+    let sent = 0;
+    try {
+      sent = await invoke<number>("send_notify_items", { items });
+      // 送信側は 1 回あたりの件数に上限があり、溢れた分は捨てられる。境界を無条件に
+      // 進めると捨てられたレスが二度と通知されないので、送れたスレだけ進める。
+      // 届かなかったスレは据え置いて次の巡回で拾い直す。
+      for (const [url, count] of Object.entries(pendingAdvance)) {
+        if (lastItemIndex[url] >= sent) continue;
+        checked[url] = count;
+        committed = true;
+      }
+    } catch (e) {
+      // 境界を進めないので、次の巡回で同じレスをもう一度拾う。
+      console.warn("send_notify_items failed", e);
+    }
+    if (committed) saveUiJson(NOTIFY_STATE_KEY, JSON.stringify(checked));
+    return sent;
+  };
+
+  // 通知が有効な間だけ定期巡回する。有効化直後に 1 回走らせるのは、初回が境界の
+  // 初期化だけで終わるため。間隔いっぱい待つと、その間に届いた自分宛を丸ごと
+  // 初期化で飲み込んでしまう。
+  useEffect(() => {
+    if (!notifyConfig.enabled || !isTauriRuntime()) return;
+    const minutes = Math.min(180, Math.max(1, notifyConfig.intervalMin || 10));
+    const first = window.setTimeout(() => { void patrolMyReplies(); }, 15000);
+    const timer = window.setInterval(() => { void patrolMyReplies(); }, minutes * 60 * 1000);
+    return () => { window.clearTimeout(first); window.clearInterval(timer); };
+    // patrolMyReplies は myPostsRef 経由で常に最新を読む。依存に入れると
+    // 書き込みのたびにタイマーが張り直され、巡回が一度も走らなくなる。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifyConfig.enabled, notifyConfig.intervalMin]);
+
+  const saveNotifyConfigNow = async (): Promise<boolean> => {
+    if (!isTauriRuntime()) return false;
+    try {
+      const serialized = JSON.stringify(notifyConfig);
+      await invoke("save_notify_config", { config: notifyConfig });
+      notifySavedRef.current = serialized;
+      return true;
+    } catch (e) {
+      console.warn("save_notify_config failed", e);
+      setNotifyMsg(`保存に失敗しました: ${String(e)}`);
+      return false;
+    }
+  };
+
+  // 保存ボタン方式だと押し忘れたままパネルを閉じられ、再起動で入力が消える。
+  // 「設定したのに通知が来ない」は原因が分かりにくいので、変更を自動で書く。
+  // 1 打鍵ごとに書かないようデバウンスする (Webhook URL は貼り付け1回だが、
+  // ユーザーIDや巡回間隔は手入力されうる)。
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    const serialized = JSON.stringify(notifyConfig);
+    // 読み込み前と、読み込んだ内容そのままのときは書き戻さない。
+    if (notifySavedRef.current === null || notifySavedRef.current === serialized) return;
+    const timer = window.setTimeout(() => {
+      invoke("save_notify_config", { config: notifyConfig })
+        .then(() => { notifySavedRef.current = serialized; })
+        .catch((e) => {
+          // ref は進めない。次に何か変えたときにもう一度書きにいく。
+          console.warn("save_notify_config failed", e);
+          setNotifyMsg(`保存に失敗しました: ${String(e)}`);
+        });
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [notifyConfig]);
+
+  // 貼り間違いは実際に送ってみないと気づけないので、保存してから 1 通投げる。
+  const handleNotifyTest = async () => {
+    setNotifyBusy(true);
+    setNotifyMsg("テスト送信中...");
+    try {
+      if (!(await saveNotifyConfigNow())) return;
+      await invoke("send_notify_test");
+      setNotifyMsg("テスト送信しました。通知先を確認してください");
+    } catch (e) {
+      setNotifyMsg(`テスト送信に失敗しました: ${String(e)}`);
+    } finally {
+      setNotifyBusy(false);
+    }
+  };
+
+  const handleNotifyPatrolNow = async () => {
+    if (!notifyConfig.enabled) { setNotifyMsg("「自分宛のレスを通知する」を有効にしてください"); return; }
+    setNotifyBusy(true);
+    setNotifyMsg("巡回中...");
+    try {
+      if (!(await saveNotifyConfigNow())) return;
+      const sent = await patrolMyReplies();
+      setNotifyMsg(sent > 0 ? `自分宛 ${sent}件を通知しました` : "自分宛の新着はありませんでした");
+    } catch (e) {
+      setNotifyMsg(`巡回に失敗しました: ${String(e)}`);
+    } finally {
+      setNotifyBusy(false);
+    }
+  };
+
   const myPostNos = useMemo(() => new Set(myPosts[activeThreadUrl] ?? []), [myPosts, activeThreadUrl]);
   const replyToMeNos = useMemo(() => {
     if (myPostNos.size === 0) return new Set<number>();
@@ -5765,7 +6032,8 @@ export default function App() {
     setStatus("layout reset");
   };
 
-  const beginHorizontalResize = (mode: "board-thread" | "thread-response", event: ReactMouseEvent<HTMLDivElement>) => {
+  const beginHorizontalResize = (mode: "board-thread" | "thread-response", event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
     event.preventDefault();
     resizeDragRef.current = {
       mode,
@@ -5819,7 +6087,8 @@ export default function App() {
     };
   }, [threadUrl]);
 
-  const beginResponseRowResize = (event: ReactMouseEvent<HTMLDivElement>) => {
+  const beginResponseRowResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
     event.preventDefault();
     if (paneLayoutMode === "river") {
       resizeDragRef.current = {
@@ -5851,7 +6120,8 @@ export default function App() {
     event.currentTarget.style.cursor = inHandle ? "col-resize" : "";
   };
 
-  const beginColResize = (colKey: string, side: "left" | "right", event: React.MouseEvent<HTMLTableCellElement>) => {
+  const beginColResize = (colKey: string, side: "left" | "right", event: ReactPointerEvent<HTMLTableCellElement>) => {
+    if (event.button !== 0) return;
     const rect = event.currentTarget.getBoundingClientRect();
     if (side === "right" && event.clientX < rect.right - COL_RESIZE_HANDLE_PX) return;
     if (side === "left" && event.clientX > rect.left + COL_RESIZE_HANDLE_PX) return;
@@ -6598,7 +6868,10 @@ export default function App() {
       }
       if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
     };
-    const onMouseMove = (event: MouseEvent) => {
+    // mousemove / mouseup ではなく pointermove / pointerup を購読する。タッチのドラッグは
+    // マウスイベントを一切合成しないため、mouse 系のままだと指では何も動かせなかった。
+    // PointerEvent は MouseEvent を継承しているので clientX/clientY の扱いは従来どおり。
+    const onPointerMove = (event: MouseEvent) => {
       const cdrag = composeDragRef.current;
       if (cdrag) {
         setComposePos({
@@ -6706,7 +6979,9 @@ export default function App() {
       }
     };
 
-    const onMouseUp = () => {
+    // pointerup に加えて pointercancel でも終了させる。タッチではブラウザがジェスチャを
+    // 引き取った時点で pointercancel だけが飛び、pointerup が来ないことがある。
+    const onPointerUp = () => {
       if (composeDragRef.current) {
         composeDragRef.current = null;
         document.body.style.userSelect = "";
@@ -6755,8 +7030,9 @@ export default function App() {
       if (hoverPreviewImgRef.current) hoverPreviewImgRef.current.style.transform = `scale(${next / 100})`;
     };
 
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
     window.addEventListener("wheel", onWheel, { passive: false });
 
     // Save window size on resize (debounced) — skip while maximized
@@ -6782,8 +7058,9 @@ export default function App() {
 
     return () => {
       closeHoverPreview();
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
       window.removeEventListener("wheel", onWheel as EventListener);
       window.removeEventListener("resize", onResize);
       clearTimeout(resizeTimer);
@@ -7295,6 +7572,7 @@ export default function App() {
         envOverride: boolean;
         fallbackFrom: string | null;
         writable: boolean;
+        webviewDir: string | null;
       }>("get_data_dir_info");
       setDataDirInfo(info);
     } catch (e) {
@@ -8163,6 +8441,7 @@ export default function App() {
             { text: "sep" },
             { text: "設定", action: () => setSettingsOpen(true) },
             { text: "AI 設定", action: () => setAiSettingsOpen(true) },
+            { text: "通知設定", action: () => setNotifySettingsOpen(true) },
             { text: "マウスジェスチャ設定", action: () => setGestureListOpen(true) },
             ...(navigator.userAgent.includes("Windows") ? [
               { text: "sep" },
@@ -8246,8 +8525,15 @@ export default function App() {
                     <div key={i} className="menu-sep" />
                   ) : "submenu" in item && item.submenu ? (
                     <div key={item.text} className="menu-submenu-wrap">
-                      <button className="menu-submenu-trigger">{item.text} ▶</button>
-                      <div className="menu-submenu">
+                      <button
+                        className="menu-submenu-trigger"
+                        aria-expanded={openSubmenu === item.text}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenSubmenu((prev) => (prev === item.text ? null : item.text));
+                        }}
+                      >{item.text} ▶</button>
+                      <div className={`menu-submenu${openSubmenu === item.text ? " open" : ""}`}>
                         {(item.submenu as { text: string; action?: () => void; keepOpen?: boolean }[]).map((sub) => (
                           <button key={sub.text} onClick={(e) => { e.stopPropagation(); sub.action?.(); if (!sub.keepOpen) setOpenMenu(null); }}>{sub.text}</button>
                         ))}
@@ -8508,7 +8794,7 @@ export default function App() {
               key={b.url}
               className={`board-btn${selectedBoard === b.boardName ? " selected" : ""}${boardBtnDragIndex !== null && boardBtnDragIndex !== i ? " board-btn-drop-target" : ""}`}
               onClick={() => { if (boardBtnDragRef.current) return; selectBoard(b); }}
-              onMouseDown={(e) => {
+              onPointerDown={(e) => {
                 if (e.button !== 0) return;
                 boardBtnDragRef.current = { srcIndex: i, startX: e.clientX };
                 boardBtnDragOverRef.current = null;
@@ -8533,8 +8819,9 @@ export default function App() {
                   }
                 };
                 const onUp = () => {
-                  window.removeEventListener("mousemove", onMove);
-                  window.removeEventListener("mouseup", onUp);
+                  window.removeEventListener("pointermove", onMove);
+                  window.removeEventListener("pointerup", onUp);
+                  window.removeEventListener("pointercancel", onUp);
                   const src = boardBtnDragRef.current?.srcIndex ?? null;
                   const dst = boardBtnDragOverRef.current;
                   boardBtnDragRef.current = null;
@@ -8551,8 +8838,9 @@ export default function App() {
                     return updated;
                   });
                 };
-                window.addEventListener("mousemove", onMove);
-                window.addEventListener("mouseup", onUp);
+                window.addEventListener("pointermove", onMove);
+                window.addEventListener("pointerup", onUp);
+                window.addEventListener("pointercancel", onUp);
               }}
               title={b.boardName}
             >
@@ -8611,7 +8899,7 @@ export default function App() {
                             <button
                               className={`board-item ${selectedBoard === b.boardName ? "selected" : ""}`}
                               onClick={() => { if (favDragRef.current) return; selectBoard(b); }}
-                              onMouseDown={(e) => onFavItemMouseDown(e, "board", i, ".fav-board-list")}
+                              onPointerDown={(e) => onFavItemPointerDown(e, "board", i, ".fav-board-list")}
                               title={b.url}
                             >
                               <span className="fav-star active" onClick={(e) => { e.stopPropagation(); toggleFavoriteBoard(b); }}><Star size={12} /></span>
@@ -8710,7 +8998,7 @@ export default function App() {
                           openThreadInTab(ft.threadUrl, ft.title);
                           setStatus(`loading fav thread: ${ft.title}`);
                         }}
-                        onMouseDown={(e) => onFavItemMouseDown(e, "thread", i, ".fav-thread-list")}
+                        onPointerDown={(e) => onFavItemPointerDown(e, "thread", i, ".fav-thread-list")}
                         title={ft.threadUrl}
                       >
                         <span className="fav-star active" onClick={(e) => { e.stopPropagation(); toggleFavoriteThread(ft); }}><Star size={12} /></span>
@@ -8841,7 +9129,7 @@ export default function App() {
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize boards pane"
-          onMouseDown={(e) => beginHorizontalResize("board-thread", e)}
+          onPointerDown={(e) => beginHorizontalResize("board-thread", e)}
           onClick={(e) => e.stopPropagation()}
         />
         )}
@@ -8924,7 +9212,7 @@ export default function App() {
           role="separator"
           aria-orientation={paneLayoutMode === "river" ? "vertical" : "horizontal"}
           aria-label={paneLayoutMode === "river" ? "Resize threads pane" : "Resize threads and responses"}
-          onMouseDown={beginResponseRowResize}
+          onPointerDown={beginResponseRowResize}
           onClick={(e) => e.stopPropagation()}
         />
         )}
@@ -9067,7 +9355,7 @@ export default function App() {
                   const p = clampMenuPosition(e.clientX, e.clientY, 160, 288);
                   setTabMenu({ x: p.x, y: p.y, tabIndex: i });
                 }}
-                onMouseDown={(e) => {
+                onPointerDown={(e) => {
                   if (e.button === 1) { e.preventDefault(); return; }
                   if (e.button !== 0) return;
                   tabDragRef.current = { srcIndex: i, startX: e.clientX };
@@ -9093,8 +9381,9 @@ export default function App() {
                     }
                   };
                   const onUp = () => {
-                    window.removeEventListener("mousemove", onMove);
-                    window.removeEventListener("mouseup", onUp);
+                    window.removeEventListener("pointermove", onMove);
+                    window.removeEventListener("pointerup", onUp);
+                    window.removeEventListener("pointercancel", onUp);
                     const src = tabDragRef.current?.srcIndex ?? null;
                     const dst = tabDragOverRef.current;
                     tabDragRef.current = null;
@@ -9110,8 +9399,9 @@ export default function App() {
                     });
                     setActiveTabIndex((prev) => src === prev ? dst : src < prev && dst >= prev ? prev - 1 : src > prev && dst <= prev ? prev + 1 : prev);
                   };
-                  window.addEventListener("mousemove", onMove);
-                  window.addEventListener("mouseup", onUp);
+                  window.addEventListener("pointermove", onMove);
+                  window.addEventListener("pointerup", onUp);
+                  window.addEventListener("pointercancel", onUp);
                 }}
                 title={tab.title || tab.threadUrl}
               >
@@ -10038,7 +10328,8 @@ export default function App() {
         >
           <header
             className="emoji-picker-window-header"
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
               if ((e.target as HTMLElement).tagName === "BUTTON") return;
               e.preventDefault();
               const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
@@ -10094,7 +10385,8 @@ export default function App() {
         >
           <header
             className="compose-header"
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
               if ((e.target as HTMLElement).tagName === "BUTTON") return;
               e.preventDefault();
               const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
@@ -10338,7 +10630,8 @@ export default function App() {
             <div
               key={edge}
               className={`compose-resize compose-resize-${edge}`}
-              onMouseDown={(e) => {
+              onPointerDown={(e) => {
+                if (e.button !== 0) return;
                 e.preventDefault();
                 e.stopPropagation();
                 const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
@@ -10360,7 +10653,7 @@ export default function App() {
           aria-label="レス分類"
           style={panelPosStyle("threadCategory")}
         >
-          <header className="ng-panel-header ng-panel-drag-header" onMouseDown={startPanelDrag("threadCategory")}>
+          <header className="ng-panel-header ng-panel-drag-header" onPointerDown={startPanelDrag("threadCategory")}>
             <strong>レス分類</strong>
             <span className="ng-panel-count">{threadCategories.length}語</span>
             {threadCategoryFilter && (
@@ -10453,7 +10746,7 @@ export default function App() {
       )}
       {threadNgOpen && (
         <section className="ng-panel thread-ng-panel" role="dialog" aria-label="スレ一覧NGワード" style={panelPosStyle("threadNg")}>
-          <header className="ng-panel-header ng-panel-drag-header" onMouseDown={startPanelDrag("threadNg")}>
+          <header className="ng-panel-header ng-panel-drag-header" onPointerDown={startPanelDrag("threadNg")}>
             <strong>スレ一覧NGワード</strong>
             <span className="ng-panel-count">{ngFilters.thread_words.length}語</span>
             <button onClick={() => setThreadNgOpen(false)}>閉じる</button>
@@ -10499,7 +10792,7 @@ export default function App() {
       )}
       {ngPanelOpen && (
         <section className="ng-panel" role="dialog" aria-label="NGフィルタ" style={panelPosStyle("ng")}>
-          <header className="ng-panel-header ng-panel-drag-header" onMouseDown={startPanelDrag("ng")}>
+          <header className="ng-panel-header ng-panel-drag-header" onPointerDown={startPanelDrag("ng")}>
             <strong>{ngPanelTab === "ng" ? "NGフィルタ" : "ハイライト"}</strong>
             <span className="ng-panel-count">
               {ngPanelTab === "ng"
@@ -10759,7 +11052,7 @@ export default function App() {
       )}
       {ngImagePanelOpen && (
         <section className="ng-panel ng-image-panel" role="dialog" aria-label="画像NG" style={panelPosStyle("ngImage")}>
-          <header className="ng-panel-header ng-panel-drag-header" onMouseDown={startPanelDrag("ngImage")}>
+          <header className="ng-panel-header ng-panel-drag-header" onPointerDown={startPanelDrag("ngImage")}>
             <strong>画像NG</strong>
             <span className="ng-panel-count">
               {ngImageFilter.entries.filter((e) => !e.disabled).length}/{ngImageFilter.entries.length}
@@ -11841,12 +12134,124 @@ export default function App() {
                       </div>
                     </>
                   )}
+                  {dataDirInfo?.webviewDir && (
+                    <>
+                      <div className="settings-row" style={{ alignItems: "flex-start" }}>
+                        <span>WebView の保存先</span>
+                        <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8em", opacity: 0.75, wordBreak: "break-all" }}>
+                          <span>{dataDirInfo.webviewDir}</span>
+                          <button
+                            type="button"
+                            className="title-action-btn"
+                            title="WebView の保存先フォルダを開く"
+                            onClick={() => {
+                              void invoke("reveal_webview_dir").catch((e) => {
+                                console.warn("reveal_webview_dir failed", e);
+                                setDataDirMsg(`フォルダを開けません: ${String(e)}`);
+                              });
+                            }}
+                          >
+                            <FolderOpen size={14} />
+                          </button>
+                        </span>
+                      </div>
+                      <div className="settings-row" style={{ alignItems: "flex-start" }}>
+                        <span className="settings-hint" style={{ lineHeight: 1.5 }}>
+                          ウィンドウサイズ・ペイン幅・列幅・文字サイズ・スレの最終取得時刻・読みかけ位置・板一覧キャッシュは、上のデータフォルダではなくここに保存されます。OS がアプリ識別子ごとに管理する場所で、Ember を展開したフォルダとは無関係です。<br />
+                          そのため <strong>アプリのフォルダを消してもこれらの設定は残ります</strong>。完全に初期状態へ戻すときは、このフォルダも削除してください。
+                        </span>
+                      </div>
+                    </>
+                  )}
                 </fieldset>
               <fieldset>
                 <legend>情報</legend>
                 <div className="settings-row"><span>バージョン</span><span>{currentVersion}</span></div>
                 <div className="settings-row"><span>スモークテスト</span><span>67項目</span></div>
               </fieldset>
+            </div>
+          </div>
+        </div>
+      )}
+      {notifySettingsOpen && (
+        <div className="lightbox-overlay" onClick={() => setNotifySettingsOpen(false)}>
+          <div className="settings-panel notify-settings-panel" onClick={(e) => e.stopPropagation()}>
+            <header className="settings-header">
+              <strong>通知設定</strong>
+              <button onClick={() => setNotifySettingsOpen(false)}>閉じる</button>
+            </header>
+            <div className="settings-body">
+              <fieldset>
+                <legend>送信先 (Discord Webhook)</legend>
+                <div className="settings-row"><span>Webhook URL</span></div>
+                {/* 伏せ字にしない。貼り付けが1文字欠けても画面では分からず、テスト送信
+                    するまで気づけないため。漏れたときの被害はこの通知先へ投稿できる
+                    だけで、ウェブフックを作り直せば消えるので、認証情報とは等級が違う。 */}
+                <input
+                  type="text"
+                  className="notify-webhook-url"
+                  value={notifyConfig.webhookUrl}
+                  onChange={(e) => setNotifyConfig({ ...notifyConfig, webhookUrl: e.target.value })}
+                  placeholder="https://discord.com/api/webhooks/..."
+                  style={{ marginTop: 0 }}
+                />
+                <div className="settings-row" style={{ alignItems: "flex-start" }}>
+                  <span className="settings-hint" style={{ lineHeight: 1.5 }}>
+                    Discord の サーバー設定 → 連携サービス → ウェブフック で作成し、URL をコピーして貼り付けます。<br />
+                    ⚠ この URL を知られると誰でもその通知先へ投稿できます。他人に見せないでください。
+                  </span>
+                </div>
+                <div className="settings-row" style={{ marginTop: 8 }}><span>Discord ユーザーID (任意)</span></div>
+                <input
+                  className="notify-discord-user-id"
+                  value={notifyConfig.discordUserId}
+                  onChange={(e) => setNotifyConfig({ ...notifyConfig, discordUserId: e.target.value })}
+                  placeholder="例: 123456789012345678"
+                  style={{ marginTop: 0 }}
+                />
+                <div className="settings-row" style={{ alignItems: "flex-start" }}>
+                  <span className="settings-hint" style={{ lineHeight: 1.5 }}>
+                    入力するとメンション付きで送るので、サーバーの通知設定が「@メンションのみ」でもスマホにプッシュが届きます。Discord の 設定 → 詳細設定 → 開発者モード を ON にして、自分の名前を右クリック →「ユーザーIDをコピー」。
+                  </span>
+                </div>
+                <div className="settings-row" style={{ marginTop: 8, gap: 4 }}>
+                  <button type="button" disabled={notifyBusy} onClick={() => void handleNotifyTest()}>テスト送信</button>
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend>巡回</legend>
+                <label className="settings-row">
+                  <input
+                    type="checkbox"
+                    checked={notifyConfig.enabled}
+                    onChange={(e) => setNotifyConfig({ ...notifyConfig, enabled: e.target.checked })}
+                  />
+                  <span>自分宛のレスを通知する</span>
+                </label>
+                <label className="settings-row">
+                  <span>巡回間隔 (分)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={180}
+                    value={notifyConfig.intervalMin}
+                    onChange={(e) => setNotifyConfig({ ...notifyConfig, intervalMin: Number(e.target.value) })}
+                  />
+                </label>
+                <div className="settings-row" style={{ marginTop: 8, gap: 4 }}>
+                  <button type="button" disabled={notifyBusy} onClick={() => void handleNotifyPatrolNow()}>今すぐ巡回</button>
+                </div>
+                <div className="settings-row" style={{ alignItems: "flex-start" }}>
+                  <span className="settings-hint" style={{ lineHeight: 1.5 }}>
+                    自分が書き込んだスレだけを巡回し、自分のレス番号へのアンカー (&gt;&gt;) が付いたら通知します。有効にした時点より前のレスは通知しません。<br />
+                    ⚠ Ember が起動している間だけ動きます。PC のスリープ中・終了中は通知されません。
+                  </span>
+                </div>
+              </fieldset>
+              {notifyMsg && <div className="settings-row"><span>{notifyMsg}</span></div>}
+              <div className="settings-row" style={{ alignItems: "flex-start" }}>
+                <span className="settings-hint">変更は自動的に保存されます。</span>
+              </div>
             </div>
           </div>
         </div>
@@ -12114,7 +12519,8 @@ export default function App() {
         >
           <header
             className="settings-header new-thread-header"
-            onMouseDown={(e) => {
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
               if ((e.target as HTMLElement).tagName === "BUTTON") return;
               e.preventDefault();
               const rect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
