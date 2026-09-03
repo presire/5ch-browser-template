@@ -1545,8 +1545,27 @@ struct WindowSize {
 }
 
 #[tauri::command]
-fn save_window_size(width: f64, height: f64, x: Option<i32>, y: Option<i32>, maximized: Option<bool>) -> Result<(), String> {
-    let size = WindowSize { width, height, x, y, maximized: maximized.unwrap_or(false) };
+fn save_window_size(
+    window: tauri::WebviewWindow,
+    width: f64,
+    height: f64,
+    x: Option<i32>,
+    y: Option<i32>,
+    maximized: Option<bool>,
+) -> Result<(), String> {
+    // フロントエンドが渡す width / height は window.innerWidth 由来の CSS ピクセル
+    // なので、UI サイズ (WebView のズーム) を上げるとウィンドウ自体より小さい値になる。
+    // 復元側は論理サイズとして set_size するため、そのまま保存すると起動のたびに
+    // 倍率のぶんだけウィンドウが縮んでいく (特大では毎回 1/1.5)。
+    // OS 側の実サイズが取れるならそちらを使い、渡された値はフォールバックに留める。
+    // CloseRequested 側の保存と同じ計算。
+    let (w, h) = match (window.inner_size(), window.scale_factor()) {
+        (Ok(size), Ok(scale)) if scale > 0.0 => {
+            (size.width as f64 / scale, size.height as f64 / scale)
+        }
+        _ => (width, height),
+    };
+    let size = WindowSize { width: w, height: h, x, y, maximized: maximized.unwrap_or(false) };
     core_store::save_json("window_size.json", &size).map_err(|e| e.to_string())
 }
 
@@ -1571,6 +1590,19 @@ fn set_window_theme(app: tauri::AppHandle, dark: bool) -> Result<(), String> {
 #[tauri::command]
 fn set_always_on_top(window: tauri::WebviewWindow, on_top: bool) -> Result<(), String> {
     window.set_always_on_top(on_top).map_err(|e| format!("{}", e))
+}
+
+// UI 全体の表示倍率。CSS ではなく WebView 自体のズームを使う。styles.css は
+// px 指定が 1300 箇所ある一方 rem は 0 なので CSS 側で倍率をかけるには全面的な
+// 書き換えが要るうえ、CSS の zoom はドラッグ処理の座標計算とずれる。
+// WebView のズームなら両方とも起きない。
+#[tauri::command]
+fn set_ui_zoom(window: tauri::WebviewWindow, factor: f64) -> Result<(), String> {
+    // 選択肢は 1.0〜1.5 だが、壊れた値が渡っても操作不能にならないよう丸める。
+    let clamped = if factor.is_finite() { factor.clamp(0.5, 3.0) } else { 1.0 };
+    window
+        .set_zoom(clamped)
+        .map_err(|e| format!("表示倍率の変更に失敗しました: {}", e))
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -3064,6 +3096,7 @@ pub fn run() {
             send_notify_items,
             send_notify_test,
             set_always_on_top,
+            set_ui_zoom,
             open_youtube_pip,
             close_youtube_pip,
             start_pip_drag,

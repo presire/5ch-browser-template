@@ -1148,6 +1148,103 @@ try {
     !legends.some((l) => l.includes("通知")),
     `notification settings should live in their own panel, not in 設定: ${legends}`,
   );
+  // UI サイズ (タッチ端末向けの表示倍率。既定は標準 = 1)
+  const uiZoomSelect = await page.$(".settings-body select.ui-zoom-select");
+  assert(uiZoomSelect, "settings should have a UI size select");
+  assert((await uiZoomSelect.inputValue()) === "1", "UI size should default to 1 (標準)");
+  const uiZoomLabels = await page.$$eval(".settings-body select.ui-zoom-select option", (els) =>
+    els.map((e) => e.textContent?.trim()),
+  );
+  assert(
+    uiZoomLabels.length === 3 && uiZoomLabels.includes("標準") && uiZoomLabels.includes("大") && uiZoomLabels.includes("特大"),
+    `UI size should offer 3 steps, got ${uiZoomLabels}`,
+  );
+  console.log("smoke-ui: UI size setting ok");
+
+  // UI サイズを上げても縦積みに切り替わらないこと。
+  // 縦積みの判定は CSS ピクセル上の幅ではなく、倍率を掛け戻した物理的な幅で行う。
+  // これが無いと、画面が狭くなくても倍率を上げただけで 3 ペインが縦に積まれる。
+  const isNarrow = () => page.evaluate(() => document.documentElement.classList.contains("narrow-layout"));
+  await page.setViewportSize({ width: 853, height: 1280 });
+  await new Promise((r) => setTimeout(r, 250));
+  assert(await isNarrow(), "853px viewport at 標準 should stack panes");
+  // 853 * 1.5 = 1279.5 > 980 なので、倍率 1 なら広い画面ということになる
+  await uiZoomSelect.selectOption("1.5");
+  await new Promise((r) => setTimeout(r, 250));
+  assert(!(await isNarrow()), "853px viewport at 特大 should NOT stack (it is a wide window, just zoomed)");
+  await uiZoomSelect.selectOption("1");
+  await new Promise((r) => setTimeout(r, 250));
+  assert(await isNarrow(), "going back to 標準 should stack again");
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await new Promise((r) => setTimeout(r, 250));
+  assert(!(await isNarrow()), "1280px viewport should not stack");
+  console.log("smoke-ui: UI size vs narrow layout ok");
+
+  // タッチ操作モード。ホバー抑止の判定自体はポインタイベント依存でここでは再現できないので、
+  // 設定が root の touch-mode クラス (CSS のタップ領域拡大の印) に反映されることを見る。
+  const touchModeSelect = await page.$(".settings-body select.touch-mode-select");
+  assert(touchModeSelect, "settings should have a touch mode select");
+  assert((await touchModeSelect.inputValue()) === "auto", "touch mode should default to auto");
+  const touchLabels = await page.$$eval(".settings-body select.touch-mode-select option", (os) => os.map((o) => o.textContent));
+  assert(
+    touchLabels.length === 3 && touchLabels.join(",") === "自動,常にオン,常にオフ",
+    `touch mode should offer 3 choices, got ${touchLabels.join(",")}`,
+  );
+  const isTouchMode = () => page.evaluate(() => document.documentElement.classList.contains("touch-mode"));
+  // 上のスプリッタ検証で pointerType:"touch" の合成イベントを投げているので、
+  // マウスを動かして操作がマウスへ戻ることを確かめてから既定値を見る。
+  for (let i = 0; i < 6; i += 1) await page.mouse.move(400 + i * 30, 300 + i * 30);
+  await new Promise((r) => setTimeout(r, 100));
+  assert(!(await isTouchMode()), "moving the mouse should take over from an earlier touch pointer event");
+  await touchModeSelect.selectOption("on");
+  await new Promise((r) => setTimeout(r, 250));
+  assert(await isTouchMode(), "touch mode ON should mark the root element");
+  await touchModeSelect.selectOption("auto");
+  await new Promise((r) => setTimeout(r, 250));
+  assert(!(await isTouchMode()), "auto should stay off while only the mouse has been used");
+  console.log("smoke-ui: touch mode setting ok");
+
+  // 自動判定は実際にタッチイベントが出るコンテキストでないと確かめられない。
+  // 別コンテキストを起こして、タップで切り替わること / 設定で上書きできることを見る。
+  const tapAndCheck = async (pref) => {
+    const ctx = await browser.newContext({ hasTouch: true });
+    if (pref) await ctx.addInitScript((v) => localStorage.setItem("desktop.touchMode.v1", v), pref);
+    const p2 = await ctx.newPage();
+    await p2.goto(targetUrl, { waitUntil: "load" });
+    await p2.waitForSelector(".layout");
+    await p2.touchscreen.tap(200, 200);
+    await new Promise((r) => setTimeout(r, 250));
+    const marked = await p2.evaluate(() => document.documentElement.classList.contains("touch-mode"));
+    await ctx.close();
+    return marked;
+  };
+  assert(await tapAndCheck(null), "auto should switch to touch mode once a real tap arrives");
+  assert(!(await tapAndCheck("off")), "常にオフ should override touch detection on a touch device");
+  console.log("smoke-ui: touch mode detection ok");
+
+  // タップ直後に来る合成マウスイベントでモードが往復すると、再描画とタップ領域の
+  // 付け替えがスクロール中に走って操作が壊れる。往復しないことを見る。
+  {
+    const ctx = await browser.newContext({ hasTouch: true });
+    const p2 = await ctx.newPage();
+    await p2.goto(targetUrl, { waitUntil: "load" });
+    await p2.waitForSelector(".layout");
+    const inTouchMode = () => p2.evaluate(() => document.documentElement.classList.contains("touch-mode"));
+    await p2.touchscreen.tap(200, 200);
+    await new Promise((r) => setTimeout(r, 200));
+    assert(await inTouchMode(), "a tap should enter touch mode");
+    for (let i = 0; i < 6; i += 1) await p2.mouse.move(300 + i * 30, 300 + i * 30);
+    await new Promise((r) => setTimeout(r, 200));
+    assert(await inTouchMode(), "mouse events right after a tap should not leave touch mode");
+    // 静かな時間が空いたあとの、実際に動いたマウス操作でだけマウスへ戻る。
+    await new Promise((r) => setTimeout(r, 2100));
+    for (let i = 0; i < 6; i += 1) await p2.mouse.move(300 + i * 30, 300 + i * 30);
+    await new Promise((r) => setTimeout(r, 200));
+    assert(!(await inTouchMode()), "a real mouse move well after the last touch should return to mouse mode");
+    await ctx.close();
+  }
+  console.log("smoke-ui: touch mode does not flap ok");
+
   // ホイールスクロール行数の設定 (既定 OFF、ON のときだけ行数入力が出る)
   const wheelRowToggle = await page.$('.settings-body label:has-text("スレ一覧のホイールスクロールを行単位にする") input[type="checkbox"]');
   assert(wheelRowToggle, "settings should have wheel row scroll toggle");
