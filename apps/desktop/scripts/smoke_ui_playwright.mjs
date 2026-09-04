@@ -1288,6 +1288,29 @@ try {
   assert(idPopupPrefOn === true, `ID hover popup on should persist, got ${idPopupPrefOn}`);
   console.log("smoke-ui: id hover popup setting ok");
 
+  // メール欄表示の設定 (既定 ON)。dat の mail は取得できていても表示先が無かったので、
+  // 「名前の右に出ること」と「設定で消せること」の両方を見る。
+  const mailToggle = await page.$('.settings-body label:has-text("メール欄") input[type="checkbox"]');
+  assert(mailToggle, "settings should have a mail field display toggle");
+  assert(await mailToggle.isChecked(), "mail field display should default to on");
+  const mailTexts = await page.$$eval(".response-mail", (els) => els.map((e) => e.textContent?.trim()));
+  assert(mailTexts.includes("[sage]"), `mail field should be shown next to the name, got ${JSON.stringify(mailTexts)}`);
+  await mailToggle.uncheck();
+  await new Promise((r) => setTimeout(r, 150));
+  assert((await page.$$(".response-mail")).length === 0, "turning the setting off should hide the mail field");
+  const mailPrefOff = await page.evaluate(() => {
+    try {
+      return JSON.parse(localStorage.getItem("desktop.layoutPrefs.v1") || "{}").showResponseMail;
+    } catch {
+      return undefined;
+    }
+  });
+  assert(mailPrefOff === false, `mail field display off should persist, got ${mailPrefOff}`);
+  await mailToggle.check();
+  await new Promise((r) => setTimeout(r, 150));
+  assert((await page.$$(".response-mail")).length > 0, "turning the setting back on should show the mail field");
+  console.log("smoke-ui: response mail display setting ok");
+
   // OGP link card toggle exists in settings
   const ogpToggleLabel = await page.$('.settings-body label:has-text("OGPカード")');
   assert(ogpToggleLabel, "settings should have OGP card display toggle");
@@ -1929,6 +1952,40 @@ try {
   await page.click(".notify-settings-panel .settings-header button");
   await new Promise((r) => setTimeout(r, 150));
   console.log("smoke-ui: notification settings ok");
+
+  // 同名・別URLの板 (「モバイル」が bbymobile と mobile に別々にある) を区別できること。
+  // 板ツリーはキャッシュから復元されるので、seed した状態の別ページで確認する。
+  const boardPage = await context.newPage();
+  await boardPage.addInitScript(() => {
+    localStorage.setItem(
+      "desktop.boardCategories.v1",
+      JSON.stringify([
+        {
+          categoryName: "PC等",
+          boards: [
+            { boardName: "モバイル", url: "https://headline.5ch.io/bbymobile/" },
+            { boardName: "モバイル", url: "https://egg.5ch.io/mobile/" },
+          ],
+        },
+      ]),
+    );
+    localStorage.setItem("desktop.expandedCategories.v1", JSON.stringify(["PC等"]));
+  });
+  await boardPage.goto(targetUrl, { waitUntil: "load" });
+  await boardPage.waitForSelector(".board-tree .board-item");
+  const seededBoards = await boardPage.$$(".board-tree .board-item");
+  assert(seededBoards.length === 2, `seeded board tree should have 2 boards, got ${seededBoards.length}`);
+  await seededBoards[1].click();
+  await new Promise((r) => setTimeout(r, 200));
+  const selectedBoardUrls = await boardPage.$$eval(".board-tree .board-item.selected", (els) =>
+    els.map((e) => e.getAttribute("title")),
+  );
+  assert(
+    selectedBoardUrls.length === 1 && selectedBoardUrls[0] === "https://egg.5ch.io/mobile/",
+    `only the clicked board should be highlighted, got ${JSON.stringify(selectedBoardUrls)}`,
+  );
+  await boardPage.close();
+  console.log("smoke-ui: board highlight by url ok");
 
   console.log("smoke-ui: ok");
 } finally {

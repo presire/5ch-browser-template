@@ -2069,6 +2069,8 @@ export default function App() {
   const [responseBodyBottomPad, setResponseBodyBottomPad] = useState(false);
   // 日付・IDを右端ではなく名前の隣に置く。ペインが広いと右端まで視線を動かす必要があるため
   const [responseMetaInline, setResponseMetaInline] = useState(false);
+  // メール欄 (sage など) を名前の右に出すか。dat には入っているが表示先が無かった。
+  const [showResponseMail, setShowResponseMail] = useState(true);
   const [titleClickRefresh, setTitleClickRefresh] = useState(false);
   // レス選択時にそのレスを表示領域内へ自動スクロールするか (既定 ON = 従来動作)
   const [autoScrollToSelected, setAutoScrollToSelected] = useState(true);
@@ -2215,6 +2217,9 @@ export default function App() {
   const lastBoardUrlRef = useRef("");
   const pendingLastBoardRef = useRef<{ boardName: string; url: string } | null>(null);
   const [selectedBoard, setSelectedBoard] = useState("Favorite");
+  // ハイライト判定用。同名・別URLの板 (bbymobile と mobile の「モバイル」など) を
+  // 区別するため、板名ではなく URL で選択状態を持つ。
+  const [selectedBoardUrl, setSelectedBoardUrl] = useState("");
   const [selectedThread, setSelectedThread] = useState<number | null>(1);
   const [selectedResponse, setSelectedResponse] = useState<number>(1);
   const [threadReadMap, setThreadReadMap] = useState<Record<number, boolean>>({ 1: false, 2: true });
@@ -2860,6 +2865,10 @@ export default function App() {
   };
 
   const isFavoriteBoard = (url: string) => favorites.boards.some((b) => b.url === url);
+  const isSelectedBoard = (url: string) => {
+    if (!url || !selectedBoardUrl) return false;
+    return url.replace(/\/+$/, "") === selectedBoardUrl.replace(/\/+$/, "");
+  };
 
   const loadNgFilters = async () => {
     if (!isTauriRuntime()) return;
@@ -3647,6 +3656,7 @@ export default function App() {
     setShowRecentOpenedOnly(false);
     setShowRecentPostedOnly(false);
     lastBoardUrlRef.current = board.url;
+    setSelectedBoardUrl(board.url);
     setLocationInput(board.url);
     setThreadUrl(board.url);
     setFocusedPane("threads");
@@ -5012,6 +5022,8 @@ export default function App() {
             id: r.responseNo,
             name: plainName,
             nameWithoutWatchoi: watchoi ? plainName.replace(/\s*[(（][^)）]+[)）]\s*$/, "") : plainName,
+            // メール欄 (sage など)。dat の2番目のフィールドで、過去ログ HTML 経由では空になる。
+            mail: (r.mail || "").trim(),
             time: r.dateAndId || "-",
             text: r.body || "",
             beNumber: beNum,
@@ -5019,10 +5031,10 @@ export default function App() {
           };
         })
       : [
-          { id: 1, name: "名無しさん", nameWithoutWatchoi: "名無しさん", time: "2026/03/07 10:00", text: "投稿フロートレース準備完了", beNumber: null, watchoi: null },
-          { id: 2, name: "名無しさん", nameWithoutWatchoi: "名無しさん", time: "2026/03/07 10:02", text: "BE/UPLIFT/どんぐりログイン確認済み", beNumber: null, watchoi: null },
-          { id: 3, name: "名無しさん", nameWithoutWatchoi: "名無しさん", time: "2026/03/07 10:04", text: "次: subject/dat取得連携", beNumber: null, watchoi: null },
-          { id: 4, name: "名無しさん", nameWithoutWatchoi: "名無しさん", time: "2026/03/07 10:06", text: "参考 https://example.com/page を参照", beNumber: null, watchoi: null },
+          { id: 1, name: "名無しさん", nameWithoutWatchoi: "名無しさん", mail: "", time: "2026/03/07 10:00", text: "投稿フロートレース準備完了", beNumber: null, watchoi: null },
+          { id: 2, name: "名無しさん", nameWithoutWatchoi: "名無しさん", mail: "sage", time: "2026/03/07 10:02", text: "BE/UPLIFT/どんぐりログイン確認済み", beNumber: null, watchoi: null },
+          { id: 3, name: "名無しさん", nameWithoutWatchoi: "名無しさん", mail: "", time: "2026/03/07 10:04", text: "次: subject/dat取得連携", beNumber: null, watchoi: null },
+          { id: 4, name: "名無しさん", nameWithoutWatchoi: "名無しさん", mail: "", time: "2026/03/07 10:06", text: "参考 https://example.com/page を参照", beNumber: null, watchoi: null },
         ]),
   ];
   const extractId = (time: string) => {
@@ -5687,6 +5699,9 @@ export default function App() {
           {resp.id}
         </span>{" "}
         {abone ? ABONE_TEXT : resp.name}{" "}
+        {!abone && showResponseMail && resp.mail !== "" ? (
+          <span className="response-mail">[{resp.mail}]</span>
+        ) : null}
         <time>{date}</time>
         {id ? (
           <span
@@ -6582,6 +6597,7 @@ export default function App() {
           threadColOrder?: string[];
           responseBodyBottomPad?: boolean;
           responseMetaInline?: boolean;
+          showResponseMail?: boolean;
           titleClickRefresh?: boolean;
           autoScrollSpeed?: number;
           autoScrollToSelected?: boolean;
@@ -6665,6 +6681,7 @@ export default function App() {
         if (Array.isArray(parsed.threadColOrder)) setThreadColOrder(normalizeThreadColOrder(parsed.threadColOrder));
         if (typeof parsed.responseBodyBottomPad === "boolean") setResponseBodyBottomPad(parsed.responseBodyBottomPad);
         if (typeof parsed.responseMetaInline === "boolean") setResponseMetaInline(parsed.responseMetaInline);
+        if (typeof parsed.showResponseMail === "boolean") setShowResponseMail(parsed.showResponseMail);
         if (typeof parsed.titleClickRefresh === "boolean") setTitleClickRefresh(parsed.titleClickRefresh);
         if (typeof parsed.autoScrollSpeed === "number" && parsed.autoScrollSpeed > 0) setAutoScrollSpeed(parsed.autoScrollSpeed);
         if (typeof parsed.wheelRowScrollEnabled === "boolean") setWheelRowScrollEnabled(parsed.wheelRowScrollEnabled);
@@ -6791,6 +6808,7 @@ export default function App() {
       setLocationInput(lb.url);
       setThreadUrl(lb.url);
       lastBoardUrlRef.current = lb.url;
+      setSelectedBoardUrl(lb.url);
       // keepFilter: スレ一覧フィルタを復元している場合に、板の読み込みで
       // フィルタが解除されないようにする (フィルタ無しなら元々 no-op)。
       // 既読数のマップは板と復元フィルタで共有なので、板の読み込みが終わってから
@@ -7476,6 +7494,7 @@ export default function App() {
       threadColOrder,
       responseBodyBottomPad,
       responseMetaInline,
+      showResponseMail,
       titleClickRefresh,
       autoScrollSpeed,
       autoScrollToSelected,
@@ -7486,7 +7505,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, composeSize, composePos, threadColVisible, threadColOrder, responseBodyBottomPad, responseMetaInline, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, composeSize, composePos, threadColVisible, threadColOrder, responseBodyBottomPad, responseMetaInline, showResponseMail, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -9002,7 +9021,7 @@ export default function App() {
           {favorites.boards.map((b, i) => (
             <button
               key={b.url}
-              className={`board-btn${selectedBoard === b.boardName ? " selected" : ""}${boardBtnDragIndex !== null && boardBtnDragIndex !== i ? " board-btn-drop-target" : ""}`}
+              className={`board-btn${isSelectedBoard(b.url) ? " selected" : ""}${boardBtnDragIndex !== null && boardBtnDragIndex !== i ? " board-btn-drop-target" : ""}`}
               onClick={() => { if (boardBtnDragRef.current) return; selectBoard(b); }}
               onPointerDown={(e) => {
                 if (e.button !== 0) return;
@@ -9107,7 +9126,7 @@ export default function App() {
                         {favorites.boards.map((b, i) => (
                           <li key={b.url} className={favDragState?.type === "board" && favDragState.overIndex === i ? "fav-drag-over" : ""}>
                             <button
-                              className={`board-item ${selectedBoard === b.boardName ? "selected" : ""}`}
+                              className={`board-item ${isSelectedBoard(b.url) ? "selected" : ""}`}
                               onClick={() => { if (favDragRef.current) return; selectBoard(b); }}
                               onPointerDown={(e) => onFavItemPointerDown(e, "board", i, ".fav-board-list")}
                               title={b.url}
@@ -9141,7 +9160,7 @@ export default function App() {
                             {filteredBoards.map((b) => (
                               <li key={b.url}>
                                 <button
-                                  className={`board-item ${selectedBoard === b.boardName ? "selected" : ""}`}
+                                  className={`board-item ${isSelectedBoard(b.url) ? "selected" : ""}`}
                                   onClick={() => selectBoard(b)}
                                   title={b.url}
                                 >
@@ -9442,6 +9461,7 @@ export default function App() {
                       setShowRecentPostedOnly(false);
                       setSelectedBoard(boardUrl.split("/").filter(Boolean).pop() || "");
                       lastBoardUrlRef.current = boardUrl;
+                      setSelectedBoardUrl(boardUrl);
                       setLocationInput(boardUrl);
                       setThreadUrl(boardUrl);
                       void fetchThreadListFromCurrent(boardUrl);
@@ -9913,6 +9933,11 @@ export default function App() {
                           }}
                         >
                           ({r.watchoi})
+                        </span>
+                      )}
+                      {showResponseMail && r.mail !== "" && (
+                        <span className="response-mail" title={`メール: ${r.mail}`}>
+                          [{r.mail}]
                         </span>
                       )}
                       {backRefMap.has(r.id) && (
@@ -11556,6 +11581,7 @@ export default function App() {
               setShowRecentPostedOnly(false);
               setSelectedBoard(boardUrl.split("/").filter(Boolean).pop() || "");
               lastBoardUrlRef.current = boardUrl;
+              setSelectedBoardUrl(boardUrl);
               setLocationInput(boardUrl);
               setThreadUrl(boardUrl);
               void fetchThreadListFromCurrent(boardUrl);
@@ -12164,6 +12190,10 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={responseMetaInline} onChange={(e) => setResponseMetaInline(e.target.checked)} />
                   <span title="オフのときはレスペインの右端に寄せます">日付・IDを名前の隣に表示</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={showResponseMail} onChange={(e) => setShowResponseMail(e.target.checked)} />
+                  <span title="過去ログ表示ではメール欄を取得できないため出ません">メール欄 (sage など) を名前の隣に表示</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={titleClickRefresh} onChange={(e) => setTitleClickRefresh(e.target.checked)} />
