@@ -1204,6 +1204,27 @@ try {
   assert(!(await isTouchMode()), "auto should stay off while only the mouse has been used");
   console.log("smoke-ui: touch mode setting ok");
 
+  // 画像プレビューはホバーと Ctrl+ホイールでしか操作できず、タッチでは手が無かった。
+  // タッチ操作中だけ、閉じる / ズーム / 外部ブラウザの操作バーが出ることを見る。
+  const previewBarButtons = () =>
+    page.$$eval(".hover-preview .hover-preview-touch-bar button", (els) =>
+      els.map((e) => e.getAttribute("aria-label") ?? e.textContent?.trim()),
+    );
+  assert(
+    (await previewBarButtons()).length === 0,
+    "image preview should have no touch bar while the mouse is in use",
+  );
+  await touchModeSelect.selectOption("on");
+  await new Promise((r) => setTimeout(r, 250));
+  const previewBar = await previewBarButtons();
+  assert(
+    previewBar.join(",") === "縮小,拡大,ブラウザで開く,閉じる",
+    `image preview touch bar should offer zoom / open / close, got ${previewBar.join(",")}`,
+  );
+  await touchModeSelect.selectOption("auto");
+  await new Promise((r) => setTimeout(r, 250));
+  console.log("smoke-ui: image preview touch bar ok");
+
   // 自動判定は実際にタッチイベントが出るコンテキストでないと確かめられない。
   // 別コンテキストを起こして、タップで切り替わること / 設定で上書きできることを見る。
   const tapAndCheck = async (pref) => {
@@ -1984,8 +2005,38 @@ try {
     selectedBoardUrls.length === 1 && selectedBoardUrls[0] === "https://egg.5ch.io/mobile/",
     `only the clicked board should be highlighted, got ${JSON.stringify(selectedBoardUrls)}`,
   );
+
+  // スレ一覧の自動開閉 (設定 → 表示)。既定オフ。
+  // オンにすると、板を選んだときにスレ一覧が出て、レスペインを触ると隠れる。
+  await boardPage.click('.menu-item:has-text("ファイル")');
+  await new Promise((r) => setTimeout(r, 100));
+  await boardPage.click('.menu-dropdown button:has-text("設定")');
+  await new Promise((r) => setTimeout(r, 200));
+  const autoToggle = await boardPage.$('.settings-body label:has-text("スレ一覧を自動で開閉する") input[type="checkbox"]');
+  assert(autoToggle, "settings should have a thread pane auto toggle");
+  assert(!(await autoToggle.isChecked()), "thread pane auto toggle should default to off");
+  await autoToggle.check();
+  await boardPage.click('.settings-header button:has-text("閉じる")');
+  await new Promise((r) => setTimeout(r, 200));
+
+  const threadPaneDisplay = () =>
+    boardPage.$eval(".pane.threads", (el) => getComputedStyle(el).display);
+  await boardPage.click('button[aria-label="スレ一覧ペイン表示切替"]');
+  await new Promise((r) => setTimeout(r, 150));
+  assert((await threadPaneDisplay()) === "none", "thread pane should be hidden after toggling it off");
+
+  const autoBoards = await boardPage.$$(".board-tree .board-item");
+  await autoBoards[0].click();
+  await new Promise((r) => setTimeout(r, 200));
+  assert((await threadPaneDisplay()) !== "none", "selecting a board should reveal the thread pane");
+
+  await boardPage.click(".pane.responses");
+  await new Promise((r) => setTimeout(r, 200));
+  assert((await threadPaneDisplay()) === "none", "touching the responses pane should hide the thread pane again");
+
   await boardPage.close();
   console.log("smoke-ui: board highlight by url ok");
+  console.log("smoke-ui: thread pane auto toggle ok");
 
   console.log("smoke-ui: ok");
 } finally {

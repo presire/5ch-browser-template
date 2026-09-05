@@ -2426,6 +2426,8 @@ export default function App() {
   const [paneLayoutMode, setPaneLayoutMode] = useState<PaneLayoutMode>("classic");
   const [boardPaneHidden, setBoardPaneHidden] = useState(false);
   const [threadPaneHidden, setThreadPaneHidden] = useState(false);
+  // 板を選んだらスレ一覧を出し、スレを開いたら畳む自動開閉。既定オフ。
+  const [threadPaneAutoToggle, setThreadPaneAutoToggle] = useState(false);
   const resizeDragRef = useRef<ResizeDragState | null>(null);
   const [threadColWidths, setThreadColWidths] = useState<Record<string, number>>({ ...DEFAULT_COL_WIDTHS });
   const [threadColVisible, setThreadColVisible] = useState<Record<ToggleableThreadColKey, boolean>>({ ...DEFAULT_COL_VISIBLE });
@@ -3409,6 +3411,10 @@ export default function App() {
 
   const openThreadInTab = (url: string, title: string) => {
     setResponseSearchQuery("");
+    if (threadPaneAutoToggle) {
+      setThreadPaneHidden(true);
+      if (focusedPane === "threads") setFocusedPane("responses");
+    }
     setNewThreadUrls((prev) => { if (!prev.has(url)) return prev; const next = new Set(prev); next.delete(url); return next; });
     pushRecentOpenedThread(url, title);
     const existingIndex = threadTabs.findIndex((t) => t.threadUrl === url);
@@ -3659,6 +3665,7 @@ export default function App() {
     setSelectedBoardUrl(board.url);
     setLocationInput(board.url);
     setThreadUrl(board.url);
+    if (threadPaneAutoToggle) setThreadPaneHidden(false);
     setFocusedPane("threads");
     void fetchThreadListFromCurrent(board.url);
     setTimeout(() => {
@@ -6384,16 +6391,7 @@ export default function App() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (hoverPreviewSrcRef.current) {
-          hoverPreviewSrcRef.current = null;
-          if (hoverPreviewShowTimerRef.current) {
-            clearTimeout(hoverPreviewShowTimerRef.current);
-            hoverPreviewShowTimerRef.current = null;
-          }
-          if (hoverPreviewHideTimerRef.current) {
-            clearTimeout(hoverPreviewHideTimerRef.current);
-            hoverPreviewHideTimerRef.current = null;
-          }
-          if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
+          hideHoverPreview();
           return;
         }
         if (lightboxUrl) { setLightboxUrl(null); return; }
@@ -6556,6 +6554,7 @@ export default function App() {
           paneLayoutMode?: PaneLayoutMode;
           boardPaneHidden?: boolean;
           threadPaneHidden?: boolean;
+          threadPaneAutoToggle?: boolean;
           fontSize?: number;
           boardsFontSize?: number;
           threadsFontSize?: number;
@@ -6616,6 +6615,7 @@ export default function App() {
         if (parsed.paneLayoutMode === "classic" || parsed.paneLayoutMode === "river") setPaneLayoutMode(parsed.paneLayoutMode);
         if (typeof parsed.boardPaneHidden === "boolean") setBoardPaneHidden(parsed.boardPaneHidden);
         if (typeof parsed.threadPaneHidden === "boolean") setThreadPaneHidden(parsed.threadPaneHidden);
+        if (typeof parsed.threadPaneAutoToggle === "boolean") setThreadPaneAutoToggle(parsed.threadPaneAutoToggle);
         const fallbackFs = typeof parsed.fontSize === "number" ? parsed.fontSize : 12;
         setBoardsFontSize(typeof parsed.boardsFontSize === "number" ? parsed.boardsFontSize : fallbackFs);
         setThreadsFontSize(typeof parsed.threadsFontSize === "number" ? parsed.threadsFontSize : fallbackFs);
@@ -6964,6 +6964,10 @@ export default function App() {
     if (bodyLink) {
       e.preventDefault();
       const url = bodyLink.getAttribute("href");
+      if (url && isTouchMode() && hoverPreviewEnabled && /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url)) {
+        showHoverPreview(url);
+        return;
+      }
       if (url && isTauriRuntime()) {
         void invoke("open_external_url", { url }).catch(() => window.open(url, "_blank"));
       } else if (url) {
@@ -6975,6 +6979,13 @@ export default function App() {
       e.preventDefault();
       const thumbLink = target.closest<HTMLElement>("[data-lightbox-src]");
       const url = thumbLink?.dataset.lightboxSrc ?? "";
+      if (isTouchMode() && hoverPreviewEnabled && !thumbLink?.classList.contains("youtube-thumb")) {
+        const src = target.getAttribute("src") ?? url;
+        if (src) {
+          showHoverPreview(src);
+          return;
+        }
+      }
       if (url && isTauriRuntime()) {
         void invoke("open_external_url", { url }).catch(() => window.open(url, "_blank"));
       } else if (url) {
@@ -6983,9 +6994,26 @@ export default function App() {
     }
   };
 
+  const hideHoverPreview = () => {
+    hoverPreviewSrcRef.current = null;
+    if (hoverPreviewShowTimerRef.current) {
+      clearTimeout(hoverPreviewShowTimerRef.current);
+      hoverPreviewShowTimerRef.current = null;
+    }
+    if (hoverPreviewHideTimerRef.current) {
+      clearTimeout(hoverPreviewHideTimerRef.current);
+      hoverPreviewHideTimerRef.current = null;
+    }
+    if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
+  };
+
+  const zoomHoverPreview = (deltaPercent: number) => {
+    const next = Math.max(10, Math.min(500, hoverPreviewZoomRef.current + deltaPercent));
+    hoverPreviewZoomRef.current = next;
+    if (hoverPreviewImgRef.current) hoverPreviewImgRef.current.style.transform = `scale(${next / 100})`;
+  };
+
   const showHoverPreview = (src: string) => {
-    // タッチではサムネイルのタップが拡大表示に割り当てられているので、ホバー側は出さない。
-    if (isTouchMode()) return;
     if (hoverPreviewHideTimerRef.current) {
       clearTimeout(hoverPreviewHideTimerRef.current);
       hoverPreviewHideTimerRef.current = null;
@@ -7010,7 +7038,8 @@ export default function App() {
       clearTimeout(hoverPreviewShowTimerRef.current);
       hoverPreviewShowTimerRef.current = null;
     }
-    const delay = hoverPreviewDelayRef.current;
+    // タップで開いたときは待たせない。
+    const delay = isTouchMode() ? 0 : hoverPreviewDelayRef.current;
     if (delay > 0 && src !== hoverPreviewSrcRef.current) {
       hoverPreviewShowTimerRef.current = setTimeout(show, delay);
     } else {
@@ -7454,6 +7483,7 @@ export default function App() {
       paneLayoutMode,
       boardPaneHidden,
       threadPaneHidden,
+      threadPaneAutoToggle,
       boardsFontSize,
       threadsFontSize,
       responsesFontSize,
@@ -7505,7 +7535,7 @@ export default function App() {
     if (isTauriRuntime()) {
       void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, composeSize, composePos, threadColVisible, threadColOrder, responseBodyBottomPad, responseMetaInline, showResponseMail, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
+  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, threadPaneAutoToggle, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, composeSize, composePos, threadColVisible, threadColOrder, responseBodyBottomPad, responseMetaInline, showResponseMail, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -9445,7 +9475,7 @@ export default function App() {
           onClick={(e) => e.stopPropagation()}
         />
         )}
-        <section className="pane responses" onMouseDown={() => setFocusedPane("responses")} style={{ '--fs-delta': `${responsesFontSize - 12}px` } as React.CSSProperties}>
+        <section className="pane responses" onMouseDown={() => { setFocusedPane("responses"); if (threadPaneAutoToggle) setThreadPaneHidden(true); }} style={{ '--fs-delta': `${responsesFontSize - 12}px` } as React.CSSProperties}>
           {activeTabIndex >= 0 && activeTabIndex < threadTabs.length && (
             <div className="thread-title-bar">
               <span className="thread-title-text" title={threadTabs[activeTabIndex].title}>
@@ -9464,6 +9494,7 @@ export default function App() {
                       setSelectedBoardUrl(boardUrl);
                       setLocationInput(boardUrl);
                       setThreadUrl(boardUrl);
+                      if (threadPaneAutoToggle) setThreadPaneHidden(false);
                       void fetchThreadListFromCurrent(boardUrl);
                     }}
                   >
@@ -9728,6 +9759,11 @@ export default function App() {
                     openThreadInTab(url, title);
                     return;
                   }
+                  // タッチではホバーで出せないので、画像URLのタップをプレビューに割り当てる。
+                  if (url && isTouchMode() && hoverPreviewEnabled && /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(url)) {
+                    showHoverPreview(url);
+                    return;
+                  }
                   if (url && isTauriRuntime()) {
                     void invoke("open_external_url", { url }).catch(() => window.open(url, "_blank"));
                   } else if (url) {
@@ -9747,11 +9783,18 @@ export default function App() {
                   }
                   return;
                 }
-                // thumb image click: open in external browser
+                // thumb image click: タッチはプレビュー、マウスは外部ブラウザ
                 if (target.classList.contains("response-thumb")) {
                   e.preventDefault();
                   const thumbLink = target.closest<HTMLElement>("[data-lightbox-src]");
                   const url = thumbLink?.dataset.lightboxSrc ?? "";
+                  if (isTouchMode() && hoverPreviewEnabled && !thumbLink?.classList.contains("youtube-thumb")) {
+                    const src = target.getAttribute("src") ?? url;
+                    if (src) {
+                      showHoverPreview(src);
+                      return;
+                    }
+                  }
                   if (url && isTauriRuntime()) {
                     void invoke("open_external_url", { url }).catch(() => window.open(url, "_blank"));
                   } else if (url) {
@@ -10118,6 +10161,10 @@ export default function App() {
                           if (sizeChecking) return;
                           if (sizeBlocked) {
                             setRevealedGalleryImages((prev) => new Set(prev).add(img.url));
+                            return;
+                          }
+                          if (isTouchMode() && hoverPreviewEnabled) {
+                            showHoverPreview(img.url);
                             return;
                           }
                           if (isTauriRuntime()) {
@@ -11584,6 +11631,7 @@ export default function App() {
               setSelectedBoardUrl(boardUrl);
               setLocationInput(boardUrl);
               setThreadUrl(boardUrl);
+              if (threadPaneAutoToggle) setThreadPaneHidden(false);
               void fetchThreadListFromCurrent(boardUrl);
             }
             setTabMenu(null);
@@ -12198,6 +12246,10 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={titleClickRefresh} onChange={(e) => setTitleClickRefresh(e.target.checked)} />
                   <span>スレタイクリックでスレ一覧を更新</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={threadPaneAutoToggle} onChange={(e) => setThreadPaneAutoToggle(e.target.checked)} />
+                  <span title="板を選ぶとスレ一覧が出て、スレを開くかレスペインを触ると隠れます">スレ一覧を自動で開閉する</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={autoScrollToSelected} onChange={(e) => setAutoScrollToSelected(e.target.checked)} />
@@ -12947,33 +12999,44 @@ export default function App() {
         ref={hoverPreviewRef}
         className="hover-preview"
         style={{ display: "none" }}
-        onClick={() => {
-          hoverPreviewSrcRef.current = null;
-          if (hoverPreviewHideTimerRef.current) {
-            clearTimeout(hoverPreviewHideTimerRef.current);
-            hoverPreviewHideTimerRef.current = null;
-          }
-          if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
-        }}
+        onClick={hideHoverPreview}
         onWheel={(e) => {
           if (e.ctrlKey) {
             e.preventDefault();
-            const next = Math.max(10, Math.min(500, hoverPreviewZoomRef.current + (e.deltaY < 0 ? 20 : -20)));
-            hoverPreviewZoomRef.current = next;
-            if (hoverPreviewImgRef.current) hoverPreviewImgRef.current.style.transform = `scale(${next / 100})`;
+            zoomHoverPreview(e.deltaY < 0 ? 20 : -20);
           }
         }}
       >
+        {/* タッチでは Ctrl+ホイールのズームも外部ブラウザ起動のタップも使えないので、操作をボタンで出す */}
+        {touchMode && (
+          <div className="hover-preview-touch-bar" onClick={(e) => e.stopPropagation()}>
+            <button type="button" aria-label="縮小" onClick={() => zoomHoverPreview(-20)}>−</button>
+            <button type="button" aria-label="拡大" onClick={() => zoomHoverPreview(20)}>＋</button>
+            <button
+              type="button"
+              onClick={() => {
+                const url = hoverPreviewSrcRef.current;
+                hideHoverPreview();
+                if (!url) return;
+                if (isTauriRuntime()) {
+                  void invoke("open_external_url", { url }).catch(() => window.open(url, "_blank"));
+                } else {
+                  window.open(url, "_blank");
+                }
+              }}
+            >
+              ブラウザで開く
+            </button>
+            <button type="button" onClick={hideHoverPreview}>閉じる</button>
+          </div>
+        )}
         <img
           ref={hoverPreviewImgRef}
           alt=""
           onMouseLeave={() => {
-            hoverPreviewSrcRef.current = null;
-            if (hoverPreviewHideTimerRef.current) {
-              clearTimeout(hoverPreviewHideTimerRef.current);
-              hoverPreviewHideTimerRef.current = null;
-            }
-            if (hoverPreviewRef.current) hoverPreviewRef.current.style.display = "none";
+            // タッチのタップ直後に来る合成イベントで閉じないようにする。
+            if (isTouchMode()) return;
+            hideHoverPreview();
           }}
           style={{ width: "auto", transformOrigin: "left top", transform: "scale(1)" }}
         />
