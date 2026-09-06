@@ -436,6 +436,11 @@ const stripBeIconPrefix = (text: string): string =>
 const MY_POST_MIN_PARTIAL_LEN = 8;
 const MY_POST_MIN_PARTIAL_RATIO = 0.8;
 
+// タップで開いた画像プレビューが、同じタップの click で閉じないようにする猶予。
+const HOVER_PREVIEW_TAP_GRACE_MS = 400;
+// レイアウト設定の保存で、IPC の応答をどこまで待つか。最小化中に投げた呼び出しは
+// 応答が返らないことがあり、待ち続けると以降の保存がすべて止まってしまう。
+const SAVE_LAYOUT_PREFS_TIMEOUT_MS = 5000;
 const MIN_BOARD_PANE_PX = 160;
 const MIN_THREAD_PANE_PX = 120;
 const MIN_RESPONSE_PANE_PX = 360;
@@ -2236,6 +2241,8 @@ export default function App() {
   const hoverPreviewImgRef = useRef<HTMLImageElement | null>(null);
   const hoverPreviewSrcRef = useRef<string | null>(null);
   const hoverPreviewZoomRef = useRef(100);
+  // タップで開いた直後は、同じタップの続きで届くクリックで閉じないようにする。
+  const hoverPreviewShownAtRef = useRef(0);
   const hoverPreviewHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [boardBtnDragIndex, setBoardBtnDragIndex] = useState<number | null>(null);
   const boardBtnDragRef = useRef<{ srcIndex: number; startX: number } | null>(null);
@@ -2423,6 +2430,12 @@ export default function App() {
   const [boardPanePx, setBoardPanePx] = useState(DEFAULT_BOARD_PANE_PX);
   const [threadPanePx, setThreadPanePx] = useState(DEFAULT_THREAD_PANE_PX);
   const [responseTopRatio, setResponseTopRatio] = useState(DEFAULT_RESPONSE_TOP_RATIO);
+  // ウィンドウが狭いときにペインを収めるための上限。上の px は利用者が決めた値として
+  // そのまま持ち続け、収めるのは描画時だけにする。px 自体を切り詰めてしまうと、
+  // 最小化中に幅 0 で来る resize で最小幅まで潰れ、その値が保存されて戻せなくなる。
+  const [paneMaxPx, setPaneMaxPx] = useState({ board: Number.MAX_SAFE_INTEGER, thread: Number.MAX_SAFE_INTEGER });
+  const boardPaneShownPx = clamp(boardPanePx, MIN_BOARD_PANE_PX, Math.max(MIN_BOARD_PANE_PX, paneMaxPx.board));
+  const threadPaneShownPx = clamp(threadPanePx, MIN_THREAD_PANE_PX, Math.max(MIN_THREAD_PANE_PX, paneMaxPx.thread));
   const [paneLayoutMode, setPaneLayoutMode] = useState<PaneLayoutMode>("classic");
   const [boardPaneHidden, setBoardPaneHidden] = useState(false);
   const [threadPaneHidden, setThreadPaneHidden] = useState(false);
@@ -2435,7 +2448,17 @@ export default function App() {
   const [threadColOrderDraft, setThreadColOrderDraft] = useState<ThreadColKey[]>(() => [...DEFAULT_THREAD_COL_ORDER]);
   const knownThreadUrlsRef = useRef<Map<string, Set<string>>>(new Map());
   const [newThreadUrls, setNewThreadUrls] = useState<Set<string>>(new Set());
-  const layoutPrefsLoadedRef = useRef(false);
+  // 読み込みが済んだ印。読み込んだ値と同じ描画で立つように state で持つ。
+  // ref だと、読み込みが積んだ更新が反映される前に下の保存が走り、
+  // 読み込み前の既定値で保存済みの設定を上書きしてしまう。
+  const [layoutPrefsLoaded, setLayoutPrefsLoaded] = useState(false);
+  // レイアウト設定のファイル保存はドラッグ中に毎 pointermove 走る。書き込みが重なると
+  // 一時ファイルを奪い合って壊れるので、常に 1 本だけ流し、間の変更は最新だけ残す。
+  const layoutPrefsSavingRef = useRef(false);
+  const layoutPrefsPendingRef = useRef<string | null>(null);
+  // 何回目の書き込みか。打ち切った後に遅れて返ってきた応答で、
+  // 次の書き込みの状態を触ってしまわないようにする。
+  const layoutPrefsWriteIdRef = useRef(0);
   const threadScrollPositions = useRef<Record<string, number>>({});
   const boardTreeRef = useRef<HTMLDivElement | null>(null);
   const boardTreeScrollRestoreRef = useRef<number | null>(null);
@@ -6268,8 +6291,8 @@ export default function App() {
     resizeDragRef.current = {
       mode,
       startX: event.clientX,
-      startBoardPx: boardPanePx,
-      startThreadPx: threadPanePx,
+      startBoardPx: boardPaneShownPx,
+      startThreadPx: threadPaneShownPx,
     };
     document.body.style.userSelect = "none";
     document.body.style.cursor = "col-resize";
@@ -6324,18 +6347,19 @@ export default function App() {
       resizeDragRef.current = {
         mode: "thread-response",
         startX: event.clientX,
-        startBoardPx: boardPanePx,
-        startThreadPx: threadPanePx,
+        startBoardPx: boardPaneShownPx,
+        startThreadPx: threadPaneShownPx,
       };
       document.body.style.userSelect = "none";
       document.body.style.cursor = "col-resize";
       return;
     }
-    const layoutHeight = responseLayoutRef.current?.clientHeight ?? 360;
+    // clientHeight は測れないと 0 になる。?? では拾えないので || で既定値へ倒す。
+    const layoutHeight = responseLayoutRef.current?.clientHeight || 360;
     resizeDragRef.current = {
       mode: "response-rows",
       startY: event.clientY,
-      startThreadPx: threadPanePx,
+      startThreadPx: threadPaneShownPx,
       responseLayoutHeight: layoutHeight,
     };
     document.body.style.userSelect = "none";
@@ -6604,13 +6628,15 @@ export default function App() {
           wheelScrollRows?: number;
         };
         if (typeof parsed.boardPanePx === "number") setBoardPanePx(parsed.boardPanePx);
+        // 比率は px があるときも戻す。戻さないと既定値のまま保存し直され、
+        // px を持たない環境へ引き継いだときに位置が飛ぶ。
+        if (typeof parsed.responseTopRatio === "number") setResponseTopRatio(parsed.responseTopRatio);
         if (typeof parsed.threadPanePx === "number") {
           setThreadPanePx(parsed.threadPanePx);
         } else if (typeof parsed.responseTopRatio === "number") {
-          const layoutHeight = responseLayoutRef.current?.clientHeight ?? Math.max(520, window.innerHeight - 180);
-          const nextThread = (layoutHeight * parsed.responseTopRatio) / 100;
-          setThreadPanePx(nextThread);
-          setResponseTopRatio(parsed.responseTopRatio);
+          // 起動直後はまだ測れず clientHeight が 0 になる。0 から換算するとペインが消える。
+          const layoutHeight = responseLayoutRef.current?.clientHeight || Math.max(520, window.innerHeight - 180);
+          setThreadPanePx((layoutHeight * parsed.responseTopRatio) / 100);
         }
         if (parsed.paneLayoutMode === "classic" || parsed.paneLayoutMode === "river") setPaneLayoutMode(parsed.paneLayoutMode);
         if (typeof parsed.boardPaneHidden === "boolean") setBoardPaneHidden(parsed.boardPaneHidden);
@@ -6696,10 +6722,13 @@ export default function App() {
     if (isTauriRuntime()) {
       invoke<string>("load_layout_prefs").then((raw) => {
         if (raw) applyPrefs(raw);
-        layoutPrefsLoadedRef.current = true;
-      }).catch(() => { layoutPrefsLoadedRef.current = true; });
+        setLayoutPrefsLoaded(true);
+      }).catch((e) => {
+        console.warn("load_layout_prefs failed", e);
+        setLayoutPrefsLoaded(true);
+      });
     } else {
-      layoutPrefsLoadedRef.current = true;
+      setLayoutPrefsLoaded(true);
     }
     try {
       const composeRaw = localStorage.getItem(COMPOSE_PREFS_KEY);
@@ -7033,6 +7062,7 @@ export default function App() {
         hoverPreviewRef.current.scrollTop = 0;
         hoverPreviewRef.current.scrollLeft = 0;
       }
+      hoverPreviewShownAtRef.current = Date.now();
     };
     if (hoverPreviewShowTimerRef.current) {
       clearTimeout(hoverPreviewShowTimerRef.current);
@@ -7048,6 +7078,9 @@ export default function App() {
   };
 
   const handlePopupImageHover = (e: React.MouseEvent) => {
+    // タップ直後に合成される mousemove でここが走ると、指の下に出たプレビューへ
+    // 同じタップの click が落ちて即座に閉じてしまう。タッチでは click 側で開く。
+    if (isTouchMode()) return;
     const target = e.target as HTMLElement;
     if (!e.ctrlKey && !hoverPreviewEnabled) return;
     const thumb = target.closest<HTMLImageElement>("img.response-thumb");
@@ -7074,42 +7107,39 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const ensurePaneBounds = () => {
+    const measurePaneBounds = () => {
+      // 最小化やバックグラウンド化の途中では、WebView の幅・高さが 0 の状態で
+      // resize が飛んでくる。その大きさで上限を決めると全ペインが最小幅まで潰れ、
+      // 復帰しても上限が緩むだけで元の幅には戻らない。実サイズが無い間は測らない。
+      if (window.innerWidth <= 0 || window.innerHeight <= 0) return;
+      const apply = (board: number, thread: number) => {
+        setPaneMaxPx((prev) => (prev.board === board && prev.thread === thread ? prev : { board, thread }));
+      };
       if (paneLayoutMode === "river") {
-        const maxBoard = Math.max(
+        const board = Math.max(
           MIN_BOARD_PANE_PX,
           window.innerWidth - MIN_THREAD_PANE_PX - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
         );
-        const nextBoard = clamp(boardPanePx, MIN_BOARD_PANE_PX, maxBoard);
-        if (nextBoard !== boardPanePx) setBoardPanePx(nextBoard);
-
-        const maxThread = Math.max(
+        apply(board, Math.max(
           MIN_THREAD_PANE_PX,
-          window.innerWidth - nextBoard - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
-        );
-        const nextThread = clamp(threadPanePx, MIN_THREAD_PANE_PX, maxThread);
-        if (nextThread !== threadPanePx) setThreadPanePx(nextThread);
-      } else {
-        const maxBoard = Math.max(
-          MIN_BOARD_PANE_PX,
-          window.innerWidth - MIN_RESPONSE_PANE_PX - SPLITTER_PX
-        );
-        const nextBoard = clamp(boardPanePx, MIN_BOARD_PANE_PX, maxBoard);
-        if (nextBoard !== boardPanePx) setBoardPanePx(nextBoard);
-
-        const layoutHeight = responseLayoutRef.current?.clientHeight ?? Math.max(520, window.innerHeight - 180);
-        const maxThread = Math.max(MIN_THREAD_PANE_PX, layoutHeight - MIN_RESPONSE_BODY_PX - SPLITTER_PX);
-        const nextThread = clamp(threadPanePx, MIN_THREAD_PANE_PX, maxThread);
-        if (nextThread !== threadPanePx) {
-          setThreadPanePx(nextThread);
-          setResponseTopRatio((nextThread / Math.max(layoutHeight, 1)) * 100);
-        }
+          window.innerWidth - Math.min(boardPanePx, board) - MIN_RESPONSE_PANE_PX - SPLITTER_PX * 2
+        ));
+        return;
       }
+      const board = Math.max(
+        MIN_BOARD_PANE_PX,
+        window.innerWidth - MIN_RESPONSE_PANE_PX - SPLITTER_PX
+      );
+      // 高さがまだ測れていないときも上限を掛けない。0 を基準にすると最小値まで潰れる。
+      const layoutHeight = responseLayoutRef.current?.clientHeight || 0;
+      apply(board, layoutHeight > 0
+        ? Math.max(MIN_THREAD_PANE_PX, layoutHeight - MIN_RESPONSE_BODY_PX - SPLITTER_PX)
+        : Number.MAX_SAFE_INTEGER);
     };
 
-    ensurePaneBounds();
-    window.addEventListener("resize", ensurePaneBounds);
-    return () => window.removeEventListener("resize", ensurePaneBounds);
+    measurePaneBounds();
+    window.addEventListener("resize", measurePaneBounds);
+    return () => window.removeEventListener("resize", measurePaneBounds);
   }, [boardPanePx, threadPanePx, paneLayoutMode]);
 
   useEffect(() => {
@@ -7474,8 +7504,37 @@ export default function App() {
     };
   }, [mouseGestureEnabled, activeTabIndex, threadTabs, gestureBindings]);
 
+  // 書き込み中は積んでおいて、終わってから最新の 1 件だけ書く。
+  const flushLayoutPrefs = () => {
+    if (layoutPrefsSavingRef.current) return;
+    const payload = layoutPrefsPendingRef.current;
+    if (payload === null) return;
+    layoutPrefsPendingRef.current = null;
+    layoutPrefsSavingRef.current = true;
+    const writeId = ++layoutPrefsWriteIdRef.current;
+    const done = () => {
+      // 打ち切った後に遅れて返ってきた分。次の書き込みが既に始まっているので何もしない。
+      if (layoutPrefsWriteIdRef.current !== writeId) return;
+      layoutPrefsSavingRef.current = false;
+      flushLayoutPrefs();
+    };
+    // 応答が返らないまま待ち続けると、以降の変更が一切保存されなくなる。
+    // 最小化中に投げた呼び出しで実際に起きるので、一定時間で見切って次を流す。
+    const timer = setTimeout(() => {
+      console.warn("save_layout_prefs timed out; retrying");
+      if (layoutPrefsPendingRef.current === null) layoutPrefsPendingRef.current = payload;
+      done();
+    }, SAVE_LAYOUT_PREFS_TIMEOUT_MS);
+    void invoke("save_layout_prefs", { prefs: payload })
+      .catch((e) => console.warn("save_layout_prefs failed", e))
+      .finally(() => {
+        clearTimeout(timer);
+        done();
+      });
+  };
+
   useEffect(() => {
-    if (!layoutPrefsLoadedRef.current) return;
+    if (!layoutPrefsLoaded) return;
     const payload = JSON.stringify({
       boardPanePx,
       threadPanePx,
@@ -7533,9 +7592,10 @@ export default function App() {
     });
     localStorage.setItem(LAYOUT_PREFS_KEY, payload);
     if (isTauriRuntime()) {
-      void invoke("save_layout_prefs", { prefs: payload }).catch(() => {});
+      layoutPrefsPendingRef.current = payload;
+      flushLayoutPrefs();
     }
-  }, [boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, threadPaneAutoToggle, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, composeSize, composePos, threadColVisible, threadColOrder, responseBodyBottomPad, responseMetaInline, showResponseMail, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
+  }, [layoutPrefsLoaded, boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, threadPaneAutoToggle, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, composeSize, composePos, threadColVisible, threadColOrder, responseBodyBottomPad, responseMetaInline, showResponseMail, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -9111,7 +9171,7 @@ export default function App() {
       <main
         className="layout"
         style={{
-          gridTemplateColumns: boardPaneHidden ? "1fr" : `${boardPanePx}px ${SPLITTER_PX}px 1fr`,
+          gridTemplateColumns: boardPaneHidden ? "1fr" : `${boardPaneShownPx}px ${SPLITTER_PX}px 1fr`,
         }}
       >
         <section className="pane boards" onMouseDown={() => setFocusedPane("boards")} style={{ '--fs-delta': `${boardsFontSize - 12}px`, display: boardPaneHidden ? "none" : undefined } as React.CSSProperties}>
@@ -9396,8 +9456,8 @@ export default function App() {
           ref={responseLayoutRef}
           className={`right-pane ${paneLayoutMode === "river" ? "right-pane-river" : ""}`}
           style={paneLayoutMode === "river"
-            ? { gridTemplateColumns: threadPaneHidden ? "1fr" : `${threadPanePx}px ${SPLITTER_PX}px 1fr` }
-            : { gridTemplateRows: threadPaneHidden ? "1fr" : `${threadPanePx}px ${SPLITTER_PX}px 1fr` }}
+            ? { gridTemplateColumns: threadPaneHidden ? "1fr" : `${threadPaneShownPx}px ${SPLITTER_PX}px 1fr` }
+            : { gridTemplateRows: threadPaneHidden ? "1fr" : `${threadPaneShownPx}px ${SPLITTER_PX}px 1fr` }}
         >
         <section className="pane threads" onMouseDown={() => setFocusedPane("threads")} style={{ '--fs-delta': `${threadsFontSize - 12}px`, display: threadPaneHidden ? "none" : undefined } as React.CSSProperties}>
           <div className="threads-table-wrap" ref={threadListScrollRef} tabIndex={-1} onScroll={hideThreadTitlePopup}>
@@ -9832,6 +9892,9 @@ export default function App() {
                 }
               }}
               onMouseMove={(e) => {
+                // タップ直後の合成 mousemove で開くと、指の下に出たプレビューへ
+                // 同じタップの click が落ちて即座に閉じる。タッチでは click 側で開く。
+                if (isTouchMode()) return;
                 const target = e.target as HTMLElement;
                 if (!e.ctrlKey && !hoverPreviewEnabled) return;
                 const thumb = target.closest<HTMLImageElement>("img.response-thumb");
@@ -10142,11 +10205,13 @@ export default function App() {
                       <div
                         className="image-gallery-thumb-wrap"
                         onMouseMove={(e) => {
+                          if (isTouchMode()) return;
                           if (sizeChecking || sizeBlocked) return;
                           if (!e.ctrlKey && !hoverPreviewEnabled) return;
                           showHoverPreview(img.url);
                         }}
                         onMouseOut={(e) => {
+                          if (isTouchMode()) return;
                           const next = (e as React.MouseEvent).relatedTarget as HTMLElement | null;
                           if (next?.closest(".hover-preview")) return;
                           if (hoverPreviewShowTimerRef.current) { clearTimeout(hoverPreviewShowTimerRef.current); hoverPreviewShowTimerRef.current = null; }
@@ -12999,7 +13064,11 @@ export default function App() {
         ref={hoverPreviewRef}
         className="hover-preview"
         style={{ display: "none" }}
-        onClick={hideHoverPreview}
+        onClick={() => {
+          // 開いたのと同じタップの click がここへ流れてくることがあるので、直後は無視する。
+          if (isTouchMode() && Date.now() - hoverPreviewShownAtRef.current < HOVER_PREVIEW_TAP_GRACE_MS) return;
+          hideHoverPreview();
+        }}
         onWheel={(e) => {
           if (e.ctrlKey) {
             e.preventDefault();
