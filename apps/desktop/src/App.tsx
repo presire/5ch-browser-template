@@ -236,7 +236,7 @@ function buildTranslationPrompt(text: string, targetLangNativeName: string): str
 }
 import {
   ClipboardList, RefreshCw, Pencil, FilePenLine, Save,
-  Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban,
+  Star, X, ChevronLeft, ChevronRight, ChevronDown, Ban, Search,
   Image, ImageOff, Images, Film, ExternalLink, Upload, History, Copy, Trash2, Pin, Download, EyeOff, Columns3, RotateCcw, Play, Pause, Sun, Moon, Sparkles, BrainCircuit, FolderOpen, PanelLeft, PanelTop, PanelBottom, User, Smile, Tag, Eraser,
 } from "lucide-react";
 
@@ -309,6 +309,16 @@ type ThreadListItem = {
   responseCount: number;
   threadUrl: string;
 };
+// 全板スレタイ検索 (ff5ch) の1件。createdAt は UNIX 秒。
+type ThreadSearchItem = {
+  title: string;
+  responseCount: number;
+  createdAt: number;
+  boardId: string;
+  boardTitle: string | null;
+  threadUrl: string;
+};
+type ThreadSearchResult = { query: string; total: number; items: ThreadSearchItem[] };
 type ThreadResponseItem = {
   responseNo: number;
   name: string;
@@ -339,7 +349,9 @@ type NgMode = "hide" | "hide-images" | "abone";
 type NgEntry = { value: string; mode: NgMode; disabled?: boolean; excludeNo1?: boolean; match?: "partial" | "exact"; addedAt?: number };
 type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: (string | NgEntry)[] };
 // 強調フィルタ (NGの逆): 指定ワード/ID/名前を強調表示
-type HlEntry = { value: string; color?: string; disabled?: boolean };
+// titleOff: スレ一覧のタイトルには適用しない (ワードのみ意味を持つ)
+// addedAt: 登録日時 (ms)。ID の自動削除に使う。導入前のエントリは持たない (= 対象外)
+type HlEntry = { value: string; color?: string; disabled?: boolean; titleOff?: boolean; addedAt?: number };
 type HighlightFilters = { words: (string | HlEntry)[]; ids: (string | HlEntry)[]; names: (string | HlEntry)[] };
 type NgImageEntry = { hash: string; thumbnail: string; sourceUrl: string; addedAt: number; disabled?: boolean; threshold?: number };
 type NgImageFilter = { entries: NgImageEntry[]; threshold: number };
@@ -408,6 +420,15 @@ const hlColor = (e: string | HlEntry): string => {
   return c && HIGHLIGHT_COLOR_KEYS.has(c) ? c : "yellow";
 };
 const hlDisabled = (e: string | HlEntry): boolean => typeof e === "string" ? false : (e.disabled ?? false);
+const hlTitleOff = (e: string | HlEntry): boolean => typeof e === "string" ? false : (e.titleOff ?? false);
+// 文字列形式 (旧データ) も含めて必ずオブジェクト形式に揃える (フラグを落とさず更新するため)
+const hlAddedAt = (e: string | HlEntry): number | null => typeof e === "string" || typeof e.addedAt !== "number" ? null : e.addedAt;
+const hlObj = (e: string | HlEntry): HlEntry => {
+  const addedAt = hlAddedAt(e);
+  return { value: hlVal(e), color: hlColor(e), disabled: hlDisabled(e), titleOff: hlTitleOff(e), ...(addedAt !== null ? { addedAt } : {}) };
+};
+const expiredHlIdValues = (ids: (string | HlEntry)[], days: number, now: number): string[] =>
+  expiredIdValues(ids, days, now, hlAddedAt, hlVal);
 type AuthConfig = {
   upliftEmail: string;
   upliftPassword: string;
@@ -567,6 +588,8 @@ const POST_LOG_PREFS_KEY = "desktop.postLogPrefs.v1";
 const THREAD_CATEGORIES_KEY = "desktop.threadCategories.v2";
 const DISMISSED_UPDATE_VERSION_KEY = "desktop.dismissedUpdateVersion.v1";
 const NG_ID_EXPIRE_DAYS_KEY = "desktop.ngIdExpireDays.v1";
+// 強調 ID の自動削除日数 (NG ID と同じ選択肢・同じ判定)。
+const HL_ID_EXPIRE_DAYS_KEY = "desktop.hlIdExpireDays.v1";
 // UI 全体の表示倍率。WebView 自体のズームなので px 指定のままでも全部が拡大され、
 // ペインのドラッグなどの座標計算もずれない。タッチ端末では指に対して UI が
 // 小さすぎるという要望への対応で、機種ごとに適正値が違うため段階から選ばせる。
@@ -629,6 +652,7 @@ const UI_JSON_SETTINGS_FIELDS: Record<string, string> = {
   autoRefreshPersistEnabled: AUTO_REFRESH_PERSIST_KEY,
   postLogPrefs: POST_LOG_PREFS_KEY,
   ngIdExpireDays: NG_ID_EXPIRE_DAYS_KEY,
+  hlIdExpireDays: HL_ID_EXPIRE_DAYS_KEY,
   ex0chEnabled: EX0CH_ENABLED_KEY,
   aiPrefs: AI_PREFS_KEY,
   uiZoom: UI_ZOOM_KEY,
@@ -657,16 +681,19 @@ const formatNgAddedAt = (ts: number): string => {
 };
 // 期限切れの NG ID の value 一覧。addedAt を持たない (= 旧バージョンで登録された)
 // エントリは対象外。
-const expiredNgIdValues = (ids: (string | NgEntry)[], days: number, now: number): string[] => {
+// 強調 ID も同じ判定を使う (エントリ型が違うので addedAt / value の取り出しを差し替える)。
+const expiredIdValues = <T,>(ids: T[], days: number, now: number, addedAtOf: (e: T) => number | null, valOf: (e: T) => string): string[] => {
   if (days <= 0) return [];
   const cutoff = now - days * NG_DAY_MS;
   return ids
     .filter((e) => {
-      const added = ngEntryAddedAt(e);
+      const added = addedAtOf(e);
       return added !== null && added <= cutoff;
     })
-    .map(ngVal);
+    .map(valOf);
 };
+const expiredNgIdValues = (ids: (string | NgEntry)[], days: number, now: number): string[] =>
+  expiredIdValues(ids, days, now, ngEntryAddedAt, ngVal);
 
 type ThreadCategory = {
   keyword: string;
@@ -1857,6 +1884,19 @@ export default function App() {
   useEffect(() => {
     saveUiSetting(NG_ID_EXPIRE_DAYS_KEY, String(ngIdExpireDays));
   }, [ngIdExpireDays]);
+  const [hlIdExpireDays, setHlIdExpireDays] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(HL_ID_EXPIRE_DAYS_KEY);
+      if (raw === null) return 0;
+      const n = Number(raw);
+      return NG_ID_EXPIRE_DAY_OPTIONS.includes(n) ? n : 0;
+    } catch {
+      return 0;
+    }
+  });
+  useEffect(() => {
+    saveUiSetting(HL_ID_EXPIRE_DAYS_KEY, String(hlIdExpireDays));
+  }, [hlIdExpireDays]);
   const [uiZoom, setUiZoom] = useState<number>(() => {
     try {
       const raw = localStorage.getItem(UI_ZOOM_KEY);
@@ -2136,6 +2176,11 @@ export default function App() {
   // 保存ログ一覧 (全板) を表示中かどうか。false のときは従来どおり現在の板の dat落ちのみ。
   // showCachedOnly が false の間は参照しないので、解除時にリセットしなくてよい。
   const [cacheListAllBoards, setCacheListAllBoards] = useState(false);
+  // 全板スレタイ検索 (ff5ch) の結果を表示中か。保存ログ一覧 (全板) と同じく、結果は
+  // スレ一覧ペインに仮想的に流し込む (専用のタブやパネルは作らない)。
+  const [showThreadSearchOnly, setShowThreadSearchOnly] = useState(false);
+  const [threadSearchResult, setThreadSearchResult] = useState<ThreadSearchResult | null>(null);
+  const [threadSearching, setThreadSearching] = useState(false);
   const [boardSearchQuery, setBoardSearchQuery] = useState("");
   const [responsesLoading, setResponsesLoading] = useState(false);
   const [ngInput, setNgInput] = useState("");
@@ -2942,6 +2987,15 @@ export default function App() {
     setStatus(`期限切れのNG IDを${expired.length}件削除しました`);
   }, [ngFilters, ngIdExpireDays, ngPanelOpen]);
 
+  // 強調 ID の自動削除。NG ID と同じタイミング・同じ判定。
+  useEffect(() => {
+    const expired = expiredHlIdValues(highlightFilters.ids, hlIdExpireDays, Date.now());
+    if (expired.length === 0) return;
+    const gone = new Set(expired);
+    void persistHighlightFilters({ ...highlightFilters, ids: highlightFilters.ids.filter((e) => !gone.has(hlVal(e))) });
+    setStatus(`期限切れの強調IDを${expired.length}件削除しました`);
+  }, [highlightFilters, hlIdExpireDays, ngPanelOpen]);
+
   const loadOgpDomainFilters = async () => {
     if (!isTauriRuntime()) return;
     try {
@@ -3004,7 +3058,7 @@ export default function App() {
       setStatus(`already in highlight ${type}: ${trimmed}`);
       return;
     }
-    const entry: HlEntry = { value: trimmed, color: color ?? highlightAddColor };
+    const entry: HlEntry = { value: trimmed, color: color ?? highlightAddColor, addedAt: Date.now() };
     void persistHighlightFilters({ ...highlightFilters, [type]: [...highlightFilters[type], entry] });
     setStatus(`added highlight ${type}: ${trimmed}`);
   };
@@ -3019,7 +3073,7 @@ export default function App() {
       ...highlightFilters,
       [type]: highlightFilters[type].map((e) => {
         if (hlVal(e) !== value) return e;
-        return { value, color: hlColor(e), disabled: !hlDisabled(e) };
+        return { ...hlObj(e), disabled: !hlDisabled(e) };
       }),
     });
   };
@@ -3029,7 +3083,17 @@ export default function App() {
       ...highlightFilters,
       [type]: highlightFilters[type].map((e) => {
         if (hlVal(e) !== value) return e;
-        return { value, color, disabled: hlDisabled(e) };
+        return { ...hlObj(e), color };
+      }),
+    });
+  };
+
+  const toggleHighlightEntryTitle = (type: "words" | "ids" | "names", value: string) => {
+    void persistHighlightFilters({
+      ...highlightFilters,
+      [type]: highlightFilters[type].map((e) => {
+        if (hlVal(e) !== value) return e;
+        return { ...hlObj(e), titleOff: !hlTitleOff(e) };
       }),
     });
   };
@@ -3830,6 +3894,7 @@ export default function App() {
     }
     setThreadListProbe("running...");
     setShowCachedOnly(false);
+    setShowThreadSearchOnly(false);
     setStatus(`loading threads from: ${url}`);
     setLocationInput(url);
     try {
@@ -4230,7 +4295,9 @@ export default function App() {
       // 「今表示しているリストでの並び順 (index + 1)」なので、保存リスト表示中は
       // fetchedThreads ではなくそのリスト側の index を使う。
       const sameThread = (u: string) => normalizeThreadUrl(u) === normalizedUrl;
-      const listIndex = showCachedOnly
+      const listIndex = showThreadSearchOnly
+        ? (threadSearchResult?.items ?? []).findIndex((it) => sameThread(it.threadUrl))
+        : showCachedOnly
         ? cachedThreadList.findIndex((ct) => sameThread(ct.threadUrl))
         : showRecentOpenedOnly
         ? recentOpenedThreads.findIndex((ft) => sameThread(ft.threadUrl))
@@ -4823,7 +4890,25 @@ export default function App() {
     : showRecentPostedOnly
     ? recentPostedThreads
     : favorites.threads;
-  const threadItems = showCachedOnly
+  const threadItems = showThreadSearchOnly
+    ? (threadSearchResult?.items ?? []).map((it, i) => {
+        const created = it.createdAt * 1000;
+        const elapsedDays = Math.max((Date.now() - created) / 86400000, 0.01);
+        const lastRead = threadLastReadCount[i + 1] ?? 0;
+        return {
+          id: i + 1,
+          // 板をまたぐのでタイトルの頭に板名を付ける (保存ログ一覧 (全板) と同じ)
+          title: `[${it.boardTitle || it.boardId}] ${it.title || "(タイトルなし)"}`,
+          res: it.responseCount,
+          got: lastRead > 0 ? lastRead : 0,
+          speed: created > 0 ? Number((it.responseCount / elapsedDays).toFixed(1)) : 0,
+          lastLoad: "-",
+          lastPost: "-",
+          threadUrl: it.threadUrl,
+          createdAt: created,
+        };
+      })
+    : showCachedOnly
     ? cachedThreadList.map((ct, i) => {
         const tk = getThreadKeyFromThreadUrl(ct.threadUrl);
         return {
@@ -4894,7 +4979,9 @@ export default function App() {
     .filter((t) => {
       if (ngFilters.words.some((w) => !ngEntryDisabled(w) && ngMatch(ngVal(w), t.title))) return false;
       if (ngFilters.thread_words.some((w) => !ngEntryDisabled(w) && ngMatch(ngVal(w), t.title))) return false;
-      if (threadSearchQuery.trim()) {
+      // 全板検索の結果は API 側で絞り込み済み。"A -B" や "@板名" のような構文は
+      // 部分一致にならないので、ここでは絞らない。
+      if (threadSearchQuery.trim() && !showThreadSearchOnly) {
         return t.title.toLowerCase().includes(threadSearchQuery.trim().toLowerCase());
       }
       return true;
@@ -5014,7 +5101,7 @@ export default function App() {
             style={threadAgeColorEnabled && !hasUnread && t.createdAt > 0 ? { color: threadAgeColor(t.createdAt) } : undefined}
             onMouseEnter={(e) => onThreadTitleMouseEnter(e, t.title)}
             onMouseLeave={onThreadTitleMouseLeave}
-            dangerouslySetInnerHTML={renderHighlightedPlainText(t.title, threadSearchQuery)}
+            dangerouslySetInnerHTML={renderHighlightedPlainTextWithEntries(t.title, threadSearchQuery, hlTitleWordEntries)}
           />
         );
       case "res":
@@ -5435,6 +5522,8 @@ export default function App() {
   const toHlActive = (list: (string | HlEntry)[]) =>
     list.filter((e) => !hlDisabled(e)).map((e) => ({ value: hlVal(e), color: hlColor(e) }));
   const hlWordEntries = toHlActive(highlightFilters.words);
+  // スレ一覧のタイトル用: 各ワードの「スレタイ」トグルがオフのものは除外
+  const hlTitleWordEntries = toHlActive(highlightFilters.words.filter((e) => !hlTitleOff(e)));
   const hlNameEntries = toHlActive(highlightFilters.names);
   const hlIdEntries = toHlActive(highlightFilters.ids);
   const visibleResponseItems = responseItems.filter((r) => {
@@ -5970,6 +6059,7 @@ export default function App() {
       }));
       setCacheListAllBoards(allBoards);
       setShowCachedOnly(true);
+      setShowThreadSearchOnly(false);
       setShowFavoritesOnly(false);
       setShowRecentOpenedOnly(false);
       setShowRecentPostedOnly(false);
@@ -5978,6 +6068,65 @@ export default function App() {
       console.warn("load_all_cached_threads failed", e);
       setStatus("保存ログの一覧取得に失敗しました");
     });
+  };
+
+  // 全板スレタイ検索。検索欄の語をそのまま ff5ch に投げ、結果をスレ一覧に表示する。
+  // 呼ぶのはボタン / Ctrl+Enter / メニューの明示操作だけで、入力中の逐次検索はしない
+  // (外部の非公式サービスなので連打を避ける)。
+  const runThreadSearch = async (rawQuery: string) => {
+    const query = rawQuery.trim();
+    if (!query) { setStatus("検索語を入力してください"); return; }
+    if (!isTauriRuntime()) { setStatus("web preview mode: thread search requires tauri runtime"); return; }
+    if (threadSearching) return;
+    setThreadSearching(true);
+    setStatus(`スレタイ検索中: ${query}`);
+    try {
+      const result = await invoke<ThreadSearchResult>("search_threads_ff5ch", { query });
+      // 既読数マップは「一覧での index + 1」がキーなので、結果の並びで作り直す
+      let allReadStatus: Record<string, Record<string, number>> = {};
+      try {
+        allReadStatus = await invoke<Record<string, Record<string, number>>>("load_read_status");
+      } catch (e) {
+        console.warn("load_read_status failed for thread search", e);
+      }
+      const readMap: Record<number, boolean> = {};
+      const lastReadMap: Record<number, number> = {};
+      result.items.forEach((it, i) => {
+        const id = i + 1;
+        const lastRead = allReadStatus[getBoardUrlFromThreadUrl(it.threadUrl)]?.[getThreadKeyFromThreadUrl(it.threadUrl)] ?? 0;
+        readMap[id] = lastRead > 0;
+        lastReadMap[id] = lastRead;
+      });
+      setThreadReadMap(readMap);
+      setThreadLastReadCount(lastReadMap);
+      setThreadSearchResult(result);
+      setShowThreadSearchOnly(true);
+      setShowCachedOnly(false);
+      setCachedThreadList([]);
+      setShowFavoritesOnly(false);
+      setShowRecentOpenedOnly(false);
+      setShowRecentPostedOnly(false);
+      addSearchHistory("thread", query);
+      setSearchHistoryDropdown(null);
+      setStatus(
+        result.total > result.items.length
+          ? `スレタイ検索: ${result.total}件中${result.items.length}件を表示`
+          : `スレタイ検索: ${result.items.length}件`,
+      );
+    } catch (e) {
+      console.warn("search_threads_ff5ch failed", e);
+      setStatus(String(e));
+    } finally {
+      setThreadSearching(false);
+    }
+  };
+
+  // 全板スレタイ検索の表示を解除し、現在の板の既読数マップに戻す
+  const exitThreadSearch = () => {
+    setShowThreadSearchOnly(false);
+    setThreadSearchResult(null);
+    const url = threadUrl.trim();
+    if (url && fetchedThreads.length > 0) void loadReadStatusForBoard(url, fetchedThreads);
   };
 
   const purgeThreadCache = (url: string) => {
@@ -9326,10 +9475,11 @@ export default function App() {
             onChange={(e) => setThreadSearchQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.nativeEvent.isComposing) return;
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void runThreadSearch(threadSearchQuery); return; }
               if (e.key === "Enter") { addSearchHistory("thread", threadSearchQuery); setSearchHistoryDropdown(null); }
               if (e.key === "Escape") setSearchHistoryDropdown(null);
             }}
-            placeholder="検索 (Enter:保存 / 右クリック:削除)"
+            placeholder="検索 (Enter:保存 / Ctrl+Enter:全板検索)"
           />
           <button
             className="search-history-btn"
@@ -9356,7 +9506,20 @@ export default function App() {
             </div>
           )}
         </div>
-        {threadSearchQuery && <button className="title-action-btn" onClick={() => setThreadSearchQuery("")} title="検索クリア"><X size={14} /></button>}
+        {(threadSearchQuery || showThreadSearchOnly) && (
+          <button
+            className="title-action-btn"
+            onClick={() => { setThreadSearchQuery(""); if (showThreadSearchOnly) exitThreadSearch(); }}
+            title={showThreadSearchOnly ? "検索クリア (全板検索結果も解除)" : "検索クリア"}
+          ><X size={14} /></button>
+        )}
+        <button
+          className={`title-action-btn thread-search-all-btn ${showThreadSearchOnly ? "active-toggle" : ""}`}
+          disabled={threadSearching}
+          onClick={() => void runThreadSearch(threadSearchQuery)}
+          title={"全板からスレタイを検索 (Ctrl+Enter)\nスペース=AND / OR / -語=除外 / \"フレーズ\" / @板名=板を絞る"}
+          aria-label="全板スレタイ検索"
+        ><Search size={14} /></button>
         <button className="title-action-btn" onClick={() => {
           if (showFavoritesOnly) {
             void fetchFavNewCounts();
@@ -9371,9 +9534,10 @@ export default function App() {
         <button className="title-action-btn" onClick={() => openNewThreadDialog()} title="スレ立て"><FilePenLine size={14} /></button>
         <div className="title-split-wrap" onClick={(e) => e.stopPropagation()}>
           <button
-            className={`title-action-btn title-split-main ${(showCachedOnly || showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) ? "active-toggle" : ""}`}
+            className={`title-action-btn title-split-main ${(showThreadSearchOnly || showCachedOnly || showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) ? "active-toggle" : ""}`}
             onClick={() => {
-              if (showCachedOnly) { setShowCachedOnly(false); setCachedThreadList([]); }
+              if (showThreadSearchOnly) { exitThreadSearch(); }
+              else if (showCachedOnly) { setShowCachedOnly(false); setCachedThreadList([]); }
               else if (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) {
                 setShowFavoritesOnly(false); setShowRecentOpenedOnly(false); setShowRecentPostedOnly(false);
                 const url = threadUrl.trim();
@@ -9382,8 +9546,8 @@ export default function App() {
                 setThreadFilterMenuOpen((v) => !v);
               }
             }}
-            title={showCachedOnly ? (cacheListAllBoards ? `保存ログ一覧表示中 (${cachedThreadList.length}件, クリックで解除)` : "dat落ちキャッシュ表示中 (クリックで解除)") : showFavoritesOnly ? "お気に入りスレ表示中 (クリックで解除)" : showRecentOpenedOnly ? `最近開いたスレ表示中 (${recentOpenedThreads.length}/${MAX_RECENT_THREADS}, クリックで解除)` : showRecentPostedOnly ? `最近書き込んだスレ表示中 (${recentPostedThreads.length}/${MAX_RECENT_THREADS}, クリックで解除)` : "スレ一覧フィルタ"}
-          >{showCachedOnly ? <Save size={14} /> : showFavoritesOnly ? <Star size={14} /> : showRecentOpenedOnly ? <History size={14} /> : showRecentPostedOnly ? <Pencil size={14} /> : <ClipboardList size={14} />}</button>
+            title={showThreadSearchOnly ? `スレタイ検索結果: ${threadSearchResult?.query ?? ""} (${(threadSearchResult?.total ?? 0) > (threadSearchResult?.items.length ?? 0) ? `全${threadSearchResult?.total}件中${threadSearchResult?.items.length}件` : `${threadSearchResult?.items.length ?? 0}件`}, クリックで解除)` : showCachedOnly ? (cacheListAllBoards ? `保存ログ一覧表示中 (${cachedThreadList.length}件, クリックで解除)` : "dat落ちキャッシュ表示中 (クリックで解除)") : showFavoritesOnly ? "お気に入りスレ表示中 (クリックで解除)" : showRecentOpenedOnly ? `最近開いたスレ表示中 (${recentOpenedThreads.length}/${MAX_RECENT_THREADS}, クリックで解除)` : showRecentPostedOnly ? `最近書き込んだスレ表示中 (${recentPostedThreads.length}/${MAX_RECENT_THREADS}, クリックで解除)` : "スレ一覧フィルタ"}
+          >{showThreadSearchOnly ? <Search size={14} /> : showCachedOnly ? <Save size={14} /> : showFavoritesOnly ? <Star size={14} /> : showRecentOpenedOnly ? <History size={14} /> : showRecentPostedOnly ? <Pencil size={14} /> : <ClipboardList size={14} />}</button>
           <button
             className="title-action-btn title-split-toggle"
             onClick={() => setThreadFilterMenuOpen((v) => !v)}
@@ -9402,12 +9566,17 @@ export default function App() {
                 if (showCachedOnly && cacheListAllBoards) { setShowCachedOnly(false); setCachedThreadList([]); return; }
                 openCacheList(true);
               }}>{showCachedOnly && cacheListAllBoards ? "\u2713 " : ""}保存ログ一覧 (全板)</button>
+              <button disabled={threadSearching} onClick={() => {
+                setThreadFilterMenuOpen(false);
+                if (showThreadSearchOnly) { exitThreadSearch(); return; }
+                void runThreadSearch(threadSearchQuery);
+              }}>{(showThreadSearchOnly || threadSearching) ? "\u2713 " : ""}全板スレタイ検索{threadSearching ? " (検索中...)" : ""}</button>
               <button onClick={() => {
                 setThreadFilterMenuOpen(false);
                 const willEnable = !showFavoritesOnly;
                 setShowFavoritesOnly((v) => !v);
                 if (willEnable) {
-                  setShowCachedOnly(false); setShowRecentOpenedOnly(false); setShowRecentPostedOnly(false);
+                  setShowCachedOnly(false); setShowThreadSearchOnly(false); setShowRecentOpenedOnly(false); setShowRecentPostedOnly(false);
                   void fetchFavNewCounts();
                 } else {
                   const url = threadUrl.trim();
@@ -9419,7 +9588,7 @@ export default function App() {
                 const willEnable = !showRecentOpenedOnly;
                 setShowRecentOpenedOnly((v) => !v);
                 if (willEnable) {
-                  setShowCachedOnly(false); setShowFavoritesOnly(false); setShowRecentPostedOnly(false);
+                  setShowCachedOnly(false); setShowThreadSearchOnly(false); setShowFavoritesOnly(false); setShowRecentPostedOnly(false);
                   void fetchSavedThreadCounts(recentOpenedThreads, "recent-opened");
                 } else {
                   const url = threadUrl.trim();
@@ -9431,7 +9600,7 @@ export default function App() {
                 const willEnable = !showRecentPostedOnly;
                 setShowRecentPostedOnly((v) => !v);
                 if (willEnable) {
-                  setShowCachedOnly(false); setShowFavoritesOnly(false); setShowRecentOpenedOnly(false);
+                  setShowCachedOnly(false); setShowThreadSearchOnly(false); setShowFavoritesOnly(false); setShowRecentOpenedOnly(false);
                   void fetchSavedThreadCounts(recentPostedThreads, "recent-posted");
                 } else {
                   const url = threadUrl.trim();
@@ -9802,6 +9971,19 @@ export default function App() {
             : { gridTemplateRows: threadPaneHidden ? "1fr" : `${threadPaneShownPx}px ${SPLITTER_PX}px 1fr` }}
         >
         <section className="pane threads" onMouseDown={() => setFocusedPane("threads")} style={{ '--fs-delta': `${threadsFontSize - 12}px`, display: threadPaneHidden ? "none" : undefined } as React.CSSProperties}>
+          {showThreadSearchOnly && threadSearchResult && (
+            <div className="thread-search-banner" role="status">
+              <Search size={12} />
+              <span className="thread-search-banner-text">
+                全板スレタイ検索: <b>{threadSearchResult.query}</b>
+                {" — "}
+                {threadSearchResult.total > threadSearchResult.items.length
+                  ? `全${threadSearchResult.total}件中${threadSearchResult.items.length}件を表示`
+                  : `${threadSearchResult.items.length}件`}
+              </span>
+              <button type="button" onClick={() => { setThreadSearchQuery(""); exitThreadSearch(); }} title="検索結果を閉じて板一覧に戻る">解除</button>
+            </div>
+          )}
           <div className="threads-table-wrap" ref={threadListScrollRef} tabIndex={-1} onScroll={hideThreadTitlePopup}>
           <table>
             <thead>
@@ -9833,7 +10015,7 @@ export default function App() {
                           void fetchResponsesFromCurrent(t.threadUrl, { keepSelection: true });
                         }
                         // persist read status
-                        if (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly) {
+                        if (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly || showThreadSearchOnly) {
                           const boardUrl = getBoardUrlFromThreadUrl(t.threadUrl);
                           const threadKey = getThreadKeyFromThreadUrl(t.threadUrl);
                           if (threadKey && t.res > 0) {
@@ -9888,6 +10070,7 @@ export default function App() {
                     onClick={() => {
                       const boardUrl = getBoardUrlFromThreadUrl(threadTabs[activeTabIndex].threadUrl);
                       if (showCachedOnly) { setShowCachedOnly(false); setCachedThreadList([]); }
+                      if (showThreadSearchOnly) exitThreadSearch();
                       setShowFavoritesOnly(false);
                       setShowRecentOpenedOnly(false);
                       setShowRecentPostedOnly(false);
@@ -11429,6 +11612,27 @@ export default function App() {
               <div key={type} className="ng-list-section">
                 <h4 className="ng-section-header">
                   <span>{type === "words" ? "ワード" : type === "ids" ? "ID" : "名前"} ({highlightFilters[type].filter((e) => !hlDisabled(e)).length}/{highlightFilters[type].length})</span>
+                  {type === "ids" && (
+                    <span className="ng-section-actions">
+                      <label
+                        className="ng-expire-setting"
+                        title="登録から指定日数が経過した強調IDを自動削除します (この機能より前に登録したものは登録日時が無いため対象外)"
+                      >
+                        自動削除
+                        <select
+                          className="ng-expire-select hl-expire-select"
+                          value={hlIdExpireDays}
+                          onChange={(e) => setHlIdExpireDays(Number(e.target.value))}
+                        >
+                          <option value={0}>無効</option>
+                          <option value={1}>1日</option>
+                          <option value={3}>3日</option>
+                          <option value={7}>7日</option>
+                          <option value={30}>30日</option>
+                        </select>
+                      </label>
+                    </span>
+                  )}
                 </h4>
                 {highlightFilters[type].length === 0 ? (
                   <span className="ng-empty">(なし)</span>
@@ -11438,6 +11642,8 @@ export default function App() {
                       const v = hlVal(entry);
                       const color = hlColor(entry);
                       const off = hlDisabled(entry);
+                      const addedAt = hlAddedAt(entry);
+                      const expiresAt = addedAt === null ? null : addedAt + hlIdExpireDays * NG_DAY_MS;
                       return (
                         <li key={v} className={off ? "ng-disabled" : ""}>
                           <button
@@ -11445,6 +11651,13 @@ export default function App() {
                             onClick={() => toggleHighlightEntry(type, v)}
                             title={off ? "クリックで有効化" : "クリックで無効化"}
                           >{off ? "OFF" : "ON"}</button>
+                          {type === "words" && (
+                            <button
+                              className={`ng-toggle hl-title-toggle ${hlTitleOff(entry) ? "ng-toggle-off" : "ng-toggle-on"}`}
+                              onClick={() => toggleHighlightEntryTitle(type, v)}
+                              title={hlTitleOff(entry) ? "スレ一覧のタイトルには適用しない (クリックで適用)" : "スレ一覧のタイトルにも適用中 (クリックで解除)"}
+                            >スレタイ</button>
+                          )}
                           <select
                             className={`hl-color-select hl-c-${color}`}
                             value={color}
@@ -11455,7 +11668,15 @@ export default function App() {
                               <option key={c.key} value={c.key}>{c.label}</option>
                             ))}
                           </select>
-                          <span className="ng-val" title={v}>{v}</span>
+                          {type === "ids" && hlIdExpireDays > 0 && (
+                            expiresAt === null
+                              ? <span className="ng-expire-badge ng-expire-none" title="登録日時が記録されていないため自動削除の対象外です">期限なし</span>
+                              : <span
+                                  className="ng-expire-badge"
+                                  title={`${formatNgAddedAt(addedAt as number)} に登録\n${formatNgAddedAt(expiresAt)} 以降に削除`}
+                                >{formatNgExpiresIn(expiresAt - Date.now())}</span>
+                          )}
+                          <span className="ng-val" title={addedAt === null ? v : `${v}\n${formatNgAddedAt(addedAt)} に登録`}>{v}</span>
                           <button className="ng-remove" onClick={() => removeHighlightEntry(type, v)}>×</button>
                         </li>
                       );
@@ -11772,6 +11993,7 @@ export default function App() {
             if (tab) {
               const boardUrl = getBoardUrlFromThreadUrl(tab.threadUrl);
               if (showCachedOnly) { setShowCachedOnly(false); setCachedThreadList([]); }
+              if (showThreadSearchOnly) exitThreadSearch();
               setShowFavoritesOnly(false);
               setShowRecentOpenedOnly(false);
               setShowRecentPostedOnly(false);

@@ -400,9 +400,54 @@ try {
   const hlListItems = await page.$$eval(".ng-list li", (els) => els.map((el) => el.textContent));
   assert(hlListItems.some((t) => t.includes("testhlword")), "highlight word should appear in list after adding");
   await page.click(".ng-remove");
+  // 強調ワードはスレ一覧のタイトルにも <mark> で効く (絞り込みはしない)
+  await page.fill(".ng-panel-add input", "プローブ");
+  await page.click(".ng-panel-add button:has-text('追加')");
+  const hlTitleMarks = await page.$$eval(".thread-title-cell mark.highlight-word", (els) => els.map((el) => el.textContent));
+  assert(hlTitleMarks.includes("プローブ"), `thread title should contain highlighted word, got ${JSON.stringify(hlTitleMarks)}`);
+  const hlTitleRows = await page.$$eval(".thread-title-cell", (els) => els.length);
+  assert(hlTitleRows >= 2, "highlight word must not filter the thread list");
+  // ワードごとの「スレタイ」トグルでそのワードだけタイトル適用を外せる (本文側の ON/OFF とは独立)
+  const hlTitleItemToggle = await page.$(".ng-list li .hl-title-toggle");
+  assert(hlTitleItemToggle, "highlight word item should have a thread-title toggle");
+  assert((await hlTitleItemToggle.getAttribute("class")).includes("ng-toggle-on"), "per-word thread-title toggle should default to on");
+  await hlTitleItemToggle.click();
+  await new Promise((r) => setTimeout(r, 200));
+  const hlTitleMarksItemOff = await page.$$(".thread-title-cell mark.highlight-word");
+  assert(hlTitleMarksItemOff.length === 0, "thread title highlight should be gone when the word's thread-title toggle is off");
+  assert((await page.$eval(".ng-list li .ng-toggle:not(.hl-title-toggle)", (el) => el.textContent)) === "ON", "body highlight toggle must stay on");
+  await page.click(".ng-list li .hl-title-toggle");
+  await new Promise((r) => setTimeout(r, 200));
+  assert((await page.$$(".thread-title-cell mark.highlight-word")).length > 0, "thread title highlight should come back when the word's toggle is on again");
+  const hlIdToggleCount = await page.$$eval(".ng-list-section", (secs) => secs.map((s) => s.querySelectorAll(".hl-title-toggle").length));
+  assert(hlIdToggleCount[1] === 0 && hlIdToggleCount[2] === 0, "ID / name items must not show a thread-title toggle");
+  await page.click(".ng-remove");
+  const hlTitleMarksAfter = await page.$$(".thread-title-cell mark.highlight-word");
+  assert(hlTitleMarksAfter.length === 0, "thread title highlight should disappear after removing word");
   const hlListItemsAfter = await page.$$eval(".ng-list li", (els) => els.length);
   assert(hlListItemsAfter === 0, "highlight list should be empty after removing word");
   console.log("smoke-ui: highlight tab add/remove ok");
+
+  // 強調 ID の自動削除: NG ID と同じく ID セクションヘッダーの select で日数を選ぶと
+  // 各エントリに残り日数バッジが出る
+  const hlExpireSelect = await page.$(".hl-expire-select");
+  assert(hlExpireSelect, "highlight ID section header should have the auto-delete select");
+  await page.selectOption(".ng-panel-add select", "ids");
+  await page.fill(".ng-panel-add input", "TestHlId0");
+  await page.click(".ng-panel-add button:has-text('追加')");
+  await page.selectOption(".hl-expire-select", "7");
+  const hlExpireBadges = await page.$$eval(".ng-expire-badge", (els) => els.map((el) => el.textContent));
+  assert(hlExpireBadges.includes("残り7日"), `highlight ID should show a remaining-days badge, got ${JSON.stringify(hlExpireBadges)}`);
+  await page.selectOption(".hl-expire-select", "1");
+  const hlExpireBadgesHours = await page.$$eval(".ng-expire-badge", (els) => els.map((el) => el.textContent));
+  assert(hlExpireBadgesHours.some((t) => /^残り\d+時間$/.test(t)), `remaining under a day should be shown in hours, got ${JSON.stringify(hlExpireBadgesHours)}`);
+  const hlExpireStored = await page.evaluate(() => localStorage.getItem("desktop.hlIdExpireDays.v1"));
+  assert(hlExpireStored === "1", `hlIdExpireDays should be saved to localStorage, got ${hlExpireStored}`);
+  await page.selectOption(".hl-expire-select", "0");
+  assert((await page.$$(".ng-expire-badge")).length === 0, "remaining-days badge should disappear when auto-delete is 無効");
+  await page.click(".ng-remove");
+  await page.selectOption(".ng-panel-add select", "words");
+  console.log("smoke-ui: highlight id auto-expire ok");
   await page.click(".ng-panel-tabs button:has-text('NG')");
 
   // ヘッダを掴んでパネルを移動できる (書き込みウィンドウと同じ操作感)
@@ -1806,6 +1851,29 @@ try {
   await page.click(".title-split-toggle");
   await new Promise((r) => setTimeout(r, 100));
   console.log("smoke-ui: cache log list menu ok");
+
+  // --- 全板スレタイ検索: 検索欄の隣のボタンとフィルタメニューの項目がある ---
+  // 実際の検索は Tauri IPC (search_threads_ff5ch) 依存なので、ブラウザ環境では
+  // ボタン押下でスレ一覧が壊れない (行が残る) ことまでを検証する。
+  assert(
+    filterMenuLabels.some((t) => t.includes("全板スレタイ検索")),
+    `filter menu should have 全板スレタイ検索, got ${filterMenuLabels.join(" / ")}`,
+  );
+  const threadSearchAllBtn = await page.$(".thread-search-all-btn");
+  assert(threadSearchAllBtn, "all-board thread search button should exist next to the search box");
+  const threadSearchAllTitle = await threadSearchAllBtn.getAttribute("title");
+  assert(threadSearchAllTitle && threadSearchAllTitle.includes("全板"), `all-board search button should explain itself, got ${threadSearchAllTitle}`);
+  const rowsBeforeAllSearch = await page.$$eval(".threads tbody tr", (rows) => rows.length);
+  await page.fill(".thread-search", "プローブ");
+  await threadSearchAllBtn.click();
+  await new Promise((r) => setTimeout(r, 150));
+  const rowsAfterAllSearch = await page.$$eval(".threads tbody tr", (rows) => rows.length);
+  assert(rowsAfterAllSearch >= 1, `thread list should stay usable after all-board search outside tauri, got ${rowsAfterAllSearch} (before ${rowsBeforeAllSearch})`);
+  const allSearchActive = await threadSearchAllBtn.evaluate((el) => el.classList.contains("active-toggle"));
+  assert(!allSearchActive, "all-board search mode must not turn on without a result");
+  await page.fill(".thread-search", "");
+  await new Promise((r) => setTimeout(r, 100));
+  console.log("smoke-ui: all-board thread search ui ok");
 
   // --- NG ID 自動削除の設定が localStorage に永続化され、リロード後も復元される ---
   // (リロードを挟むので必ず一番最後に置くこと)
