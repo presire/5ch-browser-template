@@ -1291,6 +1291,14 @@ li.fav-drag-over {
   max-width: 100vw;
   cursor: zoom-out;
 }
+/* 設定「プレビュー画像をウィンドウ内に収める」: 縦もウィンドウに収める (Ctrl+ホイールの拡縮はそのまま) */
+.hover-preview-fit img {
+  max-height: 100vh;
+}
+/* タッチ時は下端の操作バーに隠れないぶんを引く */
+.touch-mode .hover-preview-fit img {
+  max-height: calc(100vh - 56px);
+}
 /* タッチ操作時の画像プレビュー操作バー。指で押せるように下端に置く */
 .hover-preview-touch-bar {
   position: fixed;
@@ -3743,6 +3751,11 @@ a.body-link-image:hover::after {
 .back-ref-trigger:hover {
   text-decoration: underline;
 }
+/* 設定「しきい値以上の ▼N を赤く表示」(いわゆる赤レス) */
+.back-ref-trigger.hot {
+  color: #d32f2f;
+  font-weight: 600;
+}
 .back-ref-popup-item {
   padding: 4px 0;
   border-bottom: 1px solid #e8e8e8;
@@ -3840,6 +3853,25 @@ a.body-link-image:hover::after {
   gap: 12px;
   padding: 4px 0;
   font-size: 12px;
+}
+
+.shortcuts-note {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--sub);
+}
+
+.shortcut-row .shortcut-toggle,
+.shortcut-row .shortcut-toggle-spacer {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.shortcut-row.shortcut-disabled kbd,
+.shortcut-row.shortcut-disabled span {
+  opacity: 0.5;
 }
 
 .shortcut-row kbd {
@@ -4368,6 +4400,9 @@ a.body-link-image:hover::after {
 }
 .dark .back-ref-trigger {
   color: #6cb6ff;
+}
+.dark .back-ref-trigger.hot {
+  color: #ff7b7b;
 }
 .dark .status-bar {
   background: #2d2d30;

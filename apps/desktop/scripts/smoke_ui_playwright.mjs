@@ -280,8 +280,41 @@ try {
 
   // anchor-ref spans have data-anchor attribute
   const anchorRef = await page.$(".anchor-ref[data-anchor]");
-  // may not exist if fallback data has no >>N anchors, so just check class exists in CSS
+  assert(anchorRef, "fallback responses should render >>N as anchor-ref");
   console.log("smoke-ui: anchor-ref structure ok");
+
+  // --- popup chain: 子ポップアップから親へ戻ると子だけ閉じる ---
+  // >>3 (レス4) をホバー → レス3 のポップアップ → その中の >>1 をホバー → レス1 の子ポップアップ
+  const anchorTo3 = await page.$('.response-scroll .response-block[data-response-no="4"] .anchor-ref[data-anchor="3"]');
+  assert(anchorTo3, "response 4 should have an anchor to >>3");
+  await anchorTo3.hover();
+  await page.waitForSelector(".anchor-popup:not(.nested-popup)", { timeout: 2000 });
+  const innerAnchor = await page.$('.anchor-popup:not(.nested-popup) .anchor-ref[data-anchor="1"]');
+  assert(innerAnchor, "anchor popup for >>3 should contain an anchor to >>1");
+  await innerAnchor.hover();
+  await page.waitForSelector(".nested-popup", { timeout: 2000 });
+  // 子から親ポップアップの本文 (子に隠れていない部分) へ戻す
+  const parentBox = await page.$eval(".anchor-popup:not(.nested-popup)", (el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.left, y: r.top, w: r.width, h: r.height };
+  });
+  const childBox = await page.$eval(".nested-popup", (el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.left, y: r.top, w: r.width, h: r.height };
+  });
+  await page.mouse.move(childBox.x + childBox.w / 2, childBox.y + Math.min(10, childBox.h / 2));
+  await new Promise((r) => setTimeout(r, 50));
+  // 子は親のアンカー直下 (画面下端なら上) に重なるので、子に隠れていない側の端を選ぶ
+  const childCoversTop = childBox.y <= parentBox.y + 4 && childBox.y + childBox.h >= parentBox.y + 4;
+  await page.mouse.move(parentBox.x + parentBox.w / 2, childCoversTop ? parentBox.y + parentBox.h - 4 : parentBox.y + 4);
+  await new Promise((r) => setTimeout(r, 200));
+  assert(!(await page.$(".nested-popup")), "moving back to the parent popup should close the child popup");
+  assert(await page.$(".anchor-popup"), "parent popup should stay open while hovered");
+  // ポップアップの外へ出すと全部閉じる
+  await page.mouse.move(5, Math.max(5, parentBox.y - 40));
+  await new Promise((r) => setTimeout(r, 300));
+  assert(!(await page.$(".anchor-popup")), "leaving all popups should close everything");
+  console.log("smoke-ui: popup chain trim ok");
 
   // double-click response row opens compose with quote
   // first close any open compose window
@@ -792,6 +825,19 @@ try {
   assert(shortcutsPanel, "shortcuts panel should be visible");
   const kbds = await page.$$eval(".shortcut-row kbd", (els) => els.length);
   assert(kbds >= 10, `shortcuts should list at least 10 keys, got ${kbds}`);
+  // 誤爆しやすいショートカット (ダブルクリック引用 / R / A) だけチェックボックスで ON/OFF できる
+  const toggles = await page.$$eval(".shortcut-row .shortcut-toggle", (els) => els.length);
+  assert(toggles === 3, `shortcuts panel should have 3 toggles, got ${toggles}`);
+  const dblRow = await page.$('.shortcut-row:has(kbd:has-text("ダブルクリック"))');
+  assert(dblRow, "double-click shortcut row should exist");
+  const dblToggle = await dblRow.$(".shortcut-toggle");
+  assert(dblToggle, "double-click row should have a toggle");
+  assert(await dblToggle.isChecked(), "double-click toggle should be on by default");
+  await dblToggle.click();
+  assert(!(await dblToggle.isChecked()), "double-click toggle should turn off");
+  assert(await dblRow.evaluate((el) => el.classList.contains("shortcut-disabled")), "disabled row should be dimmed");
+  await dblToggle.click();
+  assert(await dblToggle.isChecked(), "double-click toggle should turn back on");
   // close
   await page.click(".shortcuts-header button:has-text('閉じる')");
   await new Promise((r) => setTimeout(r, 100));
@@ -1346,6 +1392,64 @@ try {
   await touchModeSelect.selectOption("auto");
   await new Promise((r) => setTimeout(r, 250));
   console.log("smoke-ui: tap to open image preview ok");
+
+  // 設定「プレビュー画像をウィンドウ内に収める」はオーバーレイのクラスで CSS に効かせる。既定はオフ (原寸)
+  {
+    const fitToggle = page
+      .locator(".settings-body label.settings-row", { hasText: "プレビュー画像をウィンドウ内に収める" })
+      .locator("input[type=checkbox]");
+    const hasFit = () => page.evaluate(() => document.querySelector(".hover-preview").classList.contains("hover-preview-fit"));
+    assert(!(await fitToggle.isChecked()), "preview fit should be off by default");
+    assert(!(await hasFit()), "hover-preview should not have the fit class by default");
+    await fitToggle.check();
+    await new Promise((r) => setTimeout(r, 100));
+    assert(await hasFit(), "checking preview fit should add .hover-preview-fit");
+    await fitToggle.uncheck();
+    await new Promise((r) => setTimeout(r, 100));
+    assert(!(await hasFit()), "unchecking preview fit should remove .hover-preview-fit");
+    console.log("smoke-ui: hover preview fit toggle ok");
+  }
+
+  // 人気レス (赤レス) 抽出: しきい値以上の >>N を受けたレスだけを炎ボタンで絞り込む。赤表示は既定オフ
+  {
+    const thresholdInput = page
+      .locator(".settings-body label.settings-row", { hasText: "人気レスの被参照数しきい値" })
+      .locator("input[type=number]");
+    const redToggle = page
+      .locator(".settings-body label.settings-row", { hasText: "しきい値以上の ▼N を赤く表示" })
+      .locator("input[type=checkbox]");
+    assert((await thresholdInput.inputValue()) === "3", "hot response threshold should default to 3");
+    assert(!(await redToggle.isChecked()), "hot response red display should be off by default");
+    const hotCount = () => page.evaluate(() => document.querySelectorAll(".response-scroll .back-ref-trigger.hot").length);
+    const visibleNos = () => page.$$eval(".response-scroll .response-block[data-response-no]", (els) => els.map((el) => el.getAttribute("data-response-no")));
+    const clickHot = () => page.evaluate(() => document.querySelector('.link-filter-btn[title^="人気レス"]').click());
+    // サンプルレスは >>1 / >>3 が 1 件ずつなので、しきい値 1 で 1 と 3 が対象になる
+    await thresholdInput.fill("1");
+    await new Promise((r) => setTimeout(r, 100));
+    assert((await hotCount()) === 0, "▼N should not turn red while the red display setting is off");
+    await redToggle.check();
+    await new Promise((r) => setTimeout(r, 100));
+    assert((await hotCount()) > 0, "▼N at or above the threshold should get .hot when the red display is on");
+    const before = await visibleNos();
+    await clickHot();
+    await new Promise((r) => setTimeout(r, 100));
+    const filtered = await visibleNos();
+    assert(filtered.length > 0 && filtered.length < before.length, `hot filter should narrow the list, before=${before.length} after=${filtered.length}`);
+    const allHaveRefs = await page.evaluate(() =>
+      [...document.querySelectorAll(".response-scroll .response-block[data-response-no]")].every((el) => el.querySelector(".back-ref-trigger")),
+    );
+    assert(allHaveRefs, "every response left by the hot filter should carry a ▼N badge");
+    await thresholdInput.fill("99");
+    await new Promise((r) => setTimeout(r, 100));
+    assert((await visibleNos()).length === 0, "raising the threshold above every count should leave the hot filter empty");
+    await clickHot();
+    await thresholdInput.fill("3");
+    await redToggle.uncheck();
+    await new Promise((r) => setTimeout(r, 100));
+    assert((await visibleNos()).length === before.length, "turning the hot filter off should restore the list");
+    assert((await hotCount()) === 0, "unchecking the red display should remove .hot");
+    console.log("smoke-ui: hot response filter ok");
+  }
 
   // 自動判定は実際にタッチイベントが出るコンテキストでないと確かめられない。
   // 別コンテキストを起こして、タップで切り替わること / 設定で上書きできることを見る。
