@@ -274,6 +274,13 @@ try {
   const metaText = await composeMeta.evaluate((el) => el.textContent || "");
   assert(metaText.includes("文字"), `compose meta should show 文字, got: ${metaText}`);
   assert(metaText.includes("行"), `compose meta should show 行, got: ${metaText}`);
+  // 本文は textarea 側で先に反映され、文字数 (App 側の state) は transition で追いつく
+  await page.type(".compose-window textarea.compose-body", "abc\nde");
+  const typedNow = await page.$eval(".compose-window textarea.compose-body", (el) => el.value);
+  assert(typedNow === "abc\nde", `typed text should appear immediately, got: ${JSON.stringify(typedNow)}`);
+  await page.waitForFunction(() => (document.querySelector(".compose-meta")?.textContent || "").startsWith("6文字 / 2行"), null, { timeout: 3000 });
+  await page.fill(".compose-window textarea.compose-body", "");
+  await page.waitForFunction(() => (document.querySelector(".compose-meta")?.textContent || "").startsWith("0文字"), null, { timeout: 3000 });
   // close compose
   await page.click(".compose-header button:has-text('閉じる')");
   console.log("smoke-ui: compose target and meta ok");
@@ -315,6 +322,30 @@ try {
   await new Promise((r) => setTimeout(r, 300));
   assert(!(await page.$(".anchor-popup")), "leaving all popups should close everything");
   console.log("smoke-ui: popup chain trim ok");
+
+  // --- ▼N ポップアップは画面内に収まり、下に空きがあれば下に出る ---
+  // (以前は常に ▼N の上に固定だったので、▼N が画面上部にあると参照数ぶん上にはみ出して見えなかった)
+  {
+    const trigger = await page.$('.response-scroll .response-block[data-response-no="1"] .back-ref-trigger');
+    assert(trigger, "response 1 should carry a ▼N badge in the fallback data");
+    await trigger.hover();
+    await page.waitForSelector(".back-ref-popup", { timeout: 2000 });
+    const r = await page.evaluate(() => {
+      const t = document.querySelector('.response-scroll .response-block[data-response-no="1"] .back-ref-trigger').getBoundingClientRect();
+      const p = document.querySelector(".back-ref-popup").getBoundingClientRect();
+      return { tTop: t.top, tBottom: t.bottom, pTop: p.top, pBottom: p.bottom, pLeft: p.left, pRight: p.right, h: window.innerHeight, w: window.innerWidth };
+    });
+    assert(r.pTop >= 0 && r.pBottom <= r.h && r.pLeft >= 0 && r.pRight <= r.w, `back-ref popup should stay inside the viewport, got ${JSON.stringify(r)}`);
+    if (r.h - r.tBottom >= 360 + 8) {
+      assert(r.pTop >= r.tBottom, `back-ref popup should open below ▼N when there is room, got ${JSON.stringify(r)}`);
+    }
+    // ホバー表示の ▼N ポップアップはポップアップ自体から離れたときに閉じる
+    await page.hover(".back-ref-popup");
+    await page.mouse.move(5, 5);
+    await new Promise((res) => setTimeout(res, 300));
+    assert(!(await page.$(".back-ref-popup")), "leaving the back-ref popup should close it");
+    console.log("smoke-ui: back-ref popup placement ok");
+  }
 
   // double-click response row opens compose with quote
   // first close any open compose window
@@ -425,6 +456,64 @@ try {
   await page.click(".ng-remove");
   await page.selectOption(".ng-panel-add select:not(.ng-mode-select)", "words");
   console.log("smoke-ui: ng id auto-expire ok");
+
+  // NG ワードの ID 連鎖: プレースホルダの >>2 と >>4 は同じ ID。UPLIFT (>>2 に一致) を
+  // あぼーんで登録し、ID連鎖を ON にすると >>4 もあぼーんになる。
+  await page.selectOption(".ng-panel-add .ng-mode-select", "abone");
+  await page.fill(".ng-panel-add input", "UPLIFT");
+  await page.click(".ng-panel-add button:has-text('追加')");
+  const chainToggle = await page.$(".ng-list li .ng-chain-toggle");
+  assert(chainToggle, "word entry should have an ID連鎖 toggle");
+  const chainOffText = await chainToggle.textContent();
+  assert(chainOffText === "ID連鎖OFF", `ID連鎖 should default to OFF, got ${chainOffText}`);
+  const aboneBeforeChain = await page.$$eval(".response-block.abone-block", (els) => els.map((el) => el.getAttribute("data-response-no")));
+  assert(
+    aboneBeforeChain.includes("2") && !aboneBeforeChain.includes("4"),
+    `without ID連鎖 only >>2 should be abone, got ${JSON.stringify(aboneBeforeChain)}`,
+  );
+  await chainToggle.click();
+  const chainOnText = await page.$eval(".ng-list li .ng-chain-toggle", (el) => el.textContent);
+  assert(chainOnText === "ID連鎖ON", `ID連鎖 toggle should turn ON, got ${chainOnText}`);
+  const aboneAfterChain = await page.$$eval(".response-block.abone-block", (els) => els.map((el) => el.getAttribute("data-response-no")));
+  assert(
+    aboneAfterChain.includes("2") && aboneAfterChain.includes("4") && !aboneAfterChain.includes("1") && !aboneAfterChain.includes("3"),
+    `ID連鎖 should abone the same-ID >>4 only, got ${JSON.stringify(aboneAfterChain)}`,
+  );
+  await page.click(".ng-remove");
+  console.log("smoke-ui: ng word id chain ok");
+
+  // 連鎖あぼーん: >>4 は >>3 に安価を打っている。「次:」で >>3 をあぼーんにし、
+  // 連鎖トグルを ON にすると >>4 もあぼーんになる。>>3 は >>1 にも安価を打っているが、
+  // >>1 が NG でも >>1 への安価は連鎖しない。
+  const chainRepliesBox = await page.$(".ng-chain-setting input[type='checkbox']");
+  assert(chainRepliesBox, "NG panel should have the 連鎖あぼーん checkbox");
+  assert(!(await chainRepliesBox.isChecked()), "連鎖あぼーん should default to off");
+  await page.fill(".ng-panel-add input", "次:");
+  await page.click(".ng-panel-add button:has-text('追加')");
+  const aboneNoChain = await page.$$eval(".response-block.abone-block", (els) => els.map((el) => el.getAttribute("data-response-no")));
+  assert(
+    aboneNoChain.includes("3") && !aboneNoChain.includes("4"),
+    `without 連鎖あぼーん only >>3 should be abone, got ${JSON.stringify(aboneNoChain)}`,
+  );
+  await chainRepliesBox.check();
+  const aboneChained = await page.$$eval(".response-block.abone-block", (els) => els.map((el) => el.getAttribute("data-response-no")));
+  assert(
+    aboneChained.includes("3") && aboneChained.includes("4") && !aboneChained.includes("1"),
+    `連鎖あぼーん should abone the reply >>4, got ${JSON.stringify(aboneChained)}`,
+  );
+  await page.click(".ng-remove");
+  // >>1 への安価は連鎖しない: >>1 をあぼーんにしても >>3 は残る
+  await page.fill(".ng-panel-add input", "トレース準備");
+  await page.click(".ng-panel-add button:has-text('追加')");
+  const aboneNo1 = await page.$$eval(".response-block.abone-block", (els) => els.map((el) => el.getAttribute("data-response-no")));
+  assert(
+    aboneNo1.includes("1") && !aboneNo1.includes("3") && !aboneNo1.includes("4"),
+    `replies to >>1 must not chain, got ${JSON.stringify(aboneNo1)}`,
+  );
+  await page.click(".ng-remove");
+  await chainRepliesBox.uncheck();
+  await page.selectOption(".ng-panel-add .ng-mode-select", "hide");
+  console.log("smoke-ui: ng chain replies ok");
 
   // switch to Highlight tab, add and remove a highlight word
   await page.click(".ng-panel-tabs button:has-text('ハイライト')");

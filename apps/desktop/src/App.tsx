@@ -1,5 +1,6 @@
 import {
   Fragment,
+  startTransition,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -12,9 +13,11 @@ import {
   type PointerEvent as ReactPointerEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type UIEventHandler,
+  type MutableRefObject,
   type RefObject,
   type SetStateAction,
 } from "react";
+import { flushSync } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import ReactMarkdown from "react-markdown";
@@ -346,7 +349,8 @@ type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
 // NG の適用方法。hide = レスごと消す / hide-images = 画像だけ消す /
 // abone = レス番と枠は残して中身を「あぼーん」に置き換える (レス番が飛ばない)
 type NgMode = "hide" | "hide-images" | "abone";
-type NgEntry = { value: string; mode: NgMode; disabled?: boolean; excludeNo1?: boolean; match?: "partial" | "exact"; addedAt?: number };
+// chainId (ワードのみ): 一致したレスの ID / ワッチョイを持つレスも同じスレ内でまとめて NG にする
+type NgEntry = { value: string; mode: NgMode; disabled?: boolean; excludeNo1?: boolean; match?: "partial" | "exact"; addedAt?: number; chainId?: boolean };
 type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: (string | NgEntry)[] };
 // 強調フィルタ (NGの逆): 指定ワード/ID/名前を強調表示
 // titleOff: スレ一覧のタイトルには適用しない (ワードのみ意味を持つ)
@@ -399,6 +403,7 @@ const ABONE_TEXT = "あぼーん";
 const ngEntryExcludeNo1 = (e: string | NgEntry): boolean => typeof e === "string" ? false : (e.excludeNo1 ?? false);
 const ngEntryDisabled = (e: string | NgEntry): boolean => typeof e === "string" ? false : (e.disabled ?? false);
 const ngEntryMatch = (e: string | NgEntry): "partial" | "exact" => typeof e === "string" ? "partial" : (e.match ?? "partial");
+const ngEntryChainId = (e: string | NgEntry): boolean => typeof e === "string" ? false : (e.chainId ?? false);
 // 登録日時。NG ID 自動削除の導入より前に登録されたエントリは持たないので null を返す
 // (= 自動削除の対象外。既存の登録を後付けの基準で消さないため)。
 // 導入バージョンは docs/BRUSHUP_PLAN.md の [N17] 参照。
@@ -600,6 +605,8 @@ const POST_LOG_PREFS_KEY = "desktop.postLogPrefs.v1";
 const THREAD_CATEGORIES_KEY = "desktop.threadCategories.v2";
 const DISMISSED_UPDATE_VERSION_KEY = "desktop.dismissedUpdateVersion.v1";
 const NG_ID_EXPIRE_DAYS_KEY = "desktop.ngIdExpireDays.v1";
+// NG になったレスへ安価を打ったレスも連鎖してあぼーんにする (既定オフ)
+const NG_CHAIN_REPLIES_KEY = "desktop.ngChainReplies.v1";
 // 強調 ID の自動削除日数 (NG ID と同じ選択肢・同じ判定)。
 const HL_ID_EXPIRE_DAYS_KEY = "desktop.hlIdExpireDays.v1";
 // UI 全体の表示倍率。WebView 自体のズームなので px 指定のままでも全部が拡大され、
@@ -664,6 +671,7 @@ const UI_JSON_SETTINGS_FIELDS: Record<string, string> = {
   autoRefreshPersistEnabled: AUTO_REFRESH_PERSIST_KEY,
   postLogPrefs: POST_LOG_PREFS_KEY,
   ngIdExpireDays: NG_ID_EXPIRE_DAYS_KEY,
+  ngChainReplies: NG_CHAIN_REPLIES_KEY,
   hlIdExpireDays: HL_ID_EXPIRE_DAYS_KEY,
   ex0chEnabled: EX0CH_ENABLED_KEY,
   aiPrefs: AI_PREFS_KEY,
@@ -1776,6 +1784,64 @@ const extractBeNumber = (...sources: string[]): string | null => {
   return null;
 };
 
+// 書き込み欄の本文入力。値を App の state (composeBody) に直結すると 1 打鍵ごとに App 全体
+// (スレ一覧・全レス) が描き直されて入力が引っかかるので、表示用の値はここで持ち、App 側へは
+// startTransition (低優先度・中断可) で反映する。送信ショートカットと blur の直前は flushSync で
+// 親に同期してから親のハンドラを呼ぶので、打った直後に送信・クリアしても本文が欠けない。
+type ComposeTextareaProps = {
+  value: string;
+  onChange: (value: string) => void;
+  onKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
+  textareaRef: MutableRefObject<HTMLTextAreaElement | null>;
+  fontSize: number;
+};
+function ComposeTextarea({ value, onChange, onKeyDown, textareaRef, fontSize }: ComposeTextareaProps) {
+  const [local, setLocal] = useState(value);
+  // 直前に親から受け取った value (派生 state パターン。描画中に ref を書き換えると StrictMode の
+  // 二重描画で 2 回目に判定が消えるので、state で持つ)。
+  const [prevValue, setPrevValue] = useState(value);
+  // 親へ送ってまだ反映を確認していない値 (古い順)。親から来た value がこの中にあれば自分の入力が
+  // 追いついただけ。どれとも違えば外部からの変更 (クリア・絵文字挿入・引用など) なので取り込む。
+  const sentRef = useRef<string[]>([]);
+  // 親の最新ハンドラ。flushSync で親を描き直した直後に呼ぶので ref 経由で最新を参照する。
+  const onKeyDownRef = useRef(onKeyDown);
+  onKeyDownRef.current = onKeyDown;
+  if (value !== prevValue) {
+    setPrevValue(value);
+    if (!sentRef.current.includes(value) && local !== value) setLocal(value);
+  }
+  useEffect(() => {
+    const i = sentRef.current.lastIndexOf(value);
+    sentRef.current = i >= 0 ? sentRef.current.slice(i + 1) : [];
+  }, [value]);
+  const flushToParent = () => {
+    if (sentRef.current.length === 0) return;
+    flushSync(() => onChange(local));
+  };
+  return (
+    <textarea
+      ref={textareaRef}
+      className="compose-body"
+      value={local}
+      onChange={(e) => {
+        const v = e.target.value;
+        setLocal(v);
+        sentRef.current.push(v);
+        startTransition(() => onChange(v));
+      }}
+      onKeyDown={(e) => {
+        // 修飾キー付き Enter (送信ショートカット) は親が本文を読むので先に同期する
+        if (e.key === "Enter" && (e.shiftKey || e.ctrlKey || e.metaKey)) flushToParent();
+        onKeyDownRef.current(e);
+      }}
+      onBlur={flushToParent}
+      placeholder="本文を入力"
+      autoFocus
+      style={{ fontSize: `${fontSize}px` }}
+    />
+  );
+}
+
 export default function App() {
   const [status, setStatus] = useState("not fetched");
   const [authStatus, setAuthStatus] = useState("not checked");
@@ -1896,6 +1962,16 @@ export default function App() {
   useEffect(() => {
     saveUiSetting(NG_ID_EXPIRE_DAYS_KEY, String(ngIdExpireDays));
   }, [ngIdExpireDays]);
+  const [ngChainReplies, setNgChainReplies] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(NG_CHAIN_REPLIES_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    saveUiSetting(NG_CHAIN_REPLIES_KEY, String(ngChainReplies));
+  }, [ngChainReplies]);
   const [hlIdExpireDays, setHlIdExpireDays] = useState<number>(() => {
     try {
       const raw = localStorage.getItem(HL_ID_EXPIRE_DAYS_KEY);
@@ -2472,7 +2548,17 @@ export default function App() {
   const [beMenu, setBeMenu] = useState<{ x: number; y: number; beNumber: string } | null>(null);
   const beMenuRef = useRef<HTMLDivElement>(null);
   const anchorPopupCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [backRefPopup, setBackRefPopup] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[]; z?: number } | null>(null);
+  const [backRefPopup, setBackRefPopup] = useState<{ x: number; y: number; anchorTop: number; anchorBottom: number; responseIds: number[]; z?: number } | null>(null);
+  // レス系ポップアップを出す側 (上/下) と、その側に収まる高さを決める。下に maxH 分の空きがなく
+  // 上のほうが広ければ上に出す。どちらに出すにしても空きより高くはしない (中をスクロールさせる) ので、
+  // 参照数の多いレスや小さいウィンドウでも画面外にはみ出さない。
+  const fitPopupVertically = (belowTop: number, aboveBottom: number, maxH: number) => {
+    const spaceBelow = window.innerHeight - belowTop - 8;
+    const spaceAbove = aboveBottom - 8;
+    const flipUp = spaceBelow < maxH && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(120, Math.min(maxH, flipUp ? spaceAbove : spaceBelow));
+    return { flipUp, maxHeight };
+  };
   // タッチ操作では「マウスが離れたら閉じる」が使えないので、まとめて閉じる手段が要る。
   const closeAllPopups = () => {
     if (anchorPopupCloseTimer.current) {
@@ -3301,6 +3387,17 @@ export default function App() {
     });
   };
 
+  const toggleNgEntryChainId = (value: string) => {
+    void persistNgFilters({
+      ...ngFilters,
+      words: ngFilters.words.map((e) => {
+        if (ngVal(e) !== value) return e;
+        const base = typeof e === "string" ? { value: e, mode: "hide" as const } : e;
+        return { ...base, chainId: !ngEntryChainId(e) };
+      }),
+    });
+  };
+
   const toggleNgEntryMode = (type: "words" | "ids" | "names" | "thread_words", value: string) => {
     void persistNgFilters({
       ...ngFilters,
@@ -3349,13 +3446,17 @@ export default function App() {
 
   // 複数の NG に一致したときは強い方を採用する (hide > abone > hide-images)。
   // hide は最強なので、呼び出し側は見つけた時点で return してよい。
+  const NG_MODE_RANK: Record<NgMode, number> = { "hide-images": 0, abone: 1, hide: 2 };
   const strongerNgMode = (current: NgMode | null, next: NgMode): NgMode =>
-    current === null || next === "abone" ? next : current;
+    current === null || NG_MODE_RANK[next] > NG_MODE_RANK[current] ? next : current;
 
-  const getNgResult = (resp: { name: string; time: string; text: string; responseNo?: number }): NgMode | null => {
-    if (ngFilters.words.length === 0 && ngFilters.ids.length === 0 && ngFilters.names.length === 0) return null;
+  // mode: このレス自身の NG 判定。chainMode: 「ID連鎖」付きワードに一致したときのそのモード
+  // (呼び出し側がこのレスの ID / ワッチョイを同スレ内の他レスへ広げる)。
+  const evalNg = (resp: { name: string; time: string; text: string; responseNo?: number }): { mode: NgMode | null; chainMode: NgMode | null } => {
+    if (ngFilters.words.length === 0 && ngFilters.ids.length === 0 && ngFilters.names.length === 0) return { mode: null, chainMode: null };
     const isNo1 = resp.responseNo === 1;
     let result: NgMode | null = null;
+    let chainMode: NgMode | null = null;
     let plainBody: string | null = null;
     for (const w of ngFilters.words) {
       if (ngEntryDisabled(w)) continue;
@@ -3367,16 +3468,19 @@ export default function App() {
         : resp.text;
       if (ngMatch(ngVal(w), wTarget, wMatch)) {
         const m = ngEntryMode(w);
-        if (m === "hide") return "hide";
         result = strongerNgMode(result, m);
+        if (ngEntryChainId(w)) chainMode = strongerNgMode(chainMode, m);
+        // hide かつ連鎖も hide なら、これ以上見ても結果は変わらない
+        if (result === "hide" && chainMode === "hide") break;
       }
     }
+    if (result === "hide") return { mode: "hide", chainMode };
     for (const n of ngFilters.names) {
       if (ngEntryDisabled(n)) continue;
       if (isNo1 && ngEntryExcludeNo1(n)) continue;
       if (ngMatch(ngVal(n), resp.name)) {
         const m = ngEntryMode(n);
-        if (m === "hide") return "hide";
+        if (m === "hide") return { mode: "hide", chainMode };
         result = strongerNgMode(result, m);
       }
     }
@@ -3388,14 +3492,15 @@ export default function App() {
           if (isNo1 && ngEntryExcludeNo1(entry)) continue;
           if (idMatch[1] === ngVal(entry)) {
             const m = ngEntryMode(entry);
-            if (m === "hide") return "hide";
+            if (m === "hide") return { mode: "hide", chainMode };
             result = strongerNgMode(result, m);
           }
         }
       }
     }
-    return result;
+    return { mode: result, chainMode };
   };
+  const getNgResult = (resp: { name: string; time: string; text: string; responseNo?: number }): NgMode | null => evalNg(resp).mode;
   const isNgFiltered = (resp: { name: string; time: string; text: string }): boolean => getNgResult(resp) !== null;
 
   const saveBookmark = (url: string, responseNo: number) => {
@@ -5304,7 +5409,9 @@ export default function App() {
   const selectedThreadItem = visibleThreadItems.find((t) => t.id === selectedThread) ?? null;
   const unreadThreadCount = visibleThreadItems.filter((t) => !threadReadMap[t.id]).length;
   const selectedThreadLabel = selectedThreadItem ? `#${selectedThreadItem.id}` : "-";
-  const responseItems = [
+  // 派生データ (backRefMap / ngResultMap など) の useMemo が効くように、レス配列は fetchedResponses が
+  // 変わったときだけ作り直す。
+  const responseItems = useMemo(() => [
     ...(fetchedResponses.length > 0
       ? fetchedResponses.map((r) => {
           const rawName = r.name || "Anonymous";
@@ -5325,12 +5432,13 @@ export default function App() {
           };
         })
       : [
-          { id: 1, name: "名無しさん", nameWithoutWatchoi: "名無しさん", mail: "", time: "2026/03/07 10:00", text: "投稿フロートレース準備完了", beNumber: null, watchoi: null },
-          { id: 2, name: "名無しさん", nameWithoutWatchoi: "名無しさん", mail: "sage", time: "2026/03/07 10:02", text: "BE/UPLIFT/どんぐりログイン確認済み", beNumber: null, watchoi: null },
-          { id: 3, name: "名無しさん", nameWithoutWatchoi: "名無しさん", mail: "", time: "2026/03/07 10:04", text: ">>1 次: subject/dat取得連携", beNumber: null, watchoi: null },
-          { id: 4, name: "名無しさん", nameWithoutWatchoi: "名無しさん", mail: "", time: "2026/03/07 10:06", text: ">>3 参考 https://example.com/page を参照", beNumber: null, watchoi: null },
+          // >>2 と >>4 は同じ ID (スモークテストで NG ワードの ID 連鎖を確認する)
+          { id: 1, name: "名無しさん", nameWithoutWatchoi: "名無しさん", mail: "", time: "2026/03/07 10:00 ID:Smoke0001", text: "投稿フロートレース準備完了", beNumber: null, watchoi: null },
+          { id: 2, name: "名無しさん", nameWithoutWatchoi: "名無しさん", mail: "sage", time: "2026/03/07 10:02 ID:SmokeSame", text: "BE/UPLIFT/どんぐりログイン確認済み", beNumber: null, watchoi: null },
+          { id: 3, name: "名無しさん", nameWithoutWatchoi: "名無しさん", mail: "", time: "2026/03/07 10:04 ID:Smoke0003", text: ">>1 次: subject/dat取得連携", beNumber: null, watchoi: null },
+          { id: 4, name: "名無しさん", nameWithoutWatchoi: "名無しさん", mail: "", time: "2026/03/07 10:06 ID:SmokeSame", text: ">>3 参考 https://example.com/page を参照", beNumber: null, watchoi: null },
         ]),
-  ];
+  ], [fetchedResponses]);
   const extractId = (time: string) => {
     const m = time.match(/ID:(\S+)/);
     return m ? m[1] : "";
@@ -5619,13 +5727,6 @@ export default function App() {
     return map;
   })();
 
-  const ngResultMap = new Map<number, NgMode>();
-  for (const r of responseItems) {
-    const result = getNgResult({ name: r.name, time: r.time, text: r.text, responseNo: r.id });
-    if (result) ngResultMap.set(r.id, result);
-  }
-  const ngFilteredCount = ngResultMap.size;
-
   const compiledResponseCategories = useMemo(() => {
     const out: { keyword: string; color: string; match: (text: string) => boolean; highlightRegex: RegExp | null }[] = [];
     for (const c of threadCategories) {
@@ -5692,12 +5793,19 @@ export default function App() {
   const hlNameEntries = toHlActive(highlightFilters.names);
   const hlIdEntries = toHlActive(highlightFilters.ids);
   // Build back-reference map: responseNo → list of responseNos that reference it
-  const backRefMap = (() => {
+  // ngChainRefMap は連鎖あぼーん用に範囲アンカー (>>1-100) を除いたもの。範囲を含めると
+  // NG レスが 1 つ混ざるだけで広範囲に連鎖してしまう。
+  const { backRefMap, ngChainRefMap } = useMemo(() => {
     const map = new Map<number, number[]>();
-    const addRef = (target: number, from: number) => {
+    const chainMap = new Map<number, number[]>();
+    const addRef = (target: number, from: number, isRange = false) => {
       if (!map.has(target)) map.set(target, []);
       const arr = map.get(target)!;
       if (!arr.includes(from)) arr.push(from);
+      if (isRange) return;
+      if (!chainMap.has(target)) chainMap.set(target, []);
+      const carr = chainMap.get(target)!;
+      if (!carr.includes(from)) carr.push(from);
     };
     for (const r of responseItems) {
       const plain = decodeHtmlEntities(r.text.replace(/<[^>]+>/g, ""));
@@ -5708,15 +5816,60 @@ export default function App() {
       // range >>N-M or >N-M
       for (const m of plain.matchAll(/>>?(\d+)-(\d+)/g)) {
         const s = Number(m[1]), e = Number(m[2]);
-        for (let i = s; i <= e && i - s < 1000; i++) addRef(i, r.id);
+        for (let i = s; i <= e && i - s < 1000; i++) addRef(i, r.id, true);
       }
       // single >>N or >N
       for (const m of plain.matchAll(/>>?(\d+)(?![\d,、\-])/g)) {
         addRef(Number(m[1]), r.id);
       }
     }
+    return { backRefMap: map, ngChainRefMap: chainMap };
+  }, [responseItems]);
+
+  // evalNg が見るのは ngFilters だけなので、依存はその 4 つで足りる。
+  const ngResultMap = useMemo(() => {
+    const map = new Map<number, NgMode>();
+    // 1 パス目: エントリに直接一致したレス。「ID連鎖」付きワードに当たったレスの
+    // ID / ワッチョイを集めておく (スレ内だけの一時的な連鎖で、NG リストには追加しない)。
+    const chainIds = new Map<string, NgMode>();
+    const chainWatchois = new Map<string, NgMode>();
+    for (const r of responseItems) {
+      const { mode, chainMode } = evalNg({ name: r.name, time: r.time, text: r.text, responseNo: r.id });
+      if (mode) map.set(r.id, mode);
+      if (!chainMode) continue;
+      const id = extractId(r.time);
+      if (id && id !== "???") chainIds.set(id, strongerNgMode(chainIds.get(id) ?? null, chainMode));
+      if (r.watchoi) chainWatchois.set(r.watchoi, strongerNgMode(chainWatchois.get(r.watchoi) ?? null, chainMode));
+    }
+    // 2 パス目: 同じ ID / ワッチョイのレスにも同じモードを適用する (>>1 は除く)
+    if (chainIds.size > 0 || chainWatchois.size > 0) {
+      for (const r of responseItems) {
+        if (r.id === 1) continue;
+        const id = extractId(r.time);
+        const byId = id ? chainIds.get(id) : undefined;
+        const byWatchoi = r.watchoi ? chainWatchois.get(r.watchoi) : undefined;
+        let m: NgMode | null = byId ?? null;
+        if (byWatchoi) m = strongerNgMode(m, byWatchoi);
+        if (m) map.set(r.id, strongerNgMode(map.get(r.id) ?? null, m));
+      }
+    }
+    // 3 パス目: 連鎖あぼーん。NG (非表示 / あぼーん) になったレスへ安価を打ったレスも
+    // あぼーんにする。responseItems は昇順なので、返信の返信にも順に波及する。
+    // >>1 への安価は対象外 (スレ主のレスが NG だと全レスが消えてしまうため)。
+    if (ngChainReplies) {
+      for (const r of responseItems) {
+        if (r.id === 1) continue;
+        const mode = map.get(r.id);
+        if (mode !== "hide" && mode !== "abone") continue;
+        for (const from of ngChainRefMap.get(r.id) ?? []) {
+          if (from === r.id || from === 1) continue;
+          map.set(from, strongerNgMode(map.get(from) ?? null, "abone"));
+        }
+      }
+    }
     return map;
-  })();
+  }, [responseItems, ngFilters, ngChainReplies, ngChainRefMap]);
+  const ngFilteredCount = ngResultMap.size;
 
   const visibleResponseItems = responseItems.filter((r) => {
     const ngResult = ngResultMap.get(r.id);
@@ -9185,15 +9338,12 @@ export default function App() {
         sage
       </label>
     </div>
-    <textarea
-      ref={composeBodyRef}
-      className="compose-body"
+    <ComposeTextarea
+      textareaRef={composeBodyRef}
       value={composeBody}
-      onChange={(e) => setComposeBody(e.target.value)}
+      onChange={setComposeBody}
       onKeyDown={onComposeBodyKeyDown}
-      placeholder="本文を入力"
-      autoFocus
-      style={{ fontSize: `${composeFontSize}px` }}
+      fontSize={composeFontSize}
     />
     {composePreview && (
       <div className="compose-preview" dangerouslySetInnerHTML={renderResponseBody(composeBody || "(空)", { youtubeThumbs: youtubeThumbsEnabled })} />
@@ -10798,12 +10948,12 @@ export default function App() {
                             if (!isTouchMode()) return;
                             e.stopPropagation();
                             const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                            setBackRefPopup({ x: rect.left, y: rect.top - 4, anchorTop: rect.top, responseIds: backRefMap.get(r.id)!, z: allocatePopupZ() });
+                            setBackRefPopup({ x: rect.left, y: rect.top - 4, anchorTop: rect.top, anchorBottom: rect.bottom, responseIds: backRefMap.get(r.id)!, z: allocatePopupZ() });
                           }}
                           onMouseEnter={(e) => {
                             if (isTouchMode()) return;
                             const rect = (e.target as HTMLElement).getBoundingClientRect();
-                            setBackRefPopup({ x: rect.left, y: rect.top - 4, anchorTop: rect.top, responseIds: backRefMap.get(r.id)! });
+                            setBackRefPopup({ x: rect.left, y: rect.top - 4, anchorTop: rect.top, anchorBottom: rect.bottom, responseIds: backRefMap.get(r.id)! });
                           }}
                         >
                           ▼{backRefMap.get(r.id)!.length}
@@ -11704,6 +11854,15 @@ export default function App() {
             <button onClick={() => { addNgEntry(ngInputType, ngInput); setNgInput(""); }}>追加</button>
             <button className={ngBulkOpen ? "active-toggle" : ""} onClick={() => setNgBulkOpen(v => !v)}>一括</button>
           </div>
+          <div className="ng-panel-options">
+            <label
+              className="ng-chain-setting"
+              title="非表示・あぼーんになったレスへ安価 (>>N) を打ったレスも、あぼーんにします。返信の返信にも波及します。>>1 への安価と範囲アンカー (>>1-100) は対象外です。"
+            >
+              <input type="checkbox" checked={ngChainReplies} onChange={(e) => setNgChainReplies(e.target.checked)} />
+              NGレスへの返信も連鎖あぼーん
+            </label>
+          </div>
           {ngBulkOpen && (
             <div className="ng-panel-bulk">
               <textarea
@@ -11761,6 +11920,7 @@ export default function App() {
                       const off = ngEntryDisabled(entry);
                       const exNo1 = ngEntryExcludeNo1(entry);
                       const isExact = ngEntryMatch(entry) === "exact";
+                      const chainId = ngEntryChainId(entry);
                       const addedAt = ngEntryAddedAt(entry);
                       const expiresAt = addedAt === null ? null : addedAt + ngIdExpireDays * NG_DAY_MS;
                       return (
@@ -11782,6 +11942,15 @@ export default function App() {
                             onClick={() => toggleNgEntryExcludeNo1(type, v)}
                             title={exNo1 ? ">>1を除外中 (クリックで解除)" : ">>1には適用しない (クリックで有効)"}
                           >{exNo1 ? ">>1除外ON" : ">>1除外OFF"}</button>
+                          {type === "words" && (
+                            <button
+                              className={`ng-toggle ng-chain-toggle ${chainId ? "ng-toggle-on" : "ng-toggle-off"}`}
+                              onClick={() => toggleNgEntryChainId(v)}
+                              title={chainId
+                                ? "ID連鎖中: このワードに一致したレスと同じ ID / ワッチョイのレスも同じスレ内で NG にします (クリックで解除)"
+                                : "一致したレスと同じ ID / ワッチョイのレスも同じスレ内で NG にする (クリックで有効)"}
+                            >{chainId ? "ID連鎖ON" : "ID連鎖OFF"}</button>
+                          )}
                           {isExact && <span className="ng-match-badge" title="完全一致 (本文NG)">完全</span>}
                           {type === "ids" && ngIdExpireDays > 0 && (
                             expiresAt === null
@@ -12317,12 +12486,10 @@ export default function App() {
       {anchorPopup && (() => {
         const popupResps = anchorPopup.responseIds.map((id) => responseItems.find((r) => r.id === id)).filter(Boolean) as typeof responseItems;
         if (popupResps.length === 0) return null;
-        const maxH = 300;
-        const spaceBelow = window.innerHeight - anchorPopup.y;
-        const flipUp = spaceBelow < maxH && anchorPopup.anchorTop > spaceBelow;
+        const { flipUp, maxHeight } = fitPopupVertically(anchorPopup.y, anchorPopup.anchorTop - 1, 300);
         const posStyle = flipUp
-          ? { left: anchorPopup.x, bottom: window.innerHeight - anchorPopup.anchorTop + 1 }
-          : { left: anchorPopup.x, top: anchorPopup.y };
+          ? { left: anchorPopup.x, bottom: window.innerHeight - anchorPopup.anchorTop + 1, maxHeight }
+          : { left: anchorPopup.x, top: anchorPopup.y, maxHeight };
         return (
           <div
             className="anchor-popup"
@@ -12363,11 +12530,18 @@ export default function App() {
       })()}
       {backRefPopup && (() => {
         const refs = backRefPopup.responseIds;
+        // 従来は常に ▼N の上に出していたが、▼N が画面上部にあると参照数ぶんの高さが上にはみ出して見えなかった。
+        const { flipUp: brFlipUp, maxHeight: brMaxHeight } = fitPopupVertically(backRefPopup.anchorBottom + 1, backRefPopup.y, 360);
+        const brWidth = Math.min(680, window.innerWidth - 24);
+        const brLeft = Math.max(8, Math.min(backRefPopup.x, window.innerWidth - brWidth - 8));
+        const brPosStyle = brFlipUp
+          ? { left: brLeft, bottom: window.innerHeight - backRefPopup.y, maxHeight: brMaxHeight }
+          : { left: brLeft, top: backRefPopup.anchorBottom + 1, maxHeight: brMaxHeight };
         return (
           <div
             className="anchor-popup back-ref-popup"
             data-popup-z={backRefPopup.z ?? 0}
-            style={{ left: backRefPopup.x, bottom: window.innerHeight - backRefPopup.y, zIndex: backRefPopup.z, '--fs-delta': `${responsesFontSize - 12}px` } as React.CSSProperties}
+            style={{ ...brPosStyle, zIndex: backRefPopup.z, '--fs-delta': `${responsesFontSize - 12}px` } as unknown as React.CSSProperties}
             onMouseEnter={() => {
               if (isTouchMode()) return;
               if (anchorPopupCloseTimer.current) {
@@ -12404,14 +12578,12 @@ export default function App() {
       {nestedPopups.map((np, i) => {
         const nestedResps = np.responseIds.map((id) => responseItems.find((r) => r.id === id)).filter(Boolean) as typeof responseItems;
         if (nestedResps.length === 0) return null;
-        const nMaxH = 300;
-        const nSpaceBelow = window.innerHeight - np.y;
-        const nFlipUp = nSpaceBelow < nMaxH && np.anchorTop > nSpaceBelow;
+        const { flipUp: nFlipUp, maxHeight: nMaxHeight } = fitPopupVertically(np.y + i * 8, np.anchorTop - 1 - i * 8, 300);
         const nPopupWidth = Math.min(620, window.innerWidth - 24);
         const nLeft = Math.max(8, Math.min(np.x + i * 8, window.innerWidth - nPopupWidth - 8));
         const nPosStyle = nFlipUp
-          ? { left: nLeft, bottom: window.innerHeight - np.anchorTop + 1 + i * 8 }
-          : { left: nLeft, top: np.y + i * 8 };
+          ? { left: nLeft, bottom: window.innerHeight - np.anchorTop + 1 + i * 8, maxHeight: nMaxHeight }
+          : { left: nLeft, top: np.y + i * 8, maxHeight: nMaxHeight };
         return (
           <div
             key={`${np.responseIds[0]}-${i}`}
@@ -12454,12 +12626,10 @@ export default function App() {
       })}
       {idPopup && (() => {
         const idResponses = responseItems.filter((r) => extractId(r.time) === idPopup.id);
-        const idMaxH = 360;
-        const idSpaceBelow = window.innerHeight - idPopup.y;
-        const idFlipUp = idSpaceBelow < idMaxH && idPopup.anchorTop > idSpaceBelow;
+        const { flipUp: idFlipUp, maxHeight: idMaxHeight } = fitPopupVertically(idPopup.y, idPopup.anchorTop - 2, 360);
         const idPosStyle = idFlipUp
-          ? { right: idPopup.right, bottom: window.innerHeight - idPopup.anchorTop + 2 }
-          : { right: idPopup.right, top: idPopup.y };
+          ? { right: idPopup.right, bottom: window.innerHeight - idPopup.anchorTop + 2, maxHeight: idMaxHeight }
+          : { right: idPopup.right, top: idPopup.y, maxHeight: idMaxHeight };
         return (
           <div
             className="id-popup"
