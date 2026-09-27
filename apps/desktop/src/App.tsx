@@ -58,6 +58,9 @@ type AiModelEntry = {
   promptTemplate: string;
   languages: string[];
   recommendedFor: string[];
+  // kind を持たないエントリはチャット用 (判定器を足す前のカタログとの互換)。
+  kind?: "chat" | "classifier";
+  classifierLabels?: string[];
 };
 type AiCatalog = { version: number; models: AiModelEntry[] };
 type AiInstalled = {
@@ -217,6 +220,8 @@ function aiOpenAssistantTurn(template: string): string {
 //   - Compose translation: user picks the target so they can post in a foreign
 //     language; the source is their Japanese draft.
 const TRANSLATION_MODEL_ID = "hy-mt2-1.8b-q4km";
+// 曖昧 NG (AI ルール) の判定器。チャット用モデルとは別枠で導入・削除する。
+const NG_CLASSIFIER_MODEL_ID = "bge-m3-zeroshot-v2-q4km";
 type TranslationLang = { code: string; label: string; nativeName: string };
 const RESPONSE_TRANSLATION_LANG: TranslationLang = { code: "ja", label: "日本語", nativeName: "Japanese" };
 const COMPOSE_TRANSLATION_LANGS: TranslationLang[] = [
@@ -346,12 +351,80 @@ type FavoriteBoard = { boardName: string; url: string };
 type FavoriteThread = { threadUrl: string; title: string; boardUrl: string };
 type RecentThread = FavoriteThread & { updatedAt: number };
 type FavoritesData = { boards: FavoriteBoard[]; threads: FavoriteThread[] };
+// 自分が書き込んだレス 1 件。自分宛マーカーのために元々レス番号だけを持っていたが、
+// 書き込み履歴の一覧に使うので日時・スレタイ・本文も一緒に残す。
+// 以前は number[] だったので、読み込み時に normalizeMyPosts で揃える
+// (移行した分は at=0 / title="" / body="" になり、一覧では日時不明として末尾に並ぶ。
+//  本文は backfillMyPostBodies がスレキャッシュから埋め直す)。
+type MyPostEntry = { no: number; at: number; title: string; body: string };
+type MyPostsMap = Record<string, MyPostEntry[]>;
+// 保存する本文の上限。5ch の 1 レスに収まらない長さまでは要らないが、
+// 改行ごと残したいので行数ぶんの余裕は取る。
+const MY_POST_BODY_MAX_LEN = 2000;
+// 本文の埋め直しで 1 回に読むスレ数の上限。履歴が多いときに IPC が並ばないようにする。
+const MY_POST_BACKFILL_MAX_THREADS = 50;
+const normalizeMyPosts = (raw: unknown): MyPostsMap => {
+  const out: MyPostsMap = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [url, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(value)) continue;
+    const list: MyPostEntry[] = [];
+    for (const item of value) {
+      if (typeof item === "number") {
+        list.push({ no: item, at: 0, title: "", body: "" });
+        continue;
+      }
+      if (!item || typeof item !== "object") continue;
+      const o = item as Partial<MyPostEntry> & { bodyHead?: unknown };
+      if (typeof o.no !== "number") continue;
+      // bodyHead は本文を 120 文字に切っていた頃の名前。
+      const body = typeof o.body === "string" ? o.body : typeof o.bodyHead === "string" ? o.bodyHead : "";
+      list.push({
+        no: o.no,
+        at: typeof o.at === "number" ? o.at : 0,
+        title: typeof o.title === "string" ? o.title : "",
+        body,
+      });
+    }
+    if (list.length > 0) out[url] = list;
+  }
+  return out;
+};
 // NG の適用方法。hide = レスごと消す / hide-images = 画像だけ消す /
 // abone = レス番と枠は残して中身を「あぼーん」に置き換える (レス番が飛ばない)
 type NgMode = "hide" | "hide-images" | "abone";
 // chainId (ワードのみ): 一致したレスの ID / ワッチョイを持つレスも同じスレ内でまとめて NG にする
 type NgEntry = { value: string; mode: NgMode; disabled?: boolean; excludeNo1?: boolean; match?: "partial" | "exact"; addedAt?: number; chainId?: boolean };
 type NgFilters = { words: (string | NgEntry)[]; ids: (string | NgEntry)[]; names: (string | NgEntry)[]; thread_words: (string | NgEntry)[] };
+// 曖昧 NG (AI ルール)。predicates は「この書き込みは政治の話題である。」のような
+// 平叙文で、複数書くと AND (実測で複合 1 文より適合率が高い。docs/BRUSHUP_PLAN.md [N23])。
+type NgAiRule = { id: string; predicates: string[]; threshold: number; disabled?: boolean; addedAt: number };
+const NG_AI_MAX_PREDICATES = 3;
+const NG_AI_DEFAULT_THRESHOLD = 0.8;
+// 判定 1 件あたり述語ごとに 1 パス走るので、一度に投げる件数を抑えて中断できるようにする。
+// 10 件 × 述語 2 本で 1 往復およそ 1.2 秒。これくらい細かいと中止と進捗がすぐ効く。
+const NG_AI_JUDGE_CHUNK = 10;
+const normalizeNgAiRules = (raw: unknown): NgAiRule[] => {
+  if (!Array.isArray(raw)) return [];
+  const out: NgAiRule[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Partial<NgAiRule>;
+    const predicates = Array.isArray(o.predicates)
+      ? o.predicates.filter((p): p is string => typeof p === "string" && p.trim() !== "").slice(0, NG_AI_MAX_PREDICATES)
+      : [];
+    if (predicates.length === 0) continue;
+    const threshold = typeof o.threshold === "number" && o.threshold > 0 && o.threshold <= 1 ? o.threshold : NG_AI_DEFAULT_THRESHOLD;
+    out.push({
+      id: typeof o.id === "string" && o.id ? o.id : `r${Date.now()}${out.length}`,
+      predicates,
+      threshold,
+      disabled: o.disabled === true ? true : undefined,
+      addedAt: typeof o.addedAt === "number" ? o.addedAt : 0,
+    });
+  }
+  return out;
+};
 // 強調フィルタ (NGの逆): 指定ワード/ID/名前を強調表示
 // titleOff: スレ一覧のタイトルには適用しない (ワードのみ意味を持つ)
 // addedAt: 登録日時 (ms)。ID の自動削除に使う。導入前のエントリは持たない (= 対象外)
@@ -607,6 +680,13 @@ const DISMISSED_UPDATE_VERSION_KEY = "desktop.dismissedUpdateVersion.v1";
 const NG_ID_EXPIRE_DAYS_KEY = "desktop.ngIdExpireDays.v1";
 // NG になったレスへ安価を打ったレスも連鎖してあぼーんにする (既定オフ)
 const NG_CHAIN_REPLIES_KEY = "desktop.ngChainReplies.v1";
+// 曖昧 NG (AI ルール) の定義
+const NG_AI_RULES_KEY = "desktop.ngAiRules.v1";
+// 判定器が導入済みかを覚えておく。起動直後に Tauri へ問い合わせるまでの間タブが
+// 出たり消えたりしないように、前回の結果を同期的に読めるところへ置く。
+const NG_AI_READY_KEY = "desktop.ngAiReady.v1";
+// スレを開いたときに自動で判定するか (既定オフ。1000 レスで 2 分かかるので勝手に走らせない)
+const NG_AI_AUTO_KEY = "desktop.ngAiAuto.v1";
 // 強調 ID の自動削除日数 (NG ID と同じ選択肢・同じ判定)。
 const HL_ID_EXPIRE_DAYS_KEY = "desktop.hlIdExpireDays.v1";
 // UI 全体の表示倍率。WebView 自体のズームなので px 指定のままでも全部が拡大され、
@@ -657,6 +737,7 @@ const UI_JSON_FILES: Record<string, string> = {
   [RECENT_OPENED_THREADS_KEY]: "recent_opened_threads",
   [RECENT_POSTED_THREADS_KEY]: "recent_posted_threads",
   [THREAD_TABS_KEY]: "thread_tabs",
+  [NG_AI_RULES_KEY]: "ng_ai_rules",
 };
 // 旧バージョンの localStorage から data/*.json へ移し終えたかどうか。移行前は
 // ファイルが無くても localStorage を残すが、移行後にファイルが無ければ
@@ -774,8 +855,8 @@ type ResizeDragState =
   | { mode: "compose-dock"; startY: number; startHeightPx: number; maxHeightPx: number }
   | { mode: "col-resize"; colKey: string; startX: number; startWidth: number; reverse: boolean };
 type PaneLayoutMode = "classic" | "river";
-// ヘッダのドラッグで移動できるパネル (NGフィルタ / スレ一覧NGワード / 画像NG / レス分類)
-type DraggablePanelKey = "ng" | "threadNg" | "ngImage" | "threadCategory";
+// ヘッダのドラッグで移動できるパネル (NGフィルタ / スレ一覧NGワード / 画像NG / レス分類 / AIルール)
+type DraggablePanelKey = "ng" | "threadNg" | "ngImage" | "threadCategory" | "ngAi";
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 const upsertRecentThread = (list: RecentThread[], entry: RecentThread): RecentThread[] =>
@@ -1910,14 +1991,21 @@ export default function App() {
   const newThreadNameEditedRef = useRef(false);
   const [postHistory, setPostHistory] = useState<{ time: string; threadUrl: string; body: string; ok: boolean }[]>([]);
   const [postHistoryOpen, setPostHistoryOpen] = useState(false);
-  const [myPosts, setMyPosts] = useState<Record<string, number[]>>(() => {
-    try { const v = localStorage.getItem(MY_POSTS_KEY); if (v) return JSON.parse(v); } catch { /* ignore */ }
+  const [postHistoryQuery, setPostHistoryQuery] = useState("");
+  // 本文を全部出している履歴の行 (`<スレURL>#<レス番号>`)。既定は 2 行で畳む。
+  const [postHistoryExpanded, setPostHistoryExpanded] = useState<Set<string>>(new Set());
+  const [myPosts, setMyPosts] = useState<MyPostsMap>(() => {
+    try { const v = localStorage.getItem(MY_POSTS_KEY); if (v) return normalizeMyPosts(JSON.parse(v)); } catch { /* ignore */ }
     return {};
   });
-  const pendingMyPostRef = useRef<{ threadUrl: string; body: string; prevCount: number } | null>(null);
+  const pendingMyPostRef = useRef<{ threadUrl: string; title: string; body: string; prevCount: number } | null>(null);
+  // 書き込み履歴からレスを開いたときの飛び先。スレを開いてレスが載るのを待ってから飛ぶ。
+  const pendingResponseJumpRef = useRef<{ threadUrl: string; no: number } | null>(null);
+  // 同じスレ・同じレスを続けて開いても効くように、要求ごとにカウンタを進める。
+  const [responseJumpRequest, setResponseJumpRequest] = useState(0);
   // 巡回は setInterval のクロージャから走るので、myPosts を直接読むと書き込み直後の
   // スレを取りこぼす。ref に写して常に最新を見る。
-  const myPostsRef = useRef<Record<string, number[]>>({});
+  const myPostsRef = useRef<MyPostsMap>({});
   const [notifyConfig, setNotifyConfig] = useState<NotifyConfig>({
     enabled: false, webhookUrl: "", discordUserId: "", intervalMin: 10,
   });
@@ -2281,6 +2369,38 @@ export default function App() {
   const [ngInput, setNgInput] = useState("");
   const [ngInputType, setNgInputType] = useState<"words" | "ids" | "names">("words");
   const [ngPanelTab, setNgPanelTab] = useState<"ng" | "highlight">("ng");
+  // 曖昧 NG は「スレを判定して候補を見る」作業ビューを持つので、フィルタ一覧の
+  // タブではなく独立パネルにしてある (NG パネルからはボタンで開く)。
+  const [ngAiPanelOpen, setNgAiPanelOpen] = useState(false);
+  const [ngAiRules, setNgAiRules] = useState<NgAiRule[]>(() => {
+    try {
+      const v = localStorage.getItem(NG_AI_RULES_KEY);
+      if (v) return normalizeNgAiRules(JSON.parse(v));
+    } catch { /* ignore */ }
+    return [];
+  });
+  const [ngAiReady, setNgAiReady] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(NG_AI_READY_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [ngAiDraft, setNgAiDraft] = useState<string[]>(["", ""]);
+  const [ngAiHelpOpen, setNgAiHelpOpen] = useState(false);
+  const [ngAiAuto, setNgAiAuto] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(NG_AI_AUTO_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  // 曖昧 NG で畳んだレスのうち、ユーザーが手で開いたもの (スレを移ると忘れる)
+  const [ngAiRevealed, setNgAiRevealed] = useState<Set<number>>(new Set());
+  // 判定結果の候補。ルール ID -> (レス番号 -> 確率)。スレを移ると捨てる。
+  const [ngAiCandidates, setNgAiCandidates] = useState<Map<string, Map<number, number>>>(new Map());
+  const [ngAiJudging, setNgAiJudging] = useState<{ ruleId: string; done: number; total: number; index?: number; count?: number } | null>(null);
+  const ngAiCancelRef = useRef(false);
   const [highlightInput, setHighlightInput] = useState("");
   const [highlightInputType, setHighlightInputType] = useState<"words" | "ids" | "names">("words");
   const [highlightAddColor, setHighlightAddColor] = useState("yellow");
@@ -2382,7 +2502,9 @@ export default function App() {
   const [threadLastReadCount, setThreadLastReadCount] = useState<Record<number, number>>({});
   const [threadMenu, setThreadMenu] = useState<{ x: number; y: number; threadId: number } | null>(null);
   const threadMenuRef = useRef<HTMLDivElement>(null);
-  const [responseMenu, setResponseMenu] = useState<{ x: number; y: number; responseId: number } | null>(null);
+  // fromPopup: アンカー / 逆参照 / ID ポップアップのレス番号から開いたメニュー。
+  // その場合だけ「このレスへジャンプ」を出す (本文欄から開いたときは既に見えている)。
+  const [responseMenu, setResponseMenu] = useState<{ x: number; y: number; responseId: number; fromPopup?: boolean } | null>(null);
   const responseMenuRef = useRef<HTMLDivElement>(null);
   const [aaOverrides, setAaOverrides] = useState<Map<number, boolean>>(new Map());
   const [anchorPopup, setAnchorPopup] = useState<{ x: number; y: number; anchorTop: number; responseIds: number[]; z?: number } | null>(null);
@@ -2802,10 +2924,20 @@ export default function App() {
     }
     if (matched) {
       const myNo = matched.responseNo;
+      const entry: MyPostEntry = {
+        no: myNo,
+        at: Date.now(),
+        title: pending.title,
+        // 照合用の normalizedBody は空白を潰してあるので、履歴には書いたままを残す。
+        body: pending.body.trim().slice(0, MY_POST_BODY_MAX_LEN),
+      };
       setMyPosts((prev) => {
         const list = prev[pending.threadUrl] ?? [];
-        if (list.includes(myNo)) return prev;
-        const next = { ...prev, [pending.threadUrl]: [...list, myNo] };
+        // 同じレス番号が既にあるのは移行分 (日時・本文なし) の可能性があるので上書きする。
+        const next = {
+          ...prev,
+          [pending.threadUrl]: [...list.filter((e) => e.no !== myNo), entry],
+        };
         saveUiJson(MY_POSTS_KEY, JSON.stringify(next));
         return next;
       });
@@ -4691,7 +4823,7 @@ export default function App() {
         const postedTitle = threadTabs.find((t) => t.threadUrl === threadUrl.trim())?.title ?? threadUrl.trim();
         pushRecentPostedThread(threadUrl.trim(), postedTitle);
         const prevCount = tabCacheRef.current.get(threadUrl.trim())?.responses.length ?? 0;
-        pendingMyPostRef.current = { threadUrl: threadUrl.trim(), body: composeBody, prevCount };
+        pendingMyPostRef.current = { threadUrl: threadUrl.trim(), title: postedTitle, body: composeBody, prevCount };
         void fetchResponsesFromCurrent();
       }
     } catch (error) {
@@ -4854,7 +4986,7 @@ export default function App() {
         setUploadPanelOpen(false);
         setUploadResults([]);
         const prevCount = tabCacheRef.current.get(postTargetUrl)?.responses.length ?? 0;
-        pendingMyPostRef.current = { threadUrl: postTargetUrl, body: postedBody, prevCount };
+        pendingMyPostRef.current = { threadUrl: postTargetUrl, title: postedTitle, body: postedBody, prevCount };
         // Re-fetch responses via standard path to update thread list counts, cache, and timestamps
         await fetchResponsesFromCurrent(postTargetUrl);
         // Scroll to bottom to show the new post
@@ -5467,11 +5599,407 @@ export default function App() {
   })();
 
   const activeThreadUrl = activeTabIndex >= 0 && activeTabIndex < threadTabs.length ? threadTabs[activeTabIndex].threadUrl : threadUrl.trim();
+  // 曖昧 NG の判定ループは数十秒続くので、その途中で今どのスレを見ているかを知る必要が
+  // ある。state のクロージャは古い値を掴んだままなので ref で現在値を読む。
+  const activeThreadUrlRef = useRef(activeThreadUrl);
+  activeThreadUrlRef.current = activeThreadUrl;
   useEffect(() => {
     setNextThreadCandidates([]);
     setNextThreadSearched(false);
     setNextThreadSearching(false);
   }, [activeThreadUrl]);
+
+  useEffect(() => {
+    saveUiJson(NG_AI_RULES_KEY, JSON.stringify(ngAiRules));
+  }, [ngAiRules]);
+
+  // 判定器の導入状況は aiStatus から取る (DL・削除の直後に refreshAiStatus が走るので
+  // 自動で追従する)。結果は localStorage に残して、次回は aiStatus が届く前から
+  // メニューとボタンの有無が決まるようにする。
+  useEffect(() => {
+    if (!aiStatus) return;
+    const installed = aiStatus.installed.some((m) => m.id === NG_CLASSIFIER_MODEL_ID);
+    setNgAiReady(installed);
+    saveUiSetting(NG_AI_READY_KEY, String(installed));
+    // 消した判定器のパネルが開いたままにならないように畳む
+    if (!installed) setNgAiPanelOpen(false);
+  }, [aiStatus]);
+
+  // スレを移ったら候補は捨てる (レス番号はスレごとの意味しか持たない)
+  useEffect(() => {
+    setNgAiCandidates(new Map());
+  }, [activeThreadUrl]);
+
+  const ngAiRuleLabel = (rule: NgAiRule) => rule.predicates.join(" かつ ");
+
+  const addNgAiRule = () => {
+    const predicates = ngAiDraft.map((p) => p.trim()).filter((p) => p !== "");
+    if (predicates.length === 0) {
+      setStatus("述語を1つ以上入力してください");
+      return;
+    }
+    const rule: NgAiRule = {
+      id: `r${Date.now()}`,
+      predicates,
+      threshold: NG_AI_DEFAULT_THRESHOLD,
+      addedAt: Date.now(),
+    };
+    setNgAiRules((prev) => [...prev, rule]);
+    setNgAiDraft(["", ""]);
+    setStatus(`AIルールを追加: ${ngAiRuleLabel(rule)}`);
+  };
+
+  const updateNgAiRule = (id: string, patch: Partial<NgAiRule>) => {
+    setNgAiRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  };
+
+  const removeNgAiRule = (id: string) => {
+    setNgAiRules((prev) => prev.filter((r) => r.id !== id));
+    setNgAiCandidates((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+    // 判定キャッシュも捨てる。残しても他のルールとは混ざらないが、消したつもりの
+    // ものがディスクに残り続けるのは気持ちが悪い。
+    if (isTauriRuntime()) {
+      invoke("ai_forget_ng_rule", { ruleId: id }).catch((e) => console.warn("ai_forget_ng_rule failed", e));
+    }
+  };
+
+  /// 開いているスレを 1 本まるごと判定して候補を集める。
+  const judgeThreadWithNgAiRule = async (rule: NgAiRule, progress?: { index: number; count: number }) => {
+    if (!isTauriRuntime()) {
+      setStatus("判定はアプリ版でのみ動きます");
+      return;
+    }
+    const url = normalizeThreadUrl(activeThreadUrl);
+    if (!url) {
+      setStatus("スレを開いてから判定してください");
+      return;
+    }
+    const targets = responseItems.filter((r) => r.text.trim() !== "");
+    if (targets.length === 0) {
+      setStatus("判定するレスがありません");
+      return;
+    }
+    if (!progress) ngAiCancelRef.current = false;
+    const found = new Map<number, number>();
+
+    // 先に保存済みの判定をまとめて受け取って即反映する。開き直しただけなら
+    // ここで終わり (推論もモデル読み込みも走らない)。
+    try {
+      const cachedRows = await invoke<{ responseNo: number; prob: number }[]>("ai_load_ng_ai_results", {
+        threadUrl: url,
+        ruleId: rule.id,
+        predicates: rule.predicates,
+      });
+      for (const s of cachedRows) found.set(s.responseNo, s.prob);
+      if (found.size > 0 && normalizeThreadUrl(activeThreadUrlRef.current) === url) {
+        setNgAiCandidates((prev) => {
+          const next = new Map(prev);
+          next.set(rule.id, new Map(found));
+          return next;
+        });
+      }
+    } catch (error) {
+      console.warn("ai_load_ng_ai_results failed", error);
+    }
+
+    const pending = targets.filter((r) => !found.has(r.id));
+    if (pending.length === 0) {
+      const hits = [...found.values()].filter((p) => p >= rule.threshold).length;
+      setStatus(`判定済み (保存された結果を使用): ${hits}件が閾値${rule.threshold.toFixed(2)}以上`);
+      return;
+    }
+
+    setNgAiJudging({ ruleId: rule.id, done: 0, total: pending.length, ...progress });
+    try {
+      for (let i = 0; i < pending.length; i += NG_AI_JUDGE_CHUNK) {
+        if (ngAiCancelRef.current) {
+          setStatus(`判定を中止しました (${i}/${pending.length}件)`);
+          break;
+        }
+        const chunk = pending.slice(i, i + NG_AI_JUDGE_CHUNK);
+        const scores = await invoke<{ responseNo: number; prob: number; cached: boolean }[]>("ai_classify_responses", {
+          threadUrl: url,
+          ruleId: rule.id,
+          predicates: rule.predicates,
+          // 本文は表示用の整形前のものを渡す。安価やURLは残っていて構わない。
+          responses: chunk.map((r) => ({ responseNo: r.id, body: r.text })),
+        });
+        // 待っている間に別のスレへ移っていたら、ここで止める。レス番号だけで
+        // 突き合わせているので、前のスレのスコアを今のスレに反映すると
+        // 無関係なレスが隠れてしまう。反映する前に確認する。
+        if (normalizeThreadUrl(activeThreadUrlRef.current) !== url) {
+          ngAiCancelRef.current = true;
+          setStatus(`スレを移ったので判定を中止しました (${Math.min(i + chunk.length, pending.length)}/${pending.length}件)`);
+          break;
+        }
+        for (const s of scores) found.set(s.responseNo, s.prob);
+        setNgAiJudging({ ruleId: rule.id, done: Math.min(i + chunk.length, pending.length), total: pending.length, ...progress });
+        setNgAiCandidates((prev) => {
+          const next = new Map(prev);
+          next.set(rule.id, new Map(found));
+          return next;
+        });
+      }
+      if (!ngAiCancelRef.current) {
+        const hits = [...found.values()].filter((p) => p >= rule.threshold).length;
+        setStatus(`判定完了: ${targets.length}件中 ${hits}件が閾値${rule.threshold.toFixed(2)}以上 (今回の判定 ${pending.length}件)`);
+      }
+    } catch (error) {
+      const msg = String(error);
+      setStatus(msg.includes("busy") ? "AIが他の処理中です。終わってから判定してください" : `判定エラー: ${msg}`);
+    } finally {
+      setNgAiJudging(null);
+    }
+  };
+
+  const cancelNgAiJudge = () => {
+    ngAiCancelRef.current = true;
+    if (isTauriRuntime()) {
+      invoke("ai_cancel_classify").catch((e) => console.warn("ai_cancel_classify failed", e));
+    }
+  };
+
+  // 有効なルールを順に回す。ナビバーのボタンと自動判定の入口。
+  const judgeThreadWithAllNgAiRules = async () => {
+    const rules = ngAiRules.filter((r) => !r.disabled);
+    if (rules.length === 0) {
+      setStatus("有効なAIルールがありません");
+      return;
+    }
+    for (let i = 0; i < rules.length; i += 1) {
+      if (ngAiCancelRef.current) break;
+      await judgeThreadWithNgAiRule(rules[i], { index: i + 1, count: rules.length });
+    }
+  };
+
+  // 自動判定。スレと有効ルールの組み合わせごとに 1 回だけ走らせる。判定結果は
+  // Rust 側でキャッシュされるので、開き直しても 2 回目は速い。
+  const ngAiAutoDoneRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!ngAiAuto || !ngAiReady || !isTauriRuntime()) return;
+    if (ngAiJudging) return;
+    const url = normalizeThreadUrl(activeThreadUrl);
+    if (!url) return;
+    const rules = ngAiRules.filter((r) => !r.disabled);
+    if (rules.length === 0) return;
+    // 本文が届く前に走らせても意味がない
+    if (responseItems.length === 0) return;
+    const key = `${url}|${responseItems.length}|${rules.map((r) => `${r.id}:${JSON.stringify(r.predicates)}`).join("|")}`;
+    if (ngAiAutoDoneRef.current.has(key)) return;
+    ngAiAutoDoneRef.current.add(key);
+    ngAiCancelRef.current = false;
+    void judgeThreadWithAllNgAiRules();
+  }, [ngAiAuto, ngAiReady, activeThreadUrl, responseItems.length, ngAiRules, ngAiJudging]);
+
+  useEffect(() => {
+    saveUiSetting(NG_AI_AUTO_KEY, String(ngAiAuto));
+  }, [ngAiAuto]);
+
+  // スレを移ったら「手で開いた」状態も忘れる
+  useEffect(() => {
+    setNgAiRevealed(new Set());
+  }, [activeThreadUrl]);
+
+  // 閾値以上で、かつ有効なルールに引っかかったレス。レス番号 -> 理由。
+  const ngAiHiddenMap = useMemo(() => {
+    const map = new Map<number, { ruleId: string; prob: number; label: string }>();
+    for (const rule of ngAiRules) {
+      if (rule.disabled) continue;
+      const scores = ngAiCandidates.get(rule.id);
+      if (!scores) continue;
+      for (const [no, prob] of scores) {
+        if (prob < rule.threshold) continue;
+        const prev = map.get(no);
+        // 複数ルールに当たったら確率の高い方を理由として見せる
+        if (!prev || prob > prev.prob) map.set(no, { ruleId: rule.id, prob, label: ngAiRuleLabel(rule) });
+      }
+    }
+    return map;
+  }, [ngAiCandidates, ngAiRules]);
+
+  const ngAiHiddenCount = useMemo(
+    () => [...ngAiHiddenMap.keys()].filter((no) => !ngAiRevealed.has(no)).length,
+    [ngAiHiddenMap, ngAiRevealed],
+  );
+
+
+  // --- 曖昧 NG: 例レスから述語の候補を作る -----------------------------------
+  // 生成だけでは使える述語かどうか分からない (実測: 読んだ印象が良い方が 0.00、
+  // 素朴な方が 0.75 だった)。候補は必ず実測値とセットで出して、ユーザーが選ぶ。
+  const NG_AI_GEN_INSTRUCTION = [
+    "掲示板の書き込みを隠すための「条件文」を作ります。",
+    "",
+    "仕組み: 条件文は 1 行ずつ独立に、1 件の書き込みに対して「当てはまるか / 当てはまらないか」を",
+    "判定されます。すべての行が当てはまった書き込みだけが隠されます。",
+    "だから 1 行にはひとつのことだけを書いてください。",
+    "",
+    "良い例 (2 行に分かれている):",
+    "話題: この書き込みは政治の話題である。",
+    "書き方: この書き込みは他人を罵倒している。",
+    "",
+    "悪い例 (1 行に 2 つ入っているので使えません):",
+    "この書き込みは政治の話題で他人を罵倒している。",
+    "",
+    "注意:",
+    "- 「感情的」「敵意がある」のような広すぎる言葉は、普通の書き込みまで当たるので避ける",
+    "- 話題の行には、扱われている話題そのものを短い言葉で入れる",
+    "- 書き方の行には、書き手の態度ややり方を入れる",
+    "- 伏字や記号ではなく、実際に判定に使える言葉で書く",
+    "- 1 行だけを出す。説明や前置きは書かない",
+  ].join("\n");
+  // 候補の当たり具合を見るために判定するスレのレス数。多いほど正確だが 1 件 60ms かかる。
+  const NG_AI_PREVIEW_SAMPLE = 60;
+
+  const [ngAiGenInput, setNgAiGenInput] = useState("");
+  const [ngAiGenBusy, setNgAiGenBusy] = useState<string | null>(null);
+  const [ngAiGenCandidates, setNgAiGenCandidates] = useState<
+    { slot: string; text: string; exampleHits: number; exampleTotal: number; sampleRate: number | null }[]
+  >([]);
+
+  const generateNgAiPredicates = async () => {
+    if (!isTauriRuntime()) {
+      setStatus("候補の生成はアプリ版でのみ動きます");
+      return;
+    }
+    if (!aiStatus?.activeModelId) {
+      setStatus("候補の生成にはチャット用モデルの有効化が必要です");
+      return;
+    }
+    const nos = ngAiGenInput
+      .split(/[^0-9]+/)
+      .map((v) => Number(v))
+      .filter((v) => Number.isFinite(v) && v > 0);
+    if (nos.length === 0) {
+      setStatus("例にするレス番号を入力してください (例: 12 34 56)");
+      return;
+    }
+    const byNo = new Map(responseItems.map((r) => [r.id, r]));
+    const examples = nos
+      .map((no) => byNo.get(no))
+      .filter((r): r is NonNullable<typeof r> => !!r && r.text.trim() !== "");
+    if (examples.length === 0) {
+      setStatus("指定されたレスがこのスレに見つかりません");
+      return;
+    }
+
+    const template = aiActiveTemplate();
+    const exampleText = examples
+      .map((r) => `例${r.id}: ${responseHtmlToPlainText(r.text).trim().slice(0, 200)}`)
+      .join("\n");
+    const content = `${NG_AI_GEN_INSTRUCTION}\n\n隠したい書き込みの例:\n${exampleText}\n`;
+
+    setNgAiGenCandidates([]);
+    const drafts: { slot: string; text: string }[] = [];
+    try {
+      for (const slot of ["話題", "書き方"]) {
+        setNgAiGenBusy(`${slot}の候補を生成中…`);
+        // 小さいモデルは指示を復唱して本題に入らないことがある。答えの書き出しを
+        // 先に置いて続きだけを書かせると、形も内容も安定する。
+        const prefill = "この書き込みは";
+        const prompt =
+          aiWrapTurn(template, "user", content) + aiOpenAssistantTurn(template) + `${slot}: ${prefill}`;
+        const raw = await invoke<string>("ai_complete_once", {
+          prompt,
+          maxTokens: 32,
+          backend: aiInferenceBackend,
+        });
+        const first = (raw.split("\n").find((l) => l.trim() !== "") ?? "").trim();
+        if (first) drafts.push({ slot, text: `${prefill}${first}` });
+      }
+    } catch (error) {
+      setStatus(`候補の生成に失敗しました: ${String(error)}`);
+      setNgAiGenBusy(null);
+      return;
+    }
+    if (drafts.length === 0) {
+      setStatus("候補を作れませんでした");
+      setNgAiGenBusy(null);
+      return;
+    }
+
+    // 候補ごとに「例レスを拾えるか」と「このスレのどれくらいに当たるか」を測る。
+    // ここが無いと、もっともらしいだけで 1 件も拾わない述語を選んでしまう。
+    setNgAiGenBusy("候補の当たり具合を確認中…");
+    const predicates = drafts.map((d) => d.text);
+    const step = Math.max(1, Math.floor(responseItems.length / NG_AI_PREVIEW_SAMPLE));
+    const sample = responseItems.filter((_, i) => i % step === 0).slice(0, NG_AI_PREVIEW_SAMPLE);
+    const bodies = [
+      ...examples.map((r) => responseHtmlToPlainText(r.text)),
+      ...sample.map((r) => responseHtmlToPlainText(r.text)),
+    ];
+    let scored: number[][] = [];
+    try {
+      scored = await invoke<number[][]>("ai_preview_predicates", {
+        predicates,
+        bodies,
+        backend: aiInferenceBackend,
+      });
+    } catch (error) {
+      console.warn("ai_preview_predicates failed", error);
+    }
+    setNgAiGenBusy(null);
+
+    setNgAiGenCandidates(
+      drafts.map((d, pi) => {
+        const col = scored.map((row) => row[pi] ?? 0);
+        const ex = col.slice(0, examples.length);
+        const sm = col.slice(examples.length);
+        return {
+          slot: d.slot,
+          text: d.text,
+          exampleHits: ex.filter((p) => p >= NG_AI_DEFAULT_THRESHOLD).length,
+          exampleTotal: examples.length,
+          sampleRate: sm.length > 0 ? sm.filter((p) => p >= NG_AI_DEFAULT_THRESHOLD).length / sm.length : null,
+        };
+      }),
+    );
+    setStatus(`候補を${drafts.length}件作りました`);
+  };
+
+  // 候補を述語の入力欄へ入れる。上書きではなく空いている欄から埋める。
+  const useNgAiCandidate = (text: string) => {
+    setNgAiDraft((prev) => {
+      const next = [...prev];
+      const empty = next.findIndex((v) => v.trim() === "");
+      if (empty >= 0) next[empty] = text;
+      else if (next.length < NG_AI_MAX_PREDICATES) next.push(text);
+      else next[next.length - 1] = text;
+      return next;
+    });
+    setStatus("述語欄に入れました。必要なら直してから追加してください");
+  };
+
+  const toggleNgAiRevealed = (no: number) => {
+    setNgAiRevealed((prev) => {
+      const next = new Set(prev);
+      if (next.has(no)) next.delete(no);
+      else next.add(no);
+      return next;
+    });
+  };
+
+  // 表示用。閾値以上のものを確率の高い順に並べる。
+  const ngAiCandidateRows = useMemo(() => {
+    const rows: { ruleId: string; responseNo: number; prob: number; text: string; id: string }[] = [];
+    const byNo = new Map(responseItems.map((r) => [r.id, r]));
+    for (const rule of ngAiRules) {
+      const scores = ngAiCandidates.get(rule.id);
+      if (!scores) continue;
+      for (const [no, prob] of scores) {
+        if (prob < rule.threshold) continue;
+        const resp = byNo.get(no);
+        const id = resp ? extractId(resp.time) : "";
+        rows.push({ ruleId: rule.id, responseNo: no, prob, text: resp?.text ?? "", id: id && id !== "???" ? id : "" });
+      }
+    }
+    rows.sort((a, b) => b.prob - a.prob);
+    return rows;
+  }, [ngAiCandidates, ngAiRules, responseItems]);
   useEffect(() => {
     if (!idPopup && !anchorPopup && !backRefPopup && nestedPopups.length === 0) {
       popupTopZRef.current = 610;
@@ -5564,7 +6092,7 @@ export default function App() {
         continue;
       }
       if (info.count <= seen) continue;
-      const myNos = new Set(myPostsNow[url] ?? []);
+      const myNos = new Set((myPostsNow[url] ?? []).map((e) => e.no));
       let responses: ThreadResponseItem[] = [];
       try {
         const result = await invoke<{ responses: ThreadResponseItem[]; title: string | null }>(
@@ -5705,7 +6233,7 @@ export default function App() {
     }
   };
 
-  const myPostNos = useMemo(() => new Set(myPosts[activeThreadUrl] ?? []), [myPosts, activeThreadUrl]);
+  const myPostNos = useMemo(() => new Set((myPosts[activeThreadUrl] ?? []).map((e) => e.no)), [myPosts, activeThreadUrl]);
   const replyToMeNos = useMemo(() => {
     if (myPostNos.size === 0) return new Set<number>();
     const set = new Set<number>();
@@ -5718,6 +6246,130 @@ export default function App() {
     }
     return set;
   }, [responseItems, myPostNos]);
+
+  // 書き込み履歴の行を押したときのジャンプ。openThreadInTab は読書位置を復元するので、
+  // 対象レスが実際に載ってから飛ばす (dat 落ち等で載らなければ何もしない)。
+  useEffect(() => {
+    const pending = pendingResponseJumpRef.current;
+    if (!pending) return;
+    if (normalizeThreadUrl(threadUrl) !== pending.threadUrl) return;
+    if (!responseItems.some((r) => r.id === pending.no)) return;
+    pendingResponseJumpRef.current = null;
+    selectResponseAndScroll(pending.no);
+    setStatus(`jumped to >>${pending.no}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [responseItems, threadUrl, responseJumpRequest]);
+
+  // 書き込み履歴 (自分のレス) の一覧。スレをまたいで新しい順に並べる。
+  const myPostRows = useMemo(() => {
+    // 移行分はスレタイを持たないので、他で覚えているタイトルで補う (URL 直出しを避ける)。
+    const titleByUrl = new Map<string, string>();
+    for (const t of [...recentPostedThreads, ...recentOpenedThreads, ...favorites.threads]) {
+      if (t.title && !titleByUrl.has(normalizeThreadUrl(t.threadUrl))) {
+        titleByUrl.set(normalizeThreadUrl(t.threadUrl), t.title);
+      }
+    }
+    const rows: (MyPostEntry & { threadUrl: string })[] = [];
+    for (const [url, list] of Object.entries(myPosts)) {
+      const fallback = titleByUrl.get(normalizeThreadUrl(url)) ?? "";
+      for (const e of list) rows.push({ ...e, title: e.title || fallback, threadUrl: url });
+    }
+    // 移行分 (at=0) は日時が分からないので末尾へ落とし、その中はレス番号の大きい順。
+    rows.sort((a, b) => (b.at - a.at) || (b.no - a.no));
+    return rows;
+  }, [myPosts, recentPostedThreads, recentOpenedThreads, favorites.threads]);
+
+  // 本文を持たない履歴 (旧形式からの移行分) を、SQLite のスレキャッシュから埋める。
+  // キャッシュに残っていないスレはどうしようもないので、1 セッション 1 回だけ試す。
+  const myPostBackfillTriedRef = useRef<Set<string>>(new Set());
+  const backfillMyPostBodies = async () => {
+    if (!isTauriRuntime()) return;
+    const targets = new Map<string, number[]>();
+    for (const [url, list] of Object.entries(myPostsRef.current)) {
+      if (myPostBackfillTriedRef.current.has(url)) continue;
+      const missing = list.filter((e) => e.body === "").map((e) => e.no);
+      if (missing.length === 0) continue;
+      targets.set(url, missing);
+      if (targets.size >= MY_POST_BACKFILL_MAX_THREADS) break;
+    }
+    if (targets.size === 0) return;
+    const filled = new Map<string, Map<number, string>>();
+    for (const [url, nos] of targets) {
+      myPostBackfillTriedRef.current.add(url);
+      let json: string | null = null;
+      try {
+        json = await invoke<string | null>("load_thread_cache", { threadUrl: url });
+      } catch (e) {
+        console.warn("my post backfill: load_thread_cache failed", e);
+        continue;
+      }
+      if (!json) continue;
+      try {
+        const rows = JSON.parse(json) as ThreadResponseItem[];
+        const byNo = new Map<number, string>();
+        for (const no of nos) {
+          const hit = rows.find((r) => r.responseNo === no);
+          if (!hit) continue;
+          const text = responseHtmlToPlainText(hit.body || "").trim().slice(0, MY_POST_BODY_MAX_LEN);
+          if (text !== "") byNo.set(no, text);
+        }
+        if (byNo.size > 0) filled.set(url, byNo);
+      } catch (e) {
+        console.warn("my post backfill: broken cache json", url, e);
+      }
+    }
+    if (filled.size === 0) return;
+    setMyPosts((prev) => {
+      const next: MyPostsMap = { ...prev };
+      let changed = false;
+      for (const [url, byNo] of filled) {
+        const list = next[url];
+        if (!list) continue;
+        next[url] = list.map((e) => {
+          const text = e.body === "" ? byNo.get(e.no) : undefined;
+          if (text === undefined) return e;
+          changed = true;
+          return { ...e, body: text };
+        });
+      }
+      if (!changed) return prev;
+      saveUiJson(MY_POSTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (!postHistoryOpen) return;
+    void backfillMyPostBodies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postHistoryOpen]);
+
+  const openMyPost = (row: { threadUrl: string; no: number; title: string }) => {
+    const url = normalizeThreadUrl(row.threadUrl);
+    pendingResponseJumpRef.current = { threadUrl: url, no: row.no };
+    setResponseJumpRequest((v) => v + 1);
+    openThreadInTab(url, row.title || url);
+    setPostHistoryOpen(false);
+    // dat 落ちや取得失敗でそのレスが載らないと飛び先が残り続け、後で同じスレを開いた
+    // ときに勝手に飛んでしまう。待つのはやめる期限を切る。
+    window.setTimeout(() => {
+      const p = pendingResponseJumpRef.current;
+      if (p && p.threadUrl === url && p.no === row.no) pendingResponseJumpRef.current = null;
+    }, 15000);
+  };
+
+  const removeMyPost = (threadUrl: string, no: number) => {
+    setMyPosts((prev) => {
+      const list = prev[threadUrl];
+      if (!list) return prev;
+      const kept = list.filter((e) => e.no !== no);
+      const next = { ...prev };
+      if (kept.length > 0) next[threadUrl] = kept;
+      else delete next[threadUrl];
+      saveUiJson(MY_POSTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
 
   const watchoiCountMap = (() => {
     const map = new Map<string, number>();
@@ -6137,15 +6789,7 @@ export default function App() {
       <div className="anchor-popup-header">
         <span
           className="response-viewer-no"
-          onClick={(e) => {
-            e.stopPropagation();
-            selectResponseAndScroll(resp.id);
-            setAnchorPopup(null);
-            setBackRefPopup(null);
-            setNestedPopups([]);
-            setIdPopup(null);
-            setStatus(`jumped to >>${resp.id}`);
-          }}
+          onClick={(e) => onResponseNoClick(e, resp.id, { fromPopup: true })}
         >
           {resp.id}
         </span>{" "}
@@ -6304,11 +6948,14 @@ export default function App() {
     hideThreadTitlePopup();
   };
 
-  const onResponseNoClick = (e: ReactMouseEvent, responseId: number) => {
+  const onResponseNoClick = (e: ReactMouseEvent, responseId: number, opts?: { fromPopup?: boolean }) => {
     e.stopPropagation();
+    // メニュー (z-index 50) はポップアップ (59〜) より下にいるので、ポップアップ越しに
+    // 開くと隠れてしまう。番号を押した時点で操作対象は決まっているので先に畳む。
+    if (opts?.fromPopup) closeAllPopups();
     setSelectedResponse(responseId);
     const p = clampMenuPosition(e.clientX, e.clientY, 240, 400);
-    setResponseMenu({ x: p.x, y: p.y, responseId });
+    setResponseMenu({ x: p.x, y: p.y, responseId, fromPopup: opts?.fromPopup });
     setThreadMenu(null);
   };
 
@@ -6586,7 +7233,7 @@ export default function App() {
   };
 
   const runResponseAction = async (
-    action: "quote" | "quote-with-name" | "copy-url" | "add-ng-id" | "copy-id" | "copy-body" | "copy-full" | "add-ng-name" | "add-ng-body" | "add-hl-id" | "add-hl-name" | "toggle-aa" | "settings"
+    action: "jump" | "quote" | "quote-with-name" | "copy-url" | "add-ng-id" | "copy-id" | "copy-body" | "copy-full" | "add-ng-name" | "add-ng-body" | "add-hl-id" | "add-hl-name" | "toggle-aa" | "settings"
   ) => {
     if (!responseMenu) return;
     const id = responseMenu.responseId;
@@ -6596,6 +7243,12 @@ export default function App() {
       return;
     }
 
+    if (action === "jump") {
+      selectResponseAndScroll(id);
+      setStatus(`jumped to >>${id}`);
+      setResponseMenu(null);
+      return;
+    }
     if (action === "quote") {
       appendComposeQuote(`>>${id}`);
       setStatus(`quoted response #${id}`);
@@ -9613,6 +10266,8 @@ export default function App() {
             { text: "sep" },
             { text: "NGフィルタ", action: () => setNgPanelOpen((v) => !v) },
             { text: "画像NG", action: () => setNgImagePanelOpen((v) => !v) },
+            // 判定器が入っていない環境では機能そのものを出さない
+            ...(ngAiReady ? [{ text: "AIルール (曖昧NG)", action: () => setNgAiPanelOpen((v) => !v) }] : []),
           ]},
           { label: "表示", items: [
             { text: `文字サイズ (${paneLabel(focusedPane)}): ${paneFontSize(focusedPane)[0]}px`, action: () => {} },
@@ -9660,6 +10315,8 @@ export default function App() {
             { text: "すべてのタブを閉じる", action: closeAllTabs },
           ]},
           { label: "ツール", items: [
+            { text: "書き込み履歴", action: () => { setPostHistoryQuery(""); setPostHistoryOpen(true); } },
+            { text: "sep" },
             { text: "認証状態", action: checkAuthEnv },
             { text: "認証テスト", action: probeAuth },
           ]},
@@ -10868,6 +11525,43 @@ export default function App() {
                 // あぼーん: レス番だけ残して名前・日時・ID・本文は出さない。
                 // レス番が飛ばないので「>>N が抜けている」と悩まずに済む。
                 // レス番クリックのメニュー (NG 追加や再表示) は通常レスと同じく使える。
+                // 曖昧 NG。通常の NG / あぼーんとは別扱いで、畳んだ 1 行に置き換える。
+                // ワンクリックで開けるので、消えたことに気付けないまま終わらない。
+                const aiHidden = ngAiHiddenMap.get(r.id);
+                if (aiHidden && !ngAiRevealed.has(r.id)) {
+                  return (
+                    <Fragment key={r.id}>
+                      {isFirstNew && (
+                        <div className="new-response-separator">
+                          <span>ここから新着</span>
+                        </div>
+                      )}
+                      <div
+                        data-response-no={r.id}
+                        className={`response-block ng-ai-hidden-block ${selectedResponse === r.id ? "selected" : ""}`}
+                        onClick={() => setSelectedResponse(r.id)}
+                      >
+                        <span className="response-no" onClick={(e) => onResponseNoClick(e, r.id)}>{r.id}</span>
+                        <span className="ng-ai-hidden-label" title={`${aiHidden.label} (P=${aiHidden.prob.toFixed(3)})`}>
+                          曖昧NGで非表示
+                        </span>
+                        <span className="ng-ai-hidden-reason">{aiHidden.label}</span>
+                        <button
+                          className="ng-ai-hidden-toggle"
+                          onClick={(e) => { e.stopPropagation(); toggleNgAiRevealed(r.id); }}
+                          title="このレスを表示する"
+                        >
+                          表示
+                        </button>
+                      </div>
+                      {r.id === currentReadMarker && (
+                        <div className="read-marker-separator">
+                          <span>ここまで読んだ</span>
+                        </div>
+                      )}
+                    </Fragment>
+                  );
+                }
                 if (ngResultMap.get(r.id) === "abone") {
                   return (
                     <Fragment key={r.id}>
@@ -10920,6 +11614,16 @@ export default function App() {
                       </span>
                       {myPostNos.has(r.id) && <span className="my-post-label">[自分]</span>}
                       {replyToMeNos.has(r.id) && <span className="reply-to-me-label">[自分宛]</span>}
+                      {/* 曖昧 NG に引っかかったが手で開いたレス。押すと畳み直せる */}
+                      {ngAiHiddenMap.has(r.id) && (
+                        <button
+                          className="ng-ai-revealed-label"
+                          title={`曖昧NGの対象 (${ngAiHiddenMap.get(r.id)?.label} / P=${ngAiHiddenMap.get(r.id)?.prob.toFixed(3)}) — 押すと畳みます`}
+                          onClick={(e) => { e.stopPropagation(); toggleNgAiRevealed(r.id); }}
+                        >
+                          曖昧NG / 隠す
+                        </button>
+                      )}
                       <span
                         className="response-name"
                         dangerouslySetInnerHTML={renderHighlightedPlainTextWithEntries(r.nameWithoutWatchoi, responseSearchQuery, hlNameEntries)}
@@ -11521,6 +12225,27 @@ export default function App() {
                 <button className={`link-filter-btn ${responseLinkFilter === "hot" ? "active" : ""}`} onClick={() => toggleResponseLinkFilter("hot")} title={`人気レス (被参照 ${hotResponseThreshold} 件以上)`}><Flame size={13} /></button>
               </span>
               <span className="nav-buttons">
+                {/* 曖昧 NG。自動判定が切れていても、ここから手で走らせられる。
+                    判定中は進捗が出て中止できる (操作は止まらない) */}
+                {ngAiReady && ngAiRules.some((r) => !r.disabled) && (
+                  ngAiJudging ? (
+                    <>
+                      <span className="nav-ng-ai-progress">
+                        曖昧NG {ngAiJudging.done}/{ngAiJudging.total}
+                        {ngAiJudging.count && ngAiJudging.count > 1 ? ` (${ngAiJudging.index}/${ngAiJudging.count})` : ""}
+                      </span>
+                      <button onClick={cancelNgAiJudge} title="判定を中止する">中止</button>
+                    </>
+                  ) : (
+                    <button
+                      className={ngAiHiddenCount > 0 ? "nav-ng-ai-btn active" : "nav-ng-ai-btn"}
+                      onClick={() => { ngAiCancelRef.current = false; void judgeThreadWithAllNgAiRules(); }}
+                      title="有効なAIルールでこのスレを判定する"
+                    >
+                      曖昧NG{ngAiHiddenCount > 0 ? ` (${ngAiHiddenCount})` : ""}
+                    </button>
+                  )
+                )}
                 <button onClick={() => { if (visibleResponseItems.length > 0) scrollResponsesToTop(visibleResponseItems[0].id); }}>Top</button>
                 {newResponseStart !== null && (
                   <button
@@ -11827,6 +12552,12 @@ export default function App() {
           <div className="ng-panel-tabs">
             <button className={ngPanelTab === "ng" ? "active-toggle" : ""} onClick={() => setNgPanelTab("ng")}>NG (非表示/あぼーん)</button>
             <button className={ngPanelTab === "highlight" ? "active-toggle" : ""} onClick={() => setNgPanelTab("highlight")}>ハイライト (強調)</button>
+            {/* 曖昧 NG は独立パネル。ここには「NG の話は NG パネルにある」で探す人向けの入口だけ置く */}
+            {ngAiReady && (
+              <button className={ngAiPanelOpen ? "active-toggle" : ""} onClick={() => setNgAiPanelOpen((v) => !v)} title="曖昧NG (AIルール) のパネルを開く">
+                AIルール
+              </button>
+            )}
           </div>
           {ngPanelTab === "ng" && (<>
           <div className="ng-panel-add">
@@ -12078,6 +12809,214 @@ export default function App() {
           </>)}
         </section>
       )}
+      {ngAiPanelOpen && (
+        <section className="ng-panel ng-ai-panel" role="dialog" aria-label="AIルール" style={panelPosStyle("ngAi")}>
+          <header className="ng-panel-header ng-panel-drag-header" onPointerDown={startPanelDrag("ngAi")}>
+            <strong>AIルール (曖昧NG)</strong>
+            <span className="ng-panel-count">
+              {ngAiRules.length}ルール{ngAiHiddenCount > 0 ? ` / ${ngAiHiddenCount}件を非表示` : ""}
+            </span>
+            <button onClick={() => setNgAiPanelOpen(false)}>閉じる</button>
+          </header>
+          <div className="ng-ai-note">
+            <div className="ng-ai-note-head">
+              <span>
+                自然文のルールでレスを判定します。<strong>条件が複数あるなら1行に詰めずに分けてください</strong>
+                (すべて満たしたレスだけが候補になります)。判定はこの端末の中だけで行われ、外部には送信されません。
+              </span>
+              <button className={ngAiHelpOpen ? "active-toggle" : ""} onClick={() => setNgAiHelpOpen((v) => !v)}>
+                書き方のコツ
+              </button>
+            </div>
+            {ngAiHelpOpen && (
+              <ul className="ng-ai-help">
+                <li>
+                  <strong>条件は分けて書く。</strong>
+                  「政治の話題で他人を罵倒している」と1文にするより、「この書き込みは政治の話題である。」と
+                  「この書き込みは他人を罵倒している。」に分けたほうが精度が上がります
+                  (同じ件数を隠す条件で、誤判定がおよそ半分になりました)。
+                </li>
+                <li>
+                  <strong>平叙文で、文末の「。」まで書く。</strong>
+                  「〜である。」「〜している。」の形が一番はっきり出ます。疑問文や命令形は避けてください。
+                  話題を指定するだけなら「政治の話題」のような短い書き方でも動きますが、
+                  <strong>動作や状態 (罵倒している・宣伝している) は主語つきの文</strong>にしてください。
+                  短く書いたり「。」を省くと判定が鈍ります (実測では拾える件数が2割ほど減りました)。
+                  鈍る方向なので、余計に消えるようにはなりません。
+                </li>
+                <li>
+                  <strong>全部を消す道具ではありません。</strong>
+                  しきい値0.8では「一番ひどいもの」から順に候補になります。実スレでの計測では、
+                  当てはまるレスのうち拾えたのは4分の1ほどでした。取りこぼしを減らしたいならしきい値を下げますが、
+                  誤って拾う率も上がります。
+                </li>
+                <li>
+                  <strong>誤って拾う分は残ります。</strong>
+                  しきい値0.8では、隠れたレス5件のうち1件ほどは本来当てはまらないものでした。
+                  あとから気付けるように、モードは「非表示」(復元可) のままにしておくのがおすすめです。
+                  ルールに当てはまらない話題のスレでは、1000レスあたり1〜2件しか発火しません。
+                </li>
+                <li>
+                  <strong>時間がかかります。</strong>
+                  レス1件あたり述語1つで約60ミリ秒。1000レスのスレを述語2つで判定すると2分ほどかかります。
+                  途中で中止できます。要約や翻訳を実行すると判定は中断して譲ります。
+                </li>
+              </ul>
+            )}
+          </div>
+          <div className="ng-ai-options">
+            <label title="スレを開いた直後に、有効なルールで自動的に判定します。1000レスで2分ほどかかります。">
+              <input type="checkbox" checked={ngAiAuto} onChange={(e) => setNgAiAuto(e.target.checked)} />
+              スレを開いたら自動で判定する
+            </label>
+            {!ngAiAuto && <span className="ng-ai-options-hint">切っている間は、レス欄下の「曖昧NG」ボタンで判定します</span>}
+          </div>
+          <div className="ng-ai-gen">
+            <div className="ng-ai-gen-head">
+              <span>例にするレス番号</span>
+              <input
+                value={ngAiGenInput}
+                onChange={(e) => setNgAiGenInput(e.target.value)}
+                placeholder="12 34 56"
+                title="「こういうレスを隠したい」という例のレス番号。開いているスレから探します"
+              />
+              <button onClick={() => void generateNgAiPredicates()} disabled={ngAiGenBusy !== null}>
+                候補を作る
+              </button>
+            </div>
+            {ngAiGenBusy && <div className="ng-ai-gen-busy">{ngAiGenBusy}</div>}
+            {ngAiGenCandidates.length > 0 && (
+              <ul className="ng-ai-gen-list">
+                {ngAiGenCandidates.map((c, i) => (
+                  <li key={i}>
+                    <div className="ng-ai-gen-text">
+                      <span className="ng-ai-gen-slot">{c.slot}</span>
+                      {c.text}
+                    </div>
+                    <div className="ng-ai-gen-stats">
+                      <span title="指定した例レスのうち、この述語が拾えた数">
+                        例 {c.exampleHits}/{c.exampleTotal}
+                      </span>
+                      {c.sampleRate !== null && (
+                        <span title="このスレから等間隔に抜き出したレスのうち、この述語に当たった割合">
+                          このスレ 約{Math.round(c.sampleRate * 100)}%
+                        </span>
+                      )}
+                      <button onClick={() => useNgAiCandidate(c.text)}>使う</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {ngAiGenCandidates.length > 0 && (
+              <div className="ng-ai-gen-hint">
+                例を拾えていない候補や、このスレの大半に当たる候補は使わないでください。
+                文面だけでは良し悪しが分からないので、数字で選んでください。
+              </div>
+            )}
+          </div>
+          <div className="ng-ai-add">
+            {ngAiDraft.map((v, i) => (
+              <input
+                key={i}
+                value={v}
+                onChange={(e) => setNgAiDraft((prev) => prev.map((p, j) => (j === i ? e.target.value : p)))}
+                placeholder={i === 0 ? "例: この書き込みは政治の話題である。" : "例: この書き込みは他人を罵倒している。"}
+              />
+            ))}
+            <div className="ng-ai-add-actions">
+              {ngAiDraft.length < NG_AI_MAX_PREDICATES && (
+                <button onClick={() => setNgAiDraft((prev) => [...prev, ""])}>述語を追加</button>
+              )}
+              {ngAiDraft.length > 1 && (
+                <button onClick={() => setNgAiDraft((prev) => prev.slice(0, -1))}>最後を削除</button>
+              )}
+              <button onClick={addNgAiRule}>ルールを追加</button>
+            </div>
+          </div>
+          <div className="ng-ai-rules">
+            {ngAiRules.length === 0 && <div className="ng-ai-empty">まだAIルールがありません</div>}
+            {ngAiRules.map((rule) => {
+              const judging = ngAiJudging?.ruleId === rule.id ? ngAiJudging : null;
+              const scores = ngAiCandidates.get(rule.id);
+              const hits = scores ? [...scores.values()].filter((p) => p >= rule.threshold).length : null;
+              return (
+                <div key={rule.id} className={`ng-ai-rule${rule.disabled ? " disabled" : ""}`}>
+                  <div className="ng-ai-rule-head">
+                    <label className="ng-ai-enable" title="このルールを使う">
+                      <input
+                        type="checkbox"
+                        checked={!rule.disabled}
+                        onChange={(e) => updateNgAiRule(rule.id, { disabled: e.target.checked ? undefined : true })}
+                      />
+                    </label>
+                    <span className="ng-ai-rule-text">{ngAiRuleLabel(rule)}</span>
+                    <button className="ng-ai-remove" onClick={() => removeNgAiRule(rule.id)} title="このルールを削除">×</button>
+                  </div>
+                  <div className="ng-ai-rule-controls">
+                    <label title="この確率以上を候補にします。0.8 で1000レスあたり6件ほど誤って拾う程度です。">
+                      閾値
+                      <input
+                        type="number"
+                        min={0.5}
+                        max={0.99}
+                        step={0.05}
+                        value={rule.threshold}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          if (Number.isFinite(v) && v > 0 && v <= 1) updateNgAiRule(rule.id, { threshold: v });
+                        }}
+                      />
+                    </label>
+                    {judging ? (
+                      <>
+                        <span className="ng-ai-progress">判定中 {judging.done}/{judging.total}</span>
+                        <button onClick={cancelNgAiJudge}>中止</button>
+                      </>
+                    ) : (
+                      <button onClick={() => void judgeThreadWithNgAiRule(rule)} disabled={ngAiJudging !== null}>
+                        このスレを判定
+                      </button>
+                    )}
+                    {hits !== null && !judging && <span className="ng-ai-hits">候補 {hits}件</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {ngAiCandidateRows.length > 0 && (
+            <div className="ng-ai-candidates">
+              <div className="ng-ai-candidates-head">候補 {ngAiCandidateRows.length}件 (クリックでそのレスへ移動)</div>
+              <ul>
+                {ngAiCandidateRows.map((row) => (
+                  <li key={`${row.ruleId}#${row.responseNo}`}>
+                    <button
+                      className="ng-ai-candidate"
+                      onClick={() => {
+                        selectResponseAndScroll(row.responseNo);
+                        setStatus(`>>${row.responseNo} へ移動 (P=${row.prob.toFixed(3)})`);
+                      }}
+                    >
+                      <span className="ng-ai-prob">{row.prob.toFixed(3)}</span>
+                      <span className="ng-ai-no">&gt;&gt;{row.responseNo}</span>
+                      <span className="ng-ai-body">{row.text.replace(/<[^>]*>/g, " ").slice(0, 90)}</span>
+                    </button>
+                    {row.id && (
+                      <button
+                        className="ng-ai-add-id"
+                        title={`このレスのID (${row.id}) を通常のNGに追加する`}
+                        onClick={() => addNgEntry("ids", row.id)}
+                      >
+                        IDをNG
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
       {ogpDomainPanelOpen && (
         <section className="ng-panel ogp-domain-panel" role="dialog" aria-label="OGP通信先ドメイン">
           <header className="ng-panel-header">
@@ -12249,6 +13188,9 @@ export default function App() {
       )}
       {responseMenu && (
         <div ref={responseMenuRef} className="thread-menu response-menu" style={{ left: responseMenu.x, top: responseMenu.y }} onClick={(e) => e.stopPropagation()}>
+          {responseMenu.fromPopup && (
+            <button onClick={() => void runResponseAction("jump")}>このレスへジャンプ</button>
+          )}
           <button onClick={() => void runResponseAction("quote")}>ここにレス</button>
           <button onClick={() => void runResponseAction("quote-with-name")}>名前付き引用</button>
           {currentReadMarker === responseMenu.responseId ? (
@@ -12707,7 +13649,10 @@ export default function App() {
                   className="id-popup-item"
                   onClick={() => { selectResponseAndScroll(r.id); setIdPopup(null); }}
                 >
-                  <span className="response-viewer-no">{r.id}</span>
+                  <span
+                    className="response-viewer-no"
+                    onClick={(e) => onResponseNoClick(e, r.id, { fromPopup: true })}
+                  >{r.id}</span>
                   {replyCount > 0 && (
                     <span className="id-popup-reply-count" title={`${replyCount}件のレスがついています`}>▼{replyCount}</span>
                   )}
@@ -13202,6 +14147,13 @@ export default function App() {
                   <span>書き込みログ</span>
                   <button type="button" onClick={openKakikomiLog}>書き込みログを開く</button>
                 </label>
+                <label className="settings-row">
+                  <span>書き込み履歴 ({myPostRows.length}件)</span>
+                  <button
+                    type="button"
+                    onClick={() => { setSettingsOpen(false); setPostHistoryQuery(""); setPostHistoryOpen(true); }}
+                  >自分のレス一覧を開く</button>
+                </label>
               </fieldset>
               <fieldset>
                 <legend>5chプレミアム Ronin/BE</legend>
@@ -13625,13 +14577,77 @@ export default function App() {
                 })()}
               </fieldset>
               <fieldset>
+                <legend>曖昧NG (AIルール)</legend>
+                {(() => {
+                  const installed = !!aiStatus?.installed.some((m) => m.id === NG_CLASSIFIER_MODEL_ID);
+                  const clsEntry = aiCatalog?.models.find((m) => m.id === NG_CLASSIFIER_MODEL_ID);
+                  const clsProgress = aiDownloads[NG_CLASSIFIER_MODEL_ID];
+                  const clsDownloading = !!clsProgress;
+                  const clsPct = clsProgress && clsProgress.total
+                    ? Math.min(100, (clsProgress.downloaded / clsProgress.total) * 100)
+                    : 0;
+                  const clsVerifying = !!(clsProgress && clsProgress.total && clsProgress.downloaded >= clsProgress.total);
+                  return (
+                    <>
+                      <div className="settings-row">
+                        <span>
+                          {installed
+                            ? "利用できます。編集メニューの「AIルール (曖昧NG)」から開きます"
+                            : "「政治の話題で他人を罵倒している」のような自然文のルールでレスを判定します"}
+                        </span>
+                      </div>
+                      {clsDownloading && (
+                        <div className={`ai-download-progress${clsVerifying ? " verifying" : ""}`}>
+                          <div className="ai-download-progress-bar" style={{ width: `${clsVerifying ? 100 : clsPct}%` }} />
+                          <span className="ai-download-progress-label">
+                            {clsVerifying
+                              ? `検証中… (${formatAiBytes(clsProgress.total ?? clsProgress.downloaded)})`
+                              : `${formatAiBytes(clsProgress.downloaded)}${clsProgress.total ? ` / ${formatAiBytes(clsProgress.total)}` : ""}`}
+                          </span>
+                        </div>
+                      )}
+                      <div className="ai-model-actions">
+                        {!installed && !clsDownloading && clsEntry && (
+                          <button onClick={() => void aiDownloadModel(NG_CLASSIFIER_MODEL_ID)}>
+                            判定器をダウンロード ({formatAiBytes(clsEntry.sizeBytes)})
+                          </button>
+                        )}
+                        {!installed && !clsDownloading && !clsEntry && (
+                          <button disabled>カタログ読み込み中…</button>
+                        )}
+                        {clsDownloading && !clsVerifying && (
+                          <button onClick={() => void aiCancelDownload(NG_CLASSIFIER_MODEL_ID)}>キャンセル</button>
+                        )}
+                        {clsDownloading && clsVerifying && (
+                          <button disabled title="ダウンロード完了後の SHA256 検証中。キャンセルできません。">検証中…</button>
+                        )}
+                        {installed && !clsDownloading && (
+                          <>
+                            {/* AI 設定はモーダル (lightbox) なので、開いたままだと AI ルールパネルが触れない */}
+                            <button onClick={() => { setNgAiPanelOpen(true); setAiSettingsOpen(false); }}>AIルールを開く</button>
+                            <button onClick={() => void aiDeleteModel(NG_CLASSIFIER_MODEL_ID)}>削除</button>
+                          </>
+                        )}
+                      </div>
+                      <div className="settings-row">
+                        <span className="settings-hint">
+                          ※ 判定には bge-m3-zeroshot-v2.0 (0.42 GB) を使用。文章生成はしないので要約・翻訳・会話には使われません。
+                          判定はこの端末の中だけで行われ、外部には送信されません。
+                          消えたレスに気付けるよう、既定は「非表示」(復元可) で、しきい値は 0.8 です
+                        </span>
+                      </div>
+                    </>
+                  );
+                })()}
+              </fieldset>
+              <fieldset>
                 <legend>利用可能なモデル</legend>
                 <div className="ai-models-list">
                   {!aiCatalog && <div className="ai-loading">読み込み中...</div>}
                   {aiCatalog && aiCatalog.models.length === 0 && (
                     <div className="ai-loading">利用可能なモデルがありません</div>
                   )}
-                  {aiCatalog?.models.filter((m) => m.id !== TRANSLATION_MODEL_ID).map((m) => {
+                  {aiCatalog?.models.filter((m) => m.id !== TRANSLATION_MODEL_ID && m.kind !== "classifier").map((m) => {
                     const installed = aiStatus?.installed.find((i) => i.id === m.id);
                     const active = aiStatus?.activeModelId === m.id;
                     const progress = aiDownloads[m.id];
@@ -13808,20 +14824,89 @@ export default function App() {
         <div className="lightbox-overlay" onClick={() => setPostHistoryOpen(false)}>
           <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
             <header className="settings-header">
-              <strong>書き込み履歴 ({postHistory.length}件)</strong>
+              <strong>書き込み履歴 ({myPostRows.length}件)</strong>
               <button onClick={() => setPostHistoryOpen(false)}>閉じる</button>
             </header>
             <div className="post-history-body">
-              {postHistory.length === 0 ? (
-                <p style={{ padding: "8px", color: "var(--sub)" }}>まだ書き込みがありません</p>
-              ) : (
-                postHistory.map((h, i) => (
-                  <div key={i} className={`post-history-item ${h.ok ? "post-ok" : "post-ng"}`}>
-                    <span className="post-history-time">{h.time}</span>
-                    <span className={`post-history-status ${h.ok ? "" : "post-ng-status"}`}>{h.ok ? "OK" : "NG"}</span>
-                    <span className="post-history-body">{h.body}</span>
-                  </div>
-                ))
+              <div className="post-history-search">
+                <input
+                  type="text"
+                  value={postHistoryQuery}
+                  placeholder="スレタイ・本文で絞り込み"
+                  onChange={(e) => setPostHistoryQuery(e.target.value)}
+                />
+                {postHistoryQuery !== "" && (
+                  <button type="button" onClick={() => setPostHistoryQuery("")}>×</button>
+                )}
+              </div>
+              {(() => {
+                const q = postHistoryQuery.trim().toLowerCase();
+                const rows = q === ""
+                  ? myPostRows
+                  : myPostRows.filter((r) => r.title.toLowerCase().includes(q) || r.body.toLowerCase().includes(q));
+                if (myPostRows.length === 0) {
+                  return <p style={{ padding: "8px", color: "var(--sub)" }}>まだ書き込みがありません</p>;
+                }
+                if (rows.length === 0) {
+                  return <p style={{ padding: "8px", color: "var(--sub)" }}>一致する書き込みがありません</p>;
+                }
+                return rows.map((r) => {
+                  const rowKey = `${r.threadUrl}#${r.no}`;
+                  const expanded = postHistoryExpanded.has(rowKey);
+                  // 畳んだ状態は 2 行までなので、それに収まらなさそうなものだけトグルを出す。
+                  const foldable = r.body.includes("\n") || r.body.length > 80;
+                  return (
+                    <div
+                      key={rowKey}
+                      className="post-history-item my-post-item"
+                      title={`${r.threadUrl} の >>${r.no} を開く`}
+                      onClick={() => openMyPost(r)}
+                    >
+                      <div className="my-post-line">
+                        <span className="post-history-time">{r.at > 0 ? formatSince(r.at) : "日時不明"}</span>
+                        <span className="response-viewer-no">{`>>${r.no}`}</span>
+                        <span className="my-post-title">{r.title || r.threadUrl}</span>
+                        <button
+                          type="button"
+                          className="my-post-remove"
+                          title="この履歴を削除 (このレスの自分宛マーカーも消えます)"
+                          onClick={(e) => { e.stopPropagation(); removeMyPost(r.threadUrl, r.no); }}
+                        >×</button>
+                      </div>
+                      {r.body === "" ? (
+                        <div className="my-post-body my-post-body-missing">本文の記録がありません (このスレのログが残っていません)</div>
+                      ) : (
+                        <div className={`my-post-body${expanded ? " expanded" : ""}`}>{r.body}</div>
+                      )}
+                      {r.body !== "" && foldable && (
+                        <button
+                          type="button"
+                          className="my-post-more"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPostHistoryExpanded((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(rowKey)) next.delete(rowKey); else next.add(rowKey);
+                              return next;
+                            });
+                          }}
+                        >{expanded ? "畳む" : "全文"}</button>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+              {postHistory.length > 0 && (
+                <>
+                  <div className="my-post-section">今回の送信結果 ({postHistory.length}件)</div>
+                  {postHistory.map((h, i) => (
+                    <div key={i} className={`post-history-item ${h.ok ? "post-ok" : "post-ng"}`}>
+                      <span className="post-history-time">{h.time}</span>
+                      <span className={`post-history-status ${h.ok ? "" : "post-ng-status"}`}>{h.ok ? "OK" : "NG"}</span>
+                      <span className="post-history-body">{h.body}</span>
+                    </div>
+                  ))}
+                </>
               )}
             </div>
           </div>

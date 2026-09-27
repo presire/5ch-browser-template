@@ -1463,13 +1463,16 @@ li.fav-drag-over {
 /* NGパネルのタブバー */
 .ng-panel-tabs {
   display: flex;
+  /* 文字サイズを上げた時はラベルを割るのではなく、タブごと次の行に落とす */
+  flex-wrap: wrap;
   gap: 6px;
   padding: 6px 8px 0;
 }
 .ng-panel-tabs button {
-  flex: 1;
+  flex: 1 1 auto;
   padding: 5px 8px;
   font-size: calc(12px + var(--fs-delta, 0px));
+  white-space: nowrap;
 }
 
 /* ハイライト色セレクト — 選択中の色で背景を着色して一目で分かるように */
@@ -2603,7 +2606,10 @@ button.search-history-btn:hover {
   position: fixed;
   left: 20px;
   bottom: 28px;
-  width: min(420px, calc(100vw - 28px));
+  /* タブが 3 つ (NG / ハイライト / AIルール) 並ぶので、一番長い
+     「NG (非表示/あぼーん)」がラベル途中で折り返さない幅を確保する。
+     タブの文字は --fs-delta で大きくなるため余裕を持たせてある。 */
+  width: min(560px, calc(100vw - 28px));
   max-height: 400px;
   border: 1px solid var(--line);
   background: #f5f5f5;
@@ -4027,6 +4033,8 @@ a.body-link-image:hover::after {
 .settings-row > .settings-hint {
   flex: 1 1 0;
   min-width: 0;
+  /* 数行に渡る注釈もあるので、折り返した行がくっつかないようにする */
+  line-height: 1.5;
 }
 .settings-row select {
   padding: 2px 4px;
@@ -4092,6 +4100,90 @@ a.body-link-image:hover::after {
 }
 .dark .post-history-item {
   border-color: #3c3c3c;
+}
+
+/* 書き込み履歴 (自分のレス一覧)。.post-history-item は 1 行の flex なので、
+   2 行構成のこちらは縦積みに上書きする。 */
+.post-history-search {
+  display: flex;
+  gap: 4px;
+  padding: 4px 0 6px;
+  position: sticky;
+  top: 0;
+  background: #f5f5f5;
+  z-index: 1;
+}
+.post-history-search input {
+  flex: 1;
+  min-width: 0;
+}
+.dark .post-history-search {
+  background: #2d2d30;
+}
+.my-post-item {
+  display: block;
+  cursor: pointer;
+  padding: 5px 4px;
+}
+.my-post-item:hover {
+  background: #e8f0f8;
+}
+.dark .my-post-item:hover {
+  background: #33404d;
+}
+.my-post-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.my-post-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.my-post-body {
+  color: var(--sub);
+  margin-top: 2px;
+  padding-left: 68px;
+  /* 書いたままの改行を残す。既定は 2 行で畳み、「全文」で展開する */
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.my-post-body.expanded {
+  display: block;
+  overflow: visible;
+}
+.my-post-body-missing {
+  font-style: italic;
+  opacity: 0.75;
+}
+.my-post-more {
+  margin: 2px 0 0 68px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.my-post-remove {
+  flex: 0 0 auto;
+  line-height: 1;
+  padding: 0 5px;
+}
+.my-post-section {
+  margin-top: 10px;
+  padding: 4px 0 2px;
+  border-bottom: 1px solid #c8c8c8;
+  color: var(--sub);
+  font-size: 11px;
+  font-weight: 700;
+}
+.dark .my-post-section {
+  border-color: #4a4a4a;
 }
 
 .thread-tab {
@@ -6914,4 +7006,372 @@ a.body-link-image:hover::after {
 .compose-dock-splitter {
   flex: 0 0 6px;
   height: 6px;
+}
+
+/* AI ルール (曖昧NG) は独立パネル。スレを読みながら候補一覧を開いておく使い方に
+   なるので、フィルタ一覧より縦を長く取る。 */
+.ng-ai-panel {
+  /* NG パネルのボタンから開くので、既定位置が重なっていると開いた瞬間に
+     NG パネルのヘッダを覆ってしまう。NG パネルは左下なので右下に寄せる。 */
+  left: auto;
+  right: 20px;
+  width: min(560px, calc(100vw - 28px));
+  max-height: min(70vh, 720px);
+  /* ヘッダ / 説明 / 自動判定 / 候補生成 / 入力 / ルール一覧 / 候補一覧 */
+  grid-template-rows: auto auto auto auto auto auto 1fr;
+}
+.ng-ai-panel .ng-ai-candidates {
+  max-height: none;
+}
+.ng-ai-options {
+  padding: 5px 8px;
+  border-bottom: 1px solid #d0d0d0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.ng-ai-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.ng-ai-options input {
+  margin: 0;
+}
+.ng-ai-options-hint {
+  color: var(--sub);
+}
+
+/* 曖昧 NG で畳んだレス。あぼーん表示とは別物だと分かる見た目にする */
+.ng-ai-hidden-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--sub);
+  border-left: 3px solid #7a9ec0;
+  background: #f3f6f9;
+}
+.ng-ai-hidden-label {
+  flex: 0 0 auto;
+  font-weight: 700;
+  color: #4a6f96;
+}
+.ng-ai-hidden-reason {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ng-ai-hidden-toggle {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 1px 6px;
+}
+.ng-ai-revealed-label {
+  font-size: 10px;
+  padding: 0 4px;
+  color: #4a6f96;
+  background: #e6eef6;
+  border: 1px solid #b9cfe2;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.nav-ng-ai-progress {
+  font-size: 11px;
+  color: var(--sub);
+  white-space: nowrap;
+}
+.nav-ng-ai-btn.active {
+  font-weight: 700;
+}
+.dark .ng-ai-options {
+  border-color: #3f3f46;
+}
+.dark .ng-ai-hidden-block {
+  background: #262b31;
+  border-left-color: #4a6f96;
+}
+.dark .ng-ai-hidden-label,
+.dark .ng-ai-revealed-label {
+  color: #9dc0e0;
+}
+.dark .ng-ai-revealed-label {
+  background: #2b3946;
+  border-color: #3f5a72;
+}
+/* 既定の button は明るい背景のままなので、ダークでは文字色 (--ink) と被って読めない。
+   NG パネルの他のボタン群と同じ配色を、曖昧NG で足したボタンにも当てる。
+   .ng-ai-hidden-toggle はレス欄の中にあるので、パネル側の指定では拾えない。 */
+.dark .ng-ai-hidden-toggle,
+.dark .ng-ai-note-head button,
+.dark .ng-ai-add-actions button,
+.dark .ng-ai-rule-controls button,
+.dark .ng-ai-remove,
+.dark .ng-ai-add-id {
+  background: #3a3a3a;
+  color: var(--ink);
+  border-color: #555;
+}
+.dark .ng-ai-hidden-toggle:hover,
+.dark .ng-ai-note-head button:hover,
+.dark .ng-ai-add-actions button:hover,
+.dark .ng-ai-rule-controls button:hover,
+.dark .ng-ai-remove:hover,
+.dark .ng-ai-add-id:hover {
+  background: #474747;
+}
+
+/* 曖昧 NG (AI ルール) パネルの中身 */
+.ng-ai-note {
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--sub);
+  border-bottom: 1px solid #d0d0d0;
+  overflow-y: auto;
+  max-height: 40vh;
+}
+.ng-ai-note-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.ng-ai-note-head button {
+  flex: 0 0 auto;
+}
+.ng-ai-help {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.ng-ai-help li {
+  margin-bottom: 5px;
+}
+.ng-ai-gen {
+  padding: 5px 8px;
+  border-bottom: 1px solid #d0d0d0;
+  font-size: 11px;
+}
+.ng-ai-gen-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ng-ai-gen-head input {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  padding: 3px 6px;
+  border: 1px solid #c0c0c0;
+}
+.ng-ai-gen-busy {
+  margin-top: 4px;
+  color: var(--sub);
+}
+.ng-ai-gen-list {
+  list-style: none;
+  margin: 5px 0 0;
+  padding: 0;
+}
+.ng-ai-gen-list li {
+  border: 1px solid #d8d8d8;
+  border-radius: 3px;
+  padding: 4px 6px;
+  margin-bottom: 4px;
+}
+.ng-ai-gen-slot {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 4px;
+  background: #e6eef6;
+  border-radius: 2px;
+  color: #4a6f96;
+}
+.ng-ai-gen-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  color: var(--sub);
+}
+.ng-ai-gen-stats button {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 1px 6px;
+}
+.ng-ai-gen-hint {
+  margin-top: 4px;
+  color: var(--sub);
+}
+.dark .ng-ai-gen {
+  border-color: #3f3f46;
+}
+.dark .ng-ai-gen-head input {
+  background: #1e1e20;
+  color: #e6e6e6;
+  border-color: #4a4a52;
+}
+.dark .ng-ai-gen-list li {
+  border-color: #3f3f46;
+}
+.dark .ng-ai-gen-slot {
+  background: #2b3946;
+  color: #9dc0e0;
+}
+.dark .ng-ai-gen-stats button {
+  background: #3a3a3a;
+  color: var(--ink);
+  border-color: #555;
+}
+.ng-ai-add {
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-bottom: 1px solid #d0d0d0;
+}
+.ng-ai-add input {
+  font-size: 11px;
+  padding: 4px 6px;
+  box-sizing: border-box;
+  border: 1px solid #c0c0c0;
+}
+.ng-ai-add-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.ng-ai-rules {
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+.ng-ai-empty,
+.ng-ai-candidates-head {
+  font-size: 11px;
+  color: var(--sub);
+  padding: 4px 0;
+}
+.ng-ai-rule {
+  border: 1px solid #d0d0d0;
+  border-radius: 3px;
+  padding: 4px 6px;
+  margin-bottom: 4px;
+}
+.ng-ai-rule.disabled {
+  opacity: 0.55;
+}
+.ng-ai-rule-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ng-ai-rule-text {
+  flex: 1;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ng-ai-enable input {
+  margin: 0;
+}
+.ng-ai-remove {
+  padding: 0 5px;
+}
+.ng-ai-rule-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--sub);
+}
+.ng-ai-rule-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.ng-ai-rule-controls input[type="number"] {
+  width: 56px;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+.ng-ai-progress,
+.ng-ai-hits {
+  font-size: 11px;
+}
+.ng-ai-candidates {
+  border-top: 1px solid #d0d0d0;
+  padding: 4px 8px 6px;
+  overflow-y: auto;
+  max-height: 40vh;
+}
+.ng-ai-candidates ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ng-ai-candidates li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ng-ai-add-id {
+  flex: 0 0 auto;
+  font-size: 10px;
+  padding: 1px 4px;
+}
+.ng-ai-candidate {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 3px 2px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ng-ai-candidate:hover {
+  background: #e8f0f8;
+}
+.ng-ai-prob {
+  font-variant-numeric: tabular-nums;
+  color: #b04000;
+  flex: 0 0 auto;
+}
+.ng-ai-no {
+  flex: 0 0 auto;
+  color: var(--sub);
+}
+.ng-ai-body {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dark .ng-ai-note,
+.dark .ng-ai-add,
+.dark .ng-ai-candidates {
+  border-color: #3f3f46;
+}
+.dark .ng-ai-rule {
+  border-color: #3f3f46;
+}
+.dark .ng-ai-add input,
+.dark .ng-ai-rule-controls input[type="number"] {
+  background: #1e1e20;
+  color: #e6e6e6;
+  border-color: #4a4a52;
+}
+.dark .ng-ai-candidate:hover {
+  background: #33404d;
+}
+.dark .ng-ai-prob {
+  color: #ffb08a;
 }
