@@ -1955,6 +1955,10 @@ export default function App() {
   // 削除完了メッセージ。数秒で自動的に消す
   const [nameClearMsg, setNameClearMsg] = useState("");
   const [composeMail, setComposeMail] = useState("");
+  // 書き込み欄を開いたときの sage の初期値。設定画面で変えるもので、これだけが保存される
+  const [composeSageDefault, setComposeSageDefault] = useState(false);
+  // この書き込みだけの sage。開くたびに既定値へ戻すので、1回限りのつもりで入れた
+  // チェック (誤操作も含む) が全スレ・再起動後まで残り続けることがない
   const [composeSage, setComposeSage] = useState(false);
   const [composeBody, setComposeBody] = useState("");
   const [composePreview, setComposePreview] = useState(false);
@@ -2769,6 +2773,8 @@ export default function App() {
   const [threadPaneHidden, setThreadPaneHidden] = useState(false);
   // 板を選んだらスレ一覧を出し、スレを開いたら畳む自動開閉。既定オフ。
   const [threadPaneAutoToggle, setThreadPaneAutoToggle] = useState(false);
+  // 自動開閉で畳んだスレ一覧を、マウスの「戻る」ボタンで出し直す。既定オフ。
+  const [threadPaneBackRestore, setThreadPaneBackRestore] = useState(false);
   const resizeDragRef = useRef<ResizeDragState | null>(null);
   const [threadColWidths, setThreadColWidths] = useState<Record<string, number>>({ ...DEFAULT_COL_WIDTHS });
   const [threadColVisible, setThreadColVisible] = useState<Record<ToggleableThreadColKey, boolean>>({ ...DEFAULT_COL_VISIBLE });
@@ -5277,6 +5283,10 @@ export default function App() {
     }
   };
 
+  // メール欄に手で "sage" と打つ人がいる。チェックボックスと実際に送る値がずれると
+  // 「チェックは入っていないのに sage で飛ぶ」状態になるので、表示上は同じものとして扱う。
+  const composeMailIsSage = composeMail.trim().toLowerCase() === "sage";
+  const composeSageChecked = composeSage || composeMailIsSage;
   const composeMailValue = composeSage ? "sage" : composeMail;
   const boardItems = ["お気に入り", "ニュース", "ソフトウェア", "ネットワーク", "NGT (テスト)"];
   const fallbackThreadItems = [
@@ -7197,6 +7207,12 @@ export default function App() {
         if (saved !== null) setComposeName(saved);
       }
     }
+    // sage を既定へ戻すのは閉→開のときだけ。開いたまま引用するときも
+    // (appendComposeQuote) ここを通るので、書いている最中にチェックが外れないよう
+    // 遷移を見る。本文を残す設定で下書きが残っているときも、書いたときのままにする。
+    if (!composeOpen && !(composeKeepDraft && composeBody.trim().length > 0)) {
+      setComposeSage(composeSageDefault);
+    }
     setComposeOpen(true);
     if (!opts?.keepBody) {
       // 位置 (composePos) はここでリセットしない — 前回動かした位置を保持する。
@@ -7741,6 +7757,7 @@ export default function App() {
           boardPaneHidden?: boolean;
           threadPaneHidden?: boolean;
           threadPaneAutoToggle?: boolean;
+          threadPaneBackRestore?: boolean;
           fontSize?: number;
           boardsFontSize?: number;
           threadsFontSize?: number;
@@ -7811,6 +7828,7 @@ export default function App() {
         if (typeof parsed.boardPaneHidden === "boolean") setBoardPaneHidden(parsed.boardPaneHidden);
         if (typeof parsed.threadPaneHidden === "boolean") setThreadPaneHidden(parsed.threadPaneHidden);
         if (typeof parsed.threadPaneAutoToggle === "boolean") setThreadPaneAutoToggle(parsed.threadPaneAutoToggle);
+        if (typeof parsed.threadPaneBackRestore === "boolean") setThreadPaneBackRestore(parsed.threadPaneBackRestore);
         const fallbackFs = typeof parsed.fontSize === "number" ? parsed.fontSize : 12;
         setBoardsFontSize(typeof parsed.boardsFontSize === "number" ? parsed.boardsFontSize : fallbackFs);
         setThreadsFontSize(typeof parsed.threadsFontSize === "number" ? parsed.threadsFontSize : fallbackFs);
@@ -7917,7 +7935,11 @@ export default function App() {
         if (typeof cp.name === "string" && !cp.forgetName) setComposeName(cp.name);
         if (typeof cp.fontSize === "number") setComposeFontSize(cp.fontSize);
         if (typeof cp.mail === "string") setComposeMail(cp.mail);
-        if (typeof cp.sage === "boolean") setComposeSage(cp.sage);
+        // 保存されているのは既定値。起動直後に書き込み欄を開いたときの値も同じ。
+        if (typeof cp.sage === "boolean") {
+          setComposeSageDefault(cp.sage);
+          setComposeSage(cp.sage);
+        }
         try {
           const nh = localStorage.getItem(NAME_HISTORY_KEY);
           if (nh) setNameHistory(JSON.parse(nh));
@@ -8701,6 +8723,24 @@ export default function App() {
     };
   }, [mouseGestureEnabled, activeTabIndex, threadTabs, gestureBindings]);
 
+  // マウスの「戻る」(第4ボタン) で、自動開閉が畳んだスレ一覧を出し直す。
+  // mousedown ではなく mouseup で見る: レスペインの onMouseDown が先に走るので、
+  // 畳む処理より後に出し直さないと一瞬で畳まれ直す。
+  useEffect(() => {
+    if (!threadPaneAutoToggle || !threadPaneBackRestore) return;
+    const onMouseUp = (e: MouseEvent) => {
+      if (e.button !== 3) return;
+      // 既定の「戻る」を止める。履歴は1件なので実際には何も起きないが、
+      // WebView 側の実装に任せない。
+      e.preventDefault();
+      setThreadPaneHidden(false);
+      setFocusedPane("threads");
+      threadListScrollRef.current?.focus({ preventScroll: true });
+    };
+    window.addEventListener("mouseup", onMouseUp);
+    return () => window.removeEventListener("mouseup", onMouseUp);
+  }, [threadPaneAutoToggle, threadPaneBackRestore]);
+
   // 書き込み中は積んでおいて、終わってから最新の 1 件だけ書く。
   const flushLayoutPrefs = () => {
     if (layoutPrefsSavingRef.current) return;
@@ -8740,6 +8780,7 @@ export default function App() {
       boardPaneHidden,
       threadPaneHidden,
       threadPaneAutoToggle,
+      threadPaneBackRestore,
       boardsFontSize,
       threadsFontSize,
       responsesFontSize,
@@ -8799,7 +8840,7 @@ export default function App() {
       layoutPrefsPendingRef.current = payload;
       flushLayoutPrefs();
     }
-  }, [layoutPrefsLoaded, boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, threadPaneAutoToggle, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, favBoardButtonEnabled, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, hoverPreviewFitEnabled, hotResponseThreshold, hotResponseRedEnabled, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, disabledShortcuts, composeSize, composePos, composeDocked, composeDockPx, threadColVisible, threadColOrder, responseBodyBottomPad, responseMetaInline, showResponseMail, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
+  }, [layoutPrefsLoaded, boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, threadPaneAutoToggle, threadPaneBackRestore, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, favBoardButtonEnabled, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, hoverPreviewFitEnabled, hotResponseThreshold, hotResponseRedEnabled, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, disabledShortcuts, composeSize, composePos, composeDocked, composeDockPx, threadColVisible, threadColOrder, responseBodyBottomPad, responseMetaInline, showResponseMail, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -8888,8 +8929,8 @@ export default function App() {
   }, [settingsOpen]);
 
   useEffect(() => {
-    saveUiJson(COMPOSE_PREFS_KEY, JSON.stringify({ name: composeForgetName ? "" : composeName, mail: composeMail, sage: composeSage, fontSize: composeFontSize, forgetName: composeForgetName, keepDraft: composeKeepDraft }));
-  }, [composeName, composeMail, composeSage, composeFontSize, composeForgetName, composeKeepDraft]);
+    saveUiJson(COMPOSE_PREFS_KEY, JSON.stringify({ name: composeForgetName ? "" : composeName, mail: composeMail, sage: composeSageDefault, fontSize: composeFontSize, forgetName: composeForgetName, keepDraft: composeKeepDraft }));
+  }, [composeName, composeMail, composeSageDefault, composeFontSize, composeForgetName, composeKeepDraft]);
 
   useEffect(() => {
     if (suppressThreadScrollRef.current) {
@@ -9986,8 +10027,17 @@ export default function App() {
         メール
         <input value={composeMailValue} onChange={(e) => setComposeMail(e.target.value)} disabled={composeSage} />
       </label>
-      <label className="check">
-        <input type="checkbox" checked={composeSage} onChange={(e) => setComposeSage(e.target.checked)} />
+      <label className="check" title="この書き込みだけ sage にする (開いたときの初期状態は設定で変えられる)">
+        <input
+          type="checkbox"
+          checked={composeSageChecked}
+          onChange={(e) => {
+            setComposeSage(e.target.checked);
+            // メール欄に残った "sage" も一緒に外す。残しておくとチェックを
+            // 外したのに sage で飛ぶ、という食い違いがそのまま続く。
+            if (!e.target.checked && composeMailIsSage) setComposeMail("");
+          }}
+        />
         sage
       </label>
     </div>
@@ -11085,7 +11135,12 @@ export default function App() {
           onClick={(e) => e.stopPropagation()}
         />
         )}
-        <section className="pane responses" onMouseDown={() => { setFocusedPane("responses"); if (threadPaneAutoToggle) setThreadPaneHidden(true); }} style={{ '--fs-delta': `${responsesFontSize - 12}px` } as React.CSSProperties}>
+        <section className="pane responses" onMouseDown={(e) => {
+          setFocusedPane("responses");
+          // 畳むのは左クリックのときだけ。右クリック (ジェスチャの開始) や
+          // 戻るボタンまで拾うと、スレ一覧を出し直した直後にまた畳んでしまう。
+          if (e.button === 0 && threadPaneAutoToggle) setThreadPaneHidden(true);
+        }} style={{ '--fs-delta': `${responsesFontSize - 12}px` } as React.CSSProperties}>
           {activeTabIndex >= 0 && activeTabIndex < threadTabs.length && (
             <div className="thread-title-bar">
               <span className="thread-title-text" title={threadTabs[activeTabIndex].title}>
@@ -14010,6 +14065,11 @@ export default function App() {
                   <span title="板を選ぶとスレ一覧が出て、スレを開くかレスペインを触ると隠れます">スレ一覧を自動で開閉する</span>
                 </label>
                 <label className="settings-row">
+                  <input type="checkbox" checked={threadPaneBackRestore} disabled={!threadPaneAutoToggle} onChange={(e) => setThreadPaneBackRestore(e.target.checked)} />
+                  <span title="自動開閉で隠れたスレ一覧を、マウスの戻るボタンで出し直します">マウスの戻るボタンでスレ一覧に戻る</span>
+                  <span className="settings-hint">自動開閉が有効なときだけ</span>
+                </label>
+                <label className="settings-row">
                   <input type="checkbox" checked={autoScrollToSelected} onChange={(e) => setAutoScrollToSelected(e.target.checked)} />
                   <span>レス選択時に自動スクロールして表示</span>
                 </label>
@@ -14098,8 +14158,9 @@ export default function App() {
                   </select>
                 </label>
                 <label className="settings-row">
-                  <input type="checkbox" checked={composeSage} onChange={(e) => setComposeSage(e.target.checked)} />
+                  <input type="checkbox" checked={composeSageDefault} onChange={(e) => setComposeSageDefault(e.target.checked)} />
                   <span>sage</span>
+                  <span className="settings-hint">書き込み欄を開いたときの初期状態</span>
                 </label>
                 <label className="settings-row">
                   <input
