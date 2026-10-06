@@ -1124,6 +1124,68 @@ const measureResponseBody = (html: string): { lines: number; chars: number } => 
   const plain = responseHtmlToPlainText(html);
   return { lines: plain.split("\n").length, chars: plain.replace(/\n/g, "").length };
 };
+// 閉じタグを持たない要素。切り詰めで「閉じ直す」対象から外す。
+const HTML_VOID_TAGS = new Set(["br", "img", "hr", "input", "wbr", "source", "area", "col"]);
+// エンティティ 1 つ・サロゲートペア 1 つをそれぞれ 1 文字として数えるためのトークン分割。
+// `&amp;` を 5 文字と数えたり絵文字を半分で切ったりしないようにする。
+const HTML_TEXT_CHAR_RE = /&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);|[\s\S]/gu;
+// 折りたたみ時に見せる本文を文字数で切り詰める。サニタイズ済み HTML をタグ境界で
+// 分割してテキストノードだけ数えるので、タグや属性の途中では切れない。切った時点で
+// 開いたままのタグは閉じ直す (innerHTML にそのまま入るため、閉じ忘れると後続の
+// レスまで巻き込んでレイアウトが崩れる)。
+const truncateResponseHtml = (html: string, maxChars: number): string => {
+  if (maxChars <= 0) return html;
+  const open: string[] = [];
+  // 見たばかりのタグは保留し、後ろに文字が続いたときだけ出力する。切った位置の先に
+  // ある <img> を「0 文字だから」と通してしまうと、省略したのに高さが減らない。
+  let pending: string[] = [];
+  let out = "";
+  let used = 0;
+  let dropped = false;
+  const flushTags = () => {
+    for (const tag of pending) {
+      const m = /^<\s*(\/?)\s*([a-zA-Z][a-zA-Z0-9-]*)/.exec(tag);
+      if (m) {
+        const name = m[2].toLowerCase();
+        if (m[1] === "/") {
+          const at = open.lastIndexOf(name);
+          if (at >= 0) open.splice(at, 1);
+        } else if (!HTML_VOID_TAGS.has(name) && !tag.endsWith("/>")) {
+          open.push(name);
+        }
+      }
+      out += tag;
+    }
+    pending = [];
+  };
+  for (const part of html.split(/(<[^>]+>)/g)) {
+    if (!part) continue;
+    if (part.startsWith("<")) {
+      pending.push(part);
+      continue;
+    }
+    const tokens = part.match(HTML_TEXT_CHAR_RE);
+    if (!tokens) continue;
+    if (used + tokens.length <= maxChars) {
+      flushTags();
+      used += tokens.length;
+      out += part;
+      continue;
+    }
+    const take = maxChars - used;
+    if (take > 0) {
+      flushTags();
+      out += tokens.slice(0, take).join("");
+    }
+    dropped = true;
+    break;
+  }
+  // しきい値に届かなければ元の HTML をそのまま返す (余計な「…」を足さない)
+  if (!dropped) return html;
+  out += "…";
+  for (let i = open.length - 1; i >= 0; i--) out += `</${open[i]}>`;
+  return out;
+};
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const highlightHtmlPreservingTags = (html: string, query: string) => {
   const q = query.trim();
@@ -1964,6 +2026,9 @@ export default function App() {
   const [composeForgetName, setComposeForgetName] = useState(false);
   // 書き込み窓を閉じても本文を残す (既定 OFF: 開き直すたびに空にする)
   const [composeKeepDraft, setComposeKeepDraft] = useState(false);
+  // 投稿に成功しても書き込み窓を閉じない (既定 OFF: 従来どおり閉じる)。
+  // 本文の下に固定して使っていると、1レスごとに開き直すことになるため。
+  const [composeKeepOpenAfterPost, setComposeKeepOpenAfterPost] = useState(false);
   // 「記憶した名前を削除」の確認待ち状態 (2段階クリックで誤操作を防ぐ)
   const [nameClearArmed, setNameClearArmed] = useState(false);
   // 削除完了メッセージ。数秒で自動的に消す
@@ -2340,6 +2405,9 @@ export default function App() {
   const [collapseLongEnabled, setCollapseLongEnabled] = useState(false);
   const [collapseLongLines, setCollapseLongLines] = useState(20);
   const [collapseLongChars, setCollapseLongChars] = useState(500);
+  // 折りたたんだ状態で見せる文字数。0 なら文字数では切らず、行数ぶんの高さだけで省略する
+  // (従来の挙動)。行数の高さ制限とは AND で効くので、短いほうが見た目を決める。
+  const [collapsePreviewChars, setCollapsePreviewChars] = useState(0);
   // 展開済みのレス番。スレ切替でクリアする
   const [expandedLongResponses, setExpandedLongResponses] = useState<Set<number>>(new Set());
   // 日付・IDを右端ではなく名前の隣に置く。ペインが広いと右端まで視線を動かす必要があるため
@@ -5029,7 +5097,9 @@ export default function App() {
             return next;
           });
         }
-        setComposeOpen(false);
+        // 「書き込み後も閉じない」なら開いたままにする。本文は上でクリア済みなので、
+        // 続けて書くときに開き直さずに済む (固定表示で使っているときの要望)。
+        if (!composeKeepOpenAfterPost) setComposeOpen(false);
         setUploadPanelOpen(false);
         setUploadResults([]);
         const prevCount = tabCacheRef.current.get(postTargetUrl)?.responses.length ?? 0;
@@ -7571,7 +7641,9 @@ export default function App() {
       if (url) {
         saveScrollPos(url);
         const visibleNo = getVisibleResponseNo();
-        if (visibleNo > 0) saveBookmark(url, visibleNo);
+        // saveScrollPos と同じく 1 は保存しない。先頭に飛ばされた直後のスクロールで
+        // 栞を >>1 に上書きしてしまい、読書位置が永続的に失われていた。
+        if (visibleNo > 1) saveBookmark(url, visibleNo);
       }
     }, 300);
   };
@@ -7914,6 +7986,7 @@ export default function App() {
           collapseLongEnabled?: boolean;
           collapseLongLines?: number;
           collapseLongChars?: number;
+          collapsePreviewChars?: number;
           responseMetaInline?: boolean;
           showResponseMail?: boolean;
           titleClickRefresh?: boolean;
@@ -8018,6 +8091,9 @@ export default function App() {
         if (typeof parsed.collapseLongChars === "number" && parsed.collapseLongChars >= 0) {
           setCollapseLongChars(Math.min(99999, Math.round(parsed.collapseLongChars)));
         }
+        if (typeof parsed.collapsePreviewChars === "number" && parsed.collapsePreviewChars >= 0) {
+          setCollapsePreviewChars(Math.min(99999, Math.round(parsed.collapsePreviewChars)));
+        }
         if (typeof parsed.responseMetaInline === "boolean") setResponseMetaInline(parsed.responseMetaInline);
         if (typeof parsed.showResponseMail === "boolean") setShowResponseMail(parsed.showResponseMail);
         if (typeof parsed.titleClickRefresh === "boolean") setTitleClickRefresh(parsed.titleClickRefresh);
@@ -8045,9 +8121,10 @@ export default function App() {
     try {
       const composeRaw = localStorage.getItem(COMPOSE_PREFS_KEY);
       if (composeRaw) {
-        const cp = JSON.parse(composeRaw) as { name?: string; mail?: string; sage?: boolean; fontSize?: number; forgetName?: boolean; keepDraft?: boolean };
+        const cp = JSON.parse(composeRaw) as { name?: string; mail?: string; sage?: boolean; fontSize?: number; forgetName?: boolean; keepDraft?: boolean; keepOpenAfterPost?: boolean };
         if (typeof cp.forgetName === "boolean") setComposeForgetName(cp.forgetName);
         if (typeof cp.keepDraft === "boolean") setComposeKeepDraft(cp.keepDraft);
+        if (typeof cp.keepOpenAfterPost === "boolean") setComposeKeepOpenAfterPost(cp.keepOpenAfterPost);
         if (typeof cp.name === "string" && !cp.forgetName) setComposeName(cp.name);
         if (typeof cp.fontSize === "number") setComposeFontSize(cp.fontSize);
         if (typeof cp.mail === "string") setComposeMail(cp.mail);
@@ -8946,6 +9023,7 @@ export default function App() {
       collapseLongEnabled,
       collapseLongLines,
       collapseLongChars,
+      collapsePreviewChars,
       responseMetaInline,
       showResponseMail,
       titleClickRefresh,
@@ -8959,7 +9037,7 @@ export default function App() {
       layoutPrefsPendingRef.current = payload;
       flushLayoutPrefs();
     }
-  }, [layoutPrefsLoaded, boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, threadPaneAutoToggle, threadPaneBackRestore, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, favBoardButtonEnabled, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, hoverPreviewFitEnabled, hotResponseThreshold, hotResponseRedEnabled, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, disabledShortcuts, composeSize, composePos, composeDocked, composeDockPx, threadColVisible, threadColOrder, responseBodyBottomPad, collapseLongEnabled, collapseLongLines, collapseLongChars, responseMetaInline, showResponseMail, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
+  }, [layoutPrefsLoaded, boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, threadPaneAutoToggle, threadPaneBackRestore, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, favBoardButtonEnabled, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, hoverPreviewFitEnabled, hotResponseThreshold, hotResponseRedEnabled, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, disabledShortcuts, composeSize, composePos, composeDocked, composeDockPx, threadColVisible, threadColOrder, responseBodyBottomPad, collapseLongEnabled, collapseLongLines, collapseLongChars, collapsePreviewChars, responseMetaInline, showResponseMail, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
 
   useEffect(() => {
     if (!typingConfettiEnabled) return;
@@ -9048,8 +9126,8 @@ export default function App() {
   }, [settingsOpen]);
 
   useEffect(() => {
-    saveUiJson(COMPOSE_PREFS_KEY, JSON.stringify({ name: composeForgetName ? "" : composeName, mail: composeMail, sage: composeSageDefault, fontSize: composeFontSize, forgetName: composeForgetName, keepDraft: composeKeepDraft }));
-  }, [composeName, composeMail, composeSageDefault, composeFontSize, composeForgetName, composeKeepDraft]);
+    saveUiJson(COMPOSE_PREFS_KEY, JSON.stringify({ name: composeForgetName ? "" : composeName, mail: composeMail, sage: composeSageDefault, fontSize: composeFontSize, forgetName: composeForgetName, keepDraft: composeKeepDraft, keepOpenAfterPost: composeKeepOpenAfterPost }));
+  }, [composeName, composeMail, composeSageDefault, composeFontSize, composeForgetName, composeKeepDraft, composeKeepOpenAfterPost]);
 
   useEffect(() => {
     if (suppressThreadScrollRef.current) {
@@ -11196,30 +11274,37 @@ export default function App() {
                     key={t.id}
                     className={`${selectedThread === t.id ? "selected-row" : ""} ${isUnread ? "unread-row" : ""} ${hasUnread ? "has-unread-row" : ""} ${"datOchi" in t && t.datOchi ? "dat-ochi-row" : ""}`}
                     onClick={() => {
+                      const clickedUrl = "threadUrl" in t && typeof t.threadUrl === "string" ? t.threadUrl : null;
+                      // アクティブタブなら openThreadInTab 自身がフェッチする。ここで重ねて
+                      // フェッチすると2回目が「新着なし」と判定して新着マーカーを消してしまう。
+                      const isActiveTab = clickedUrl != null && activeTabIndex >= 0 && threadTabs[activeTabIndex]?.threadUrl === clickedUrl;
                       setSelectedThread(t.id);
-                      setSelectedResponse(1);
+                      // 今開いているスレを押し直したときは選択を >>1 に戻さない。
+                      // openThreadInTab のアクティブタブ経路は keepSelection で取り直すだけで
+                      // 読書位置を復元しないので、ここで戻すと自動スクロールが本文を先頭へ
+                      // 飛ばしてしまう (スレ一覧へ戻ってから同じスレを押す操作で必ず起きる)。
+                      // 別スレ・未オープンのスレなら openThreadInTab が同じ tick で栞から
+                      // 選び直すため、この1行の有無は見た目に影響しない。
+                      if (!isActiveTab) setSelectedResponse(1);
                       setThreadReadMap((prev) => ({ ...prev, [t.id]: true }));
                       setThreadLastReadCount((prev) => ({ ...prev, [t.id]: t.res }));
-                      if ("threadUrl" in t && typeof t.threadUrl === "string") {
-                        const alreadyOpen = threadTabs.some((tab) => tab.threadUrl === t.threadUrl);
-                        // アクティブタブなら openThreadInTab 自身がフェッチする。ここで重ねて
-                        // フェッチすると2回目が「新着なし」と判定して新着マーカーを消してしまう。
-                        const isActiveTab = activeTabIndex >= 0 && threadTabs[activeTabIndex]?.threadUrl === t.threadUrl;
-                        openThreadInTab(t.threadUrl, t.title);
+                      if (clickedUrl != null) {
+                        const alreadyOpen = threadTabs.some((tab) => tab.threadUrl === clickedUrl);
+                        openThreadInTab(clickedUrl, t.title);
                         if (alreadyOpen && !isActiveTab) {
-                          void fetchResponsesFromCurrent(t.threadUrl, { keepSelection: true });
+                          void fetchResponsesFromCurrent(clickedUrl, { keepSelection: true });
                         }
                         // persist read status
                         if (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly || showThreadSearchOnly) {
-                          const boardUrl = getBoardUrlFromThreadUrl(t.threadUrl);
-                          const threadKey = getThreadKeyFromThreadUrl(t.threadUrl);
+                          const boardUrl = getBoardUrlFromThreadUrl(clickedUrl);
+                          const threadKey = getThreadKeyFromThreadUrl(clickedUrl);
                           if (threadKey && t.res > 0) {
                             void persistReadStatus(boardUrl, threadKey, t.res);
                           }
                         } else {
                           const ft = fetchedThreads[t.id - 1];
                           if (ft) {
-                            const boardUrl = getBoardUrlFromThreadUrl(t.threadUrl);
+                            const boardUrl = getBoardUrlFromThreadUrl(clickedUrl);
                             void persistReadStatus(boardUrl, ft.threadKey, ft.responseCount);
                           }
                         }
@@ -11895,7 +11980,12 @@ export default function App() {
                         )}
                       </span>
                     </div>
-                    <div className={`response-body${(aaOverrides.has(r.id) ? aaOverrides.get(r.id) : isAsciiArt(r.text)) ? " aa" : ""}${longCollapsed ? " collapsed" : ""}`} style={longCollapsed ? ({ "--collapse-lines": collapsePreviewLines } as CSSProperties) : undefined} dangerouslySetInnerHTML={{ __html: (threadCategoryPanelOpen ? applyCategoryHighlights(renderResponseBodyHighlighted(r.text, responseSearchQuery, hlWordEntries, { hideImages: ngResultMap.get(r.id) === "hide-images", imageSizeLimitKb: imageSizeLimit, youtubeThumbs: youtubeThumbsEnabled, ogpCards: ogpCardsEnabled, tweetCards: tweetCardsEnabled, ogpAllow: ogpDomainFilters.allow, ogpBlock: ogpDomainFilters.block }).__html, responseCategoryMap.get(r.id)) : renderResponseBodyHighlighted(r.text, responseSearchQuery, hlWordEntries, { hideImages: ngResultMap.get(r.id) === "hide-images", imageSizeLimitKb: imageSizeLimit, youtubeThumbs: youtubeThumbsEnabled, ogpCards: ogpCardsEnabled, tweetCards: tweetCardsEnabled, ogpAllow: ogpDomainFilters.allow, ogpBlock: ogpDomainFilters.block }).__html) + (responseBodyBottomPad ? "<br><br>" : "") }} />
+                    <div className={`response-body${(aaOverrides.has(r.id) ? aaOverrides.get(r.id) : isAsciiArt(r.text)) ? " aa" : ""}${longCollapsed ? " collapsed" : ""}`} style={longCollapsed ? ({ "--collapse-lines": collapsePreviewLines } as CSSProperties) : undefined} dangerouslySetInnerHTML={{ __html: (() => {
+                      const full = threadCategoryPanelOpen ? applyCategoryHighlights(renderResponseBodyHighlighted(r.text, responseSearchQuery, hlWordEntries, { hideImages: ngResultMap.get(r.id) === "hide-images", imageSizeLimitKb: imageSizeLimit, youtubeThumbs: youtubeThumbsEnabled, ogpCards: ogpCardsEnabled, tweetCards: tweetCardsEnabled, ogpAllow: ogpDomainFilters.allow, ogpBlock: ogpDomainFilters.block }).__html, responseCategoryMap.get(r.id)) : renderResponseBodyHighlighted(r.text, responseSearchQuery, hlWordEntries, { hideImages: ngResultMap.get(r.id) === "hide-images", imageSizeLimitKb: imageSizeLimit, youtubeThumbs: youtubeThumbsEnabled, ogpCards: ogpCardsEnabled, tweetCards: tweetCardsEnabled, ogpAllow: ogpDomainFilters.allow, ogpBlock: ogpDomainFilters.block }).__html;
+                      // 折りたたみ中だけ表示文字数で切る。切り詰めは常にサニタイズ後の HTML に対して行う
+                      const shown = longCollapsed && collapsePreviewChars > 0 ? truncateResponseHtml(full, collapsePreviewChars) : full;
+                      return shown + (responseBodyBottomPad ? "<br><br>" : "");
+                    })() }} />
                     {longMetrics && (
                       <button
                         type="button"
@@ -14195,6 +14285,11 @@ export default function App() {
                       <input type="number" value={collapseLongChars} min={0} max={99999} onChange={(e) => setCollapseLongChars(Math.max(0, Math.min(99999, Math.round(Number(e.target.value) || 0))))} />
                       <span className="settings-hint">0 = 文字数では判定しない</span>
                     </label>
+                    <label className="settings-row settings-sub-row">
+                      <span>折りたたみ後の表示文字数</span>
+                      <input type="number" value={collapsePreviewChars} min={0} max={99999} onChange={(e) => setCollapsePreviewChars(Math.max(0, Math.min(99999, Math.round(Number(e.target.value) || 0))))} />
+                      <span className="settings-hint">0 = 文字数では省略しない (行数ぶん表示)</span>
+                    </label>
                   </>
                 )}
                 <label className="settings-row">
@@ -14327,6 +14422,11 @@ export default function App() {
                   <input type="checkbox" checked={composeKeepDraft} onChange={(e) => setComposeKeepDraft(e.target.checked)} />
                   <span>閉じても本文を残す</span>
                   <span className="settings-hint">次に開いたとき書きかけの本文が残る。投稿するか本文をクリアすると消える</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={composeKeepOpenAfterPost} onChange={(e) => setComposeKeepOpenAfterPost(e.target.checked)} />
+                  <span>書き込み後も閉じない</span>
+                  <span className="settings-hint">投稿しても書き込み欄を開いたままにする。本文の下に固定しているときに開き直さずに済む</span>
                 </label>
                 <div className="settings-row">
                   <span>記憶した名前</span>
@@ -15037,7 +15137,7 @@ export default function App() {
       )}
       {postHistoryOpen && (
         <div className="lightbox-overlay" onClick={() => setPostHistoryOpen(false)}>
-          <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
+          <div className="settings-panel post-history-panel" onClick={(e) => e.stopPropagation()}>
             <header className="settings-header">
               <strong>書き込み履歴 ({myPostRows.length}件)</strong>
               <button onClick={() => setPostHistoryOpen(false)}>閉じる</button>
