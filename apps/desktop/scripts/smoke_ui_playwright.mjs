@@ -576,12 +576,19 @@ try {
   await page.click(".ng-remove");
   console.log("smoke-ui: ng word id chain ok");
 
-  // 連鎖あぼーん: >>4 は >>3 に安価を打っている。「次:」で >>3 をあぼーんにし、
-  // 連鎖トグルを ON にすると >>4 もあぼーんになる。>>3 は >>1 にも安価を打っているが、
+  // NGレスへの返信の連鎖: >>4 は >>3 に安価を打っている。「次:」で >>3 をあぼーんにし、
+  // 連鎖トグルを ON にすると >>4 も連鎖する。>>3 は >>1 にも安価を打っているが、
   // >>1 が NG でも >>1 への安価は連鎖しない。
   const chainRepliesBox = await page.$(".ng-chain-setting input[type='checkbox']");
-  assert(chainRepliesBox, "NG panel should have the 連鎖あぼーん checkbox");
-  assert(!(await chainRepliesBox.isChecked()), "連鎖あぼーん should default to off");
+  assert(chainRepliesBox, "NG panel should have the 連鎖 checkbox");
+  assert(!(await chainRepliesBox.isChecked()), "連鎖 should default to off");
+  const chainModeSelect = await page.$(".ng-chain-setting .ng-mode-select");
+  assert(chainModeSelect, "NG レスへの返信の連鎖 should have a mode select");
+  assert(await chainModeSelect.isDisabled(), "the chain mode select should be disabled while the chain is off");
+  assert(
+    (await chainModeSelect.inputValue()) === "abone",
+    `the chain mode should default to あぼーん for backward compatibility, got ${await chainModeSelect.inputValue()}`,
+  );
   await page.fill(".ng-panel-add input", "次:");
   await page.click(".ng-panel-add button:has-text('追加')");
   const aboneNoChain = await page.$$eval(".response-block.abone-block", (els) => els.map((el) => el.getAttribute("data-response-no")));
@@ -593,8 +600,22 @@ try {
   const aboneChained = await page.$$eval(".response-block.abone-block", (els) => els.map((el) => el.getAttribute("data-response-no")));
   assert(
     aboneChained.includes("3") && aboneChained.includes("4") && !aboneChained.includes("1"),
-    `連鎖あぼーん should abone the reply >>4, got ${JSON.stringify(aboneChained)}`,
+    `連鎖 should abone the reply >>4, got ${JSON.stringify(aboneChained)}`,
   );
+  // モードを「非表示」にすると、連鎖した >>4 はレス番ごと消える (>>3 は NG 側の設定どおりあぼーんのまま)
+  assert(!(await chainModeSelect.isDisabled()), "the chain mode select should become enabled once the chain is on");
+  await page.selectOption(".ng-chain-setting .ng-mode-select", "hide");
+  const chainedHidden = await page.$$eval(".response-block", (els) => els.map((el) => el.getAttribute("data-response-no")));
+  assert(
+    !chainedHidden.includes("4") && chainedHidden.includes("3") && chainedHidden.includes("1"),
+    `連鎖 in 非表示 mode should hide the reply >>4 entirely, got ${JSON.stringify(chainedHidden)}`,
+  );
+  const chainedHiddenAbone = await page.$$eval(".response-block.abone-block", (els) => els.map((el) => el.getAttribute("data-response-no")));
+  assert(
+    chainedHiddenAbone.includes("3") && !chainedHiddenAbone.includes("4"),
+    `>>3 should stay abone while the chained >>4 is hidden, got ${JSON.stringify(chainedHiddenAbone)}`,
+  );
+  await page.selectOption(".ng-chain-setting .ng-mode-select", "abone");
   await page.click(".ng-remove");
   // >>1 への安価は連鎖しない: >>1 をあぼーんにしても >>3 は残る
   await page.fill(".ng-panel-add input", "トレース準備");
@@ -1486,10 +1507,39 @@ try {
     els.map((e) => e.textContent?.trim()),
   );
   assert(
-    uiZoomLabels.length === 3 && uiZoomLabels.includes("標準") && uiZoomLabels.includes("大") && uiZoomLabels.includes("特大"),
-    `UI size should offer 3 steps, got ${uiZoomLabels}`,
+    uiZoomLabels.join(",") === "最小,小,標準,大,特大",
+    `UI size should offer 5 steps from 最小 to 特大, got ${uiZoomLabels}`,
+  );
+  // 倍率 1 未満は WebView のズームなので Rust 側のクランプ (0.5〜3.0) の内側であること。
+  const uiZoomValues = await page.$$eval(".settings-body select.ui-zoom-select option", (els) => els.map((e) => Number(e.value)));
+  assert(
+    uiZoomValues.every((v) => v >= 0.5 && v <= 3),
+    `UI size steps must stay inside the backend clamp, got ${uiZoomValues}`,
   );
   console.log("smoke-ui: UI size setting ok");
+
+  // タブ幅。既定は「標準」で、狭いを選ぶとタブバーに tabs-narrow が付くこと
+  // (実際に詰まるかはタブを開いた状態で別途見る)。
+  const tabWidthSelect = await page.$(".settings-body select.tab-width-select");
+  assert(tabWidthSelect, "settings should have a tab width select");
+  assert((await tabWidthSelect.inputValue()) === "normal", "tab width should default to 標準");
+  const tabWidthLabels = await page.$$eval(".settings-body select.tab-width-select option", (els) =>
+    els.map((e) => e.textContent?.trim()),
+  );
+  assert(tabWidthLabels.join(",") === "標準,狭い", `tab width should offer 標準/狭い, got ${tabWidthLabels}`);
+  await tabWidthSelect.selectOption("narrow");
+  await new Promise((r) => setTimeout(r, 200));
+  assert(
+    await page.$(".thread-tab-bar-wrap.tabs-narrow"),
+    "picking 狭い should put tabs-narrow on the tab bar",
+  );
+  await tabWidthSelect.selectOption("normal");
+  await new Promise((r) => setTimeout(r, 200));
+  assert(
+    !(await page.$(".thread-tab-bar-wrap.tabs-narrow")),
+    "going back to 標準 should drop tabs-narrow",
+  );
+  console.log("smoke-ui: tab width setting ok");
 
   // UI サイズを上げても縦積みに切り替わらないこと。
   // 縦積みの判定は CSS ピクセル上の幅ではなく、倍率を掛け戻した物理的な幅で行う。
@@ -2140,7 +2190,26 @@ try {
   await page.waitForSelector(".pane.responses .compose-window.compose-docked");
   console.log("smoke-ui: compose header dock toggle ok");
 
-  await page.click(".compose-header button:has-text('閉じる')");
+  // 固定時はヘッダを薄くする。高さを決めていたのは素の「閉じる」ボタンだったので
+  // アイコンに替え、投稿先はすぐ上に見えているのでスレタイ行も出さない。
+  assert(
+    !(await page.$(".compose-window.compose-docked .compose-target")),
+    "docked compose should not repeat the thread title in its header",
+  );
+  assert(
+    await page.$('.compose-window.compose-docked .compose-header button[title="書き込み欄を閉じる"]'),
+    "docked compose should close from an icon button, not the tall 閉じる button",
+  );
+  const dockedHeaderHeight = await page.$eval(
+    ".compose-window.compose-docked .compose-header",
+    (el) => el.getBoundingClientRect().height,
+  );
+  assert(
+    dockedHeaderHeight <= 22,
+    `docked compose header should stay slim, got ${dockedHeaderHeight}px`,
+  );
+
+  await page.click('.compose-header button[title="書き込み欄を閉じる"]');
   await new Promise((r) => setTimeout(r, 100));
   // 既定 (浮かせる) に戻してから先へ進む
   await (await page.$('.menu-item:has-text("ファイル")')).click();
@@ -3356,6 +3425,186 @@ try {
   );
   await ipcPage.close();
   console.log("smoke-ui: layout prefs write recovers from a stuck ipc ok");
+
+  // タブ復元。保存は restoreSession に関係なく走るので、復元しない設定のときに
+  // 起動直後の保存が空のタブで上書きしてしまうと、設定を後から ON にしても何も
+  // 戻らなくなる。復元する / しないの両方で保存済みのタブが残ること。
+  const SMOKE_TABS = [
+    { threadUrl: "https://mao.5ch.io/test/read.cgi/ngt/1111111111/", title: "復元タブA" },
+    { threadUrl: "https://mao.5ch.io/test/read.cgi/ngt/2222222222/", title: "復元タブB" },
+  ];
+  const seedTabs = JSON.stringify({ tabs: SMOKE_TABS, activeIndex: 1 });
+  const openRestorePage = async (initScript, arg) => {
+    const p = await context.newPage();
+    await p.addInitScript(initScript, arg);
+    await p.goto(targetUrl, { waitUntil: "load" });
+    await p.waitForSelector(".row-splitter");
+    await new Promise((r) => setTimeout(r, 800));
+    const titles = await p.$$eval(".thread-tab:not(.placeholder) .thread-tab-title", (els) => els.map((el) => el.textContent));
+    const stored = await p.evaluate(() => localStorage.getItem("desktop.threadTabs.v1"));
+    await p.close();
+    return { titles, stored };
+  };
+  const seedLocal = ([tabs, prefs]) => {
+    localStorage.setItem("desktop.threadTabs.v1", tabs);
+    localStorage.setItem("desktop.uiJsonMigrated.v1", "1");
+    if (prefs) localStorage.setItem("desktop.layoutPrefs.v1", prefs);
+  };
+
+  const restoreOn = await openRestorePage(seedLocal, [seedTabs, JSON.stringify({ restoreSession: true })]);
+  assert(
+    restoreOn.titles.join(",") === "復元タブA,復元タブB",
+    `restoreSession on should restore the saved tabs, got ${JSON.stringify(restoreOn.titles)}`,
+  );
+  assert(
+    JSON.parse(restoreOn.stored).tabs.length === 2 && JSON.parse(restoreOn.stored).activeIndex === 1,
+    `restoring must keep the saved tabs and the active index, got ${restoreOn.stored}`,
+  );
+
+  const restoreOff = await openRestorePage(seedLocal, [seedTabs, JSON.stringify({ restoreSession: false })]);
+  assert(restoreOff.titles.length === 0, `restoreSession off should not restore tabs, got ${JSON.stringify(restoreOff.titles)}`);
+  assert(
+    JSON.parse(restoreOff.stored).tabs.length === 2,
+    `restoreSession off must not wipe the saved tabs, got ${restoreOff.stored}`,
+  );
+  console.log("smoke-ui: thread tab restore ok");
+
+  // layout_prefs は専用コマンドで保存しているので UI_JSON_FILES に入っていない。
+  // localStorage だけ失われた環境でも、描画前にファイルから流し込むことで
+  // restoreSession が既定値に戻らないこと (タブが消えないこと)。
+  const prefsFromFilePage = await context.newPage();
+  await prefsFromFilePage.addInitScript((tabs) => {
+    localStorage.setItem("desktop.threadTabs.v1", tabs);
+    localStorage.setItem("desktop.uiJsonMigrated.v1", "1");
+    window.__TAURI_INTERNALS__ = {
+      transformCallback: (cb) => cb,
+      invoke: (cmd) => {
+        if (cmd === "load_layout_prefs") return Promise.resolve(JSON.stringify({ restoreSession: true }));
+        if (cmd === "save_layout_prefs") return Promise.resolve(null);
+        return Promise.reject(new Error("smoke stub: " + cmd));
+      },
+    };
+  }, seedTabs);
+  await prefsFromFilePage.goto(targetUrl, { waitUntil: "load" });
+  await prefsFromFilePage.waitForSelector(".row-splitter");
+  await new Promise((r) => setTimeout(r, 800));
+  const prefsFromFileTabs = await prefsFromFilePage.$$eval(".thread-tab:not(.placeholder) .thread-tab-title", (els) => els.map((el) => el.textContent));
+  assert(
+    prefsFromFileTabs.join(",") === "復元タブA,復元タブB",
+    `restoreSession must be read from the file before render, got ${JSON.stringify(prefsFromFileTabs)}`,
+  );
+  await prefsFromFilePage.close();
+  console.log("smoke-ui: layout prefs seeded from file before render ok");
+
+  // タブが開いている状態での表示の詰め方。タブ幅「狭い」が実際にタブを縮めること、
+  // タブ一覧から直接タブへ飛べること、レスナビバーを隠していても Ctrl+F で
+  // 検索欄が出ること。どれもタブが要るので復元の種をそのまま使う。
+  const densityPage = await context.newPage();
+  await densityPage.addInitScript(([tabs, prefs]) => {
+    localStorage.setItem("desktop.threadTabs.v1", tabs);
+    localStorage.setItem("desktop.uiJsonMigrated.v1", "1");
+    localStorage.setItem("desktop.layoutPrefs.v1", prefs);
+    localStorage.setItem("desktop.tabWidth.v1", "narrow");
+  }, [seedTabs, JSON.stringify({ restoreSession: true, responseNavBarVisible: false })]);
+  await densityPage.goto(targetUrl, { waitUntil: "load" });
+  await densityPage.waitForSelector(".row-splitter");
+  await new Promise((r) => setTimeout(r, 800));
+
+  // 「狭い」は max-width / padding / 文字サイズをまとめて詰める。クラスが付いた
+  // だけで CSS が効いていないと意味が無いので、実測値まで見る。
+  assert(await densityPage.$(".thread-tab-bar-wrap.tabs-narrow"), "tabWidth narrow should be restored from localStorage");
+  const narrowTab = await densityPage.$eval(".thread-tab:not(.placeholder)", (el) => {
+    const s = getComputedStyle(el);
+    return { fontSize: s.fontSize, maxWidth: s.maxWidth };
+  });
+  assert(narrowTab.fontSize === "10px", `narrow tabs should shrink the font, got ${narrowTab.fontSize}`);
+  assert(narrowTab.maxWidth === "130px", `narrow tabs should cap the width, got ${narrowTab.maxWidth}`);
+
+  // タブ一覧。開いているタブが全部並び、今見ているタブに印が付き、選ぶと飛べること。
+  assert(!(await densityPage.$(".tab-list-dropdown")), "the tab list should start closed");
+  await densityPage.click(".tab-list-btn");
+  await densityPage.waitForSelector(".tab-list-dropdown");
+  const tabListTitles = await densityPage.$$eval(".tab-list-item-title", (els) => els.map((el) => el.textContent));
+  assert(
+    tabListTitles.join(",") === "復元タブA,復元タブB",
+    `the tab list should show every open tab, got ${JSON.stringify(tabListTitles)}`,
+  );
+  const tabListActive = await densityPage.$$eval(".tab-list-item", (els) => els.findIndex((el) => el.classList.contains("active")));
+  assert(tabListActive === 1, `the tab list should mark the active tab, got index ${tabListActive}`);
+  await densityPage.click(".tab-list-item:first-child");
+  await new Promise((r) => setTimeout(r, 300));
+  assert(!(await densityPage.$(".tab-list-dropdown")), "picking a tab should close the list");
+  const switchedTitle = await densityPage.$eval(".thread-tab.active .thread-tab-title", (el) => el.textContent);
+  assert(switchedTitle === "復元タブA", `picking from the tab list should switch tabs, got ${switchedTitle}`);
+
+  // レスナビバーを隠すと検索欄ごと消えるので、Ctrl+F が無反応になっていた。
+  // 一時的に出して focus し、Escape で元の隠した状態へ戻ること。
+  assert(!(await densityPage.$(".response-nav-bar")), "the nav bar should stay hidden while the setting is off");
+  await densityPage.keyboard.press("Control+f");
+  await densityPage.waitForSelector(".response-nav-bar");
+  const searchFocused = await densityPage.evaluate(() => document.activeElement?.className ?? "");
+  assert(
+    searchFocused.includes("thread-search"),
+    `Ctrl+F should focus the response search once the bar is shown, got "${searchFocused}"`,
+  );
+  await densityPage.keyboard.press("Escape");
+  await new Promise((r) => setTimeout(r, 250));
+  assert(
+    !(await densityPage.$(".response-nav-bar")),
+    "Escape should fold the temporary nav bar back, leaving the setting untouched",
+  );
+  await densityPage.close();
+  console.log("smoke-ui: tab density and nav bar reveal ok");
+
+  // タブ一覧がレス本文の下に潜らないこと。タブバーの中に absolute で置くと、
+  // ガラスモードでは backdrop-filter の重ね合わせ文脈に閉じ込められて本文に
+  // 隠れ、タブが多いときは .pane.responses の overflow で下が切れていた。
+  // タブを多めに開いた状態で、実際に一番上に描かれているかを当たって確かめる。
+  const manyTabs = JSON.stringify({
+    tabs: Array.from({ length: 14 }, (_, i) => ({
+      threadUrl: `https://mao.5ch.io/test/read.cgi/ngt/${9000 + i}/`,
+      title: `重なり確認スレ ${i + 1}`,
+    })),
+    activeIndex: 1,
+  });
+  for (const prefs of [{}, { glassMode: true }, { glassMode: true, composeDocked: true }]) {
+    const stackPage = await context.newPage();
+    await stackPage.addInitScript(([t, p]) => {
+      localStorage.setItem("desktop.threadTabs.v1", t);
+      localStorage.setItem("desktop.uiJsonMigrated.v1", "1");
+      localStorage.setItem("desktop.layoutPrefs.v1", JSON.stringify({ restoreSession: true, ...p }));
+    }, [manyTabs, prefs]);
+    await stackPage.goto(targetUrl, { waitUntil: "load" });
+    await stackPage.waitForSelector(".row-splitter");
+    await new Promise((r) => setTimeout(r, 800));
+    await stackPage.click(".tab-list-btn");
+    await stackPage.waitForSelector(".tab-list-dropdown");
+    const stack = await stackPage.evaluate(() => {
+      const dd = document.querySelector(".tab-list-dropdown");
+      const r = dd.getBoundingClientRect();
+      const covered = [];
+      for (let f = 0.05; f < 1; f += 0.1) {
+        const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height * f);
+        if (!(hit && hit.closest(".tab-list-dropdown"))) {
+          covered.push(`${f.toFixed(2)}:${hit ? hit.className || hit.tagName : "null"}`);
+        }
+      }
+      let clippedBy = null;
+      for (let el = dd.parentElement; el && el !== document.body; el = el.parentElement) {
+        if (getComputedStyle(el).overflow !== "visible") {
+          if (r.bottom > el.getBoundingClientRect().bottom + 1) clippedBy = el.className;
+          break;
+        }
+      }
+      return { covered, clippedBy, height: Math.round(r.height) };
+    });
+    const label = JSON.stringify(prefs);
+    assert(stack.height > 200, `the tab list should be tall with 14 tabs (${label}), got ${stack.height}px`);
+    assert(stack.covered.length === 0, `the tab list must stay on top (${label}), covered at ${stack.covered.join(", ")}`);
+    assert(!stack.clippedBy, `the tab list must not be clipped (${label}), clipped by ${stack.clippedBy}`);
+    await stackPage.close();
+  }
+  console.log("smoke-ui: tab list stays above the thread body ok");
 
   console.log("smoke-ui: ok");
 } finally {

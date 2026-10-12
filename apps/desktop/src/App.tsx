@@ -681,8 +681,10 @@ const POST_LOG_PREFS_KEY = "desktop.postLogPrefs.v1";
 const THREAD_CATEGORIES_KEY = "desktop.threadCategories.v2";
 const DISMISSED_UPDATE_VERSION_KEY = "desktop.dismissedUpdateVersion.v1";
 const NG_ID_EXPIRE_DAYS_KEY = "desktop.ngIdExpireDays.v1";
-// NG になったレスへ安価を打ったレスも連鎖してあぼーんにする (既定オフ)
+// NG になったレスへ安価を打ったレスも連鎖して NG にする (既定オフ) と、そのモード。
+// 以前はあぼーん固定だったので、既定値はあぼーんのまま互換を保つ。
 const NG_CHAIN_REPLIES_KEY = "desktop.ngChainReplies.v1";
+const NG_CHAIN_REPLIES_MODE_KEY = "desktop.ngChainRepliesMode.v1";
 // スレ内で N レス以上書いた ID を自動 NG にする閾値 (0 = 無効) と、そのモード。
 // 5ch の ID は日替わりなので NG リストには入れず、開いているスレの中だけで効かせる。
 const NG_ID_POST_COUNT_KEY = "desktop.ngIdPostCount.v1";
@@ -705,9 +707,22 @@ const UI_ZOOM_KEY = "desktop.uiZoom.v1";
 // 倍率を掛け戻すと倍率 1 のときの幅に戻るので、それで判定する。
 const NARROW_LAYOUT_MAX_WIDTH = 980;
 const UI_ZOOM_OPTIONS: { value: number; label: string }[] = [
+  { value: 0.8, label: "最小" },
+  { value: 0.9, label: "小" },
   { value: 1, label: "標準" },
   { value: 1.25, label: "大" },
   { value: 1.5, label: "特大" },
+];
+// タブの幅。文字サイズ設定 (板 / スレ / レス) はタブには効かないので別に持つ。
+// "narrow" は max-width と padding と文字サイズをまとめて詰めるので、
+// 「フォントを小さく」「枠を狭く」のどちらの要望もこれ一つで足りる。
+// タブ一覧の幅。開く位置の計算と CSS で同じ値を使う。
+const TAB_LIST_WIDTH = 280;
+const TAB_WIDTH_KEY = "desktop.tabWidth.v1";
+type TabWidthPref = "normal" | "narrow";
+const TAB_WIDTH_OPTIONS: { value: TabWidthPref; label: string }[] = [
+  { value: "normal", label: "標準" },
+  { value: "narrow", label: "狭い" },
 ];
 // タッチ操作モード。タブレットにはカーソルが無いので、タップで合成される
 // mouseover の直後に mouseout が来て、ポップアップが開いた瞬間に閉じる。
@@ -761,12 +776,14 @@ const UI_JSON_SETTINGS_FIELDS: Record<string, string> = {
   myPostRecordDisabled: MY_POST_RECORD_DISABLED_KEY,
   ngIdExpireDays: NG_ID_EXPIRE_DAYS_KEY,
   ngChainReplies: NG_CHAIN_REPLIES_KEY,
+  ngChainRepliesMode: NG_CHAIN_REPLIES_MODE_KEY,
   ngIdPostCount: NG_ID_POST_COUNT_KEY,
   ngIdPostCountMode: NG_ID_POST_COUNT_MODE_KEY,
   hlIdExpireDays: HL_ID_EXPIRE_DAYS_KEY,
   ex0chEnabled: EX0CH_ENABLED_KEY,
   aiPrefs: AI_PREFS_KEY,
   uiZoom: UI_ZOOM_KEY,
+  tabWidth: TAB_WIDTH_KEY,
   touchMode: TOUCH_MODE_KEY,
 };
 // settings.json は core-store が空の {} を作るので、UI_JSON_MIGRATED_KEY とは
@@ -1021,6 +1038,17 @@ export async function bootstrapUiJson(): Promise<void> {
     localStorage.setItem(UI_JSON_MIGRATED_KEY, "1");
   } catch (e) {
     console.warn("failed to save the ui json migration flag", e);
+  }
+  // layout_prefs は専用のコマンド (save_layout_prefs / load_layout_prefs) で書いて
+  // いるので UI_JSON_FILES には入っていない。ただし起動時の復元は localStorage の
+  // 同期読みが本番で、ファイルからの読み込みはタブ復元に間に合わない。localStorage
+  // だけ失われた環境で restoreSession などが既定値に戻ってしまうので、ここで先に
+  // 流し込む。書き込み経路は従来どおりなので、ファイル側が正となる。
+  try {
+    const raw = await invoke<string>("load_layout_prefs");
+    if (raw) localStorage.setItem(LAYOUT_PREFS_KEY, raw);
+  } catch (e) {
+    console.warn("bootstrapUiJson layout_prefs failed", e);
   }
   await bootstrapUiSettings();
 }
@@ -2166,6 +2194,18 @@ export default function App() {
   useEffect(() => {
     saveUiSetting(NG_CHAIN_REPLIES_KEY, String(ngChainReplies));
   }, [ngChainReplies]);
+  // 連鎖させるレスに当てるモード。画像 NG は返信側に当てても意味がないので 2 択。
+  // 未保存のときは従来の挙動 (あぼーん) を維持する。
+  const [ngChainRepliesMode, setNgChainRepliesMode] = useState<NgMode>(() => {
+    try {
+      return localStorage.getItem(NG_CHAIN_REPLIES_MODE_KEY) === "hide" ? "hide" : "abone";
+    } catch {
+      return "abone";
+    }
+  });
+  useEffect(() => {
+    saveUiSetting(NG_CHAIN_REPLIES_MODE_KEY, ngChainRepliesMode);
+  }, [ngChainRepliesMode]);
   const [ngIdPostCount, setNgIdPostCount] = useState<number>(() => {
     try {
       const raw = localStorage.getItem(NG_ID_POST_COUNT_KEY);
@@ -2232,6 +2272,16 @@ export default function App() {
     window.addEventListener("resize", apply);
     return () => window.removeEventListener("resize", apply);
   }, [uiZoom]);
+  const [tabWidth, setTabWidth] = useState<TabWidthPref>(() => {
+    try {
+      return localStorage.getItem(TAB_WIDTH_KEY) === "narrow" ? "narrow" : "normal";
+    } catch {
+      return "normal";
+    }
+  });
+  useEffect(() => {
+    saveUiSetting(TAB_WIDTH_KEY, tabWidth);
+  }, [tabWidth]);
   const [touchModePref, setTouchModePref] = useState<TouchModePref>(() => {
     try {
       const raw = localStorage.getItem(TOUCH_MODE_KEY);
@@ -2371,6 +2421,15 @@ export default function App() {
   const [favBoardButtonEnabled, setFavBoardButtonEnabled] = useState(true);
   const [toolBarVisible, setToolBarVisible] = useState(true);
   const [responseNavBarVisible, setResponseNavBarVisible] = useState(true);
+  // レスナビバーを隠していると検索欄そのものが無くなるので、Ctrl+F が無反応になる。
+  // そのときだけ一時的に出す。設定 (responseNavBarVisible) は書き換えないので、
+  // Escape で閉じれば元の「隠す」状態に戻る。
+  const [responseNavBarForced, setResponseNavBarForced] = useState(false);
+  // 設定で常時表示に戻したら一時表示のフラグは要らない。残しておくと、設定を
+  // オンにしてまたオフにしたときにバーが消えなくなる。
+  useEffect(() => {
+    if (responseNavBarVisible) setResponseNavBarForced(false);
+  }, [responseNavBarVisible]);
   const [statusBarVisible, setStatusBarVisible] = useState(true);
   const [keepSortOnRefresh, setKeepSortOnRefresh] = useState(false);
   const keepSortOnRefreshRef = useRef(keepSortOnRefresh);
@@ -2630,6 +2689,8 @@ export default function App() {
   const tabCacheRef = useRef<Map<string, { responses: ThreadResponseItem[]; selectedResponse: number; scrollResponseNo?: number; newResponseStart?: number | null }>>(new Map());
   const closedTabsRef = useRef<{ threadUrl: string; title: string }[]>([]);
   const tabsRestoredRef = useRef(false);
+  // このセッションで一度でもタブを持ったか (下の保存エフェクトのコメント参照)。
+  const tabsDirtyRef = useRef(false);
   const lastBoardUrlRef = useRef("");
   const pendingLastBoardRef = useRef<{ boardName: string; url: string } | null>(null);
   const [selectedBoard, setSelectedBoard] = useState("Favorite");
@@ -2667,6 +2728,14 @@ export default function App() {
   const tabDragRef = useRef<{ srcIndex: number; startX: number } | null>(null);
   const tabDragOverRef = useRef<number | null>(null);
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; tabIndex: number } | null>(null);
+  // 開いているタブの一覧。タブが多いと Ctrl+←/→ で 1 つずつ送るのが大変なので、
+  // ここから目的のタブへ直接飛べるようにする。
+  // タブバーの中に absolute で置くと 2 つ理由で埋もれる: ガラスモードのタブバーは
+  // backdrop-filter で重ね合わせ文脈を作るので中の z-index が外に効かず、
+  // .pane.responses の overflow でタブが多いときに下が切れる。他のメニューと同じく
+  // シェル直下の fixed にして、座標を実測から出す。
+  const [tabList, setTabList] = useState<{ x: number; y: number } | null>(null);
+  const tabListRef = useRef<HTMLDivElement | null>(null);
   const tabMenuRef = useRef<HTMLDivElement>(null);
   // 板ボタンバー「★お気に入り」の右クリックメニュー
   const [favBoardMenu, setFavBoardMenu] = useState<{ x: number; y: number } | null>(null);
@@ -6712,8 +6781,8 @@ export default function App() {
         map.set(r.id, strongerNgMode(map.get(r.id) ?? null, ngIdPostCountMode));
       }
     }
-    // 4 パス目: 連鎖あぼーん。NG (非表示 / あぼーん) になったレスへ安価を打ったレスも
-    // あぼーんにする。responseItems は昇順なので、返信の返信にも順に波及する。
+    // 4 パス目: NG レスへの返信の連鎖。NG (非表示 / あぼーん) になったレスへ安価を打った
+    // レスも NG にする。responseItems は昇順なので、返信の返信にも順に波及する。
     // >>1 への安価は対象外 (スレ主のレスが NG だと全レスが消えてしまうため)。
     if (ngChainReplies) {
       for (const r of responseItems) {
@@ -6722,12 +6791,12 @@ export default function App() {
         if (mode !== "hide" && mode !== "abone") continue;
         for (const from of ngChainRefMap.get(r.id) ?? []) {
           if (from === r.id || from === 1) continue;
-          map.set(from, strongerNgMode(map.get(from) ?? null, "abone"));
+          map.set(from, strongerNgMode(map.get(from) ?? null, ngChainRepliesMode));
         }
       }
     }
     return map;
-  }, [responseItems, ngFilters, ngChainReplies, ngChainRefMap, ngIdPostCount, ngIdPostCountMode]);
+  }, [responseItems, ngFilters, ngChainReplies, ngChainRepliesMode, ngChainRefMap, ngIdPostCount, ngIdPostCountMode]);
   const ngFilteredCount = ngResultMap.size;
 
   // 折りたたみ対象のレスと、その実測値 (「続きを読む」のラベルに出す)。
@@ -7200,6 +7269,7 @@ export default function App() {
   useMenuReclamp(responseMenu, setResponseMenu, responseMenuRef);
   useMenuReclamp(threadMenu, setThreadMenu, threadMenuRef);
   useMenuReclamp(tabMenu, setTabMenu, tabMenuRef);
+  useMenuReclamp(tabList, setTabList, tabListRef);
   useMenuReclamp(favBoardMenu, setFavBoardMenu, favBoardMenuRef);
   useMenuReclamp(watchoiMenu, setWatchoiMenu, watchoiMenuRef);
   useMenuReclamp(idMenu, setIdMenu, idMenuRef);
@@ -7831,6 +7901,14 @@ export default function App() {
         if (responseReloadMenuOpen) { setResponseReloadMenuOpen(false); return; }
         if (threadFilterMenuOpen) { setThreadFilterMenuOpen(false); return; }
         if (openMenu) { setOpenMenu(null); return; }
+        if (tabList) { setTabList(null); return; }
+        // Ctrl+F で出した一時表示を畳む。検索語を残すと、見えないフィルタが
+        // 掛かったままになって何件か消えている理由が分からなくなる。
+        if (responseNavBarForced) {
+          setResponseNavBarForced(false);
+          setResponseSearchQueryTracked("");
+          return;
+        }
       }
       const isRefreshShortcut = e.key === "F5"
         || ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "r");
@@ -7929,7 +8007,14 @@ export default function App() {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
         if (focusedPane === "responses" && activeTabIndex >= 0 && threadTabs.length > 0) {
-          responseSearchRef.current?.focus();
+          // レスナビバーを隠しているときは検索欄が存在しないので、まず出す。
+          // 出てから focus するので、描画を 1 フレーム待つ。
+          if (!responseSearchRef.current) {
+            setResponseNavBarForced(true);
+            requestAnimationFrame(() => responseSearchRef.current?.focus());
+            return;
+          }
+          responseSearchRef.current.focus();
         } else {
           threadSearchRef.current?.focus();
         }
@@ -7959,7 +8044,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedThread, selectedResponse, visibleThreadItems, responseItems, activeTabIndex, threadTabs, responseReloadMenuOpen, threadFilterMenuOpen, focusedPane]);
+  }, [selectedThread, selectedResponse, visibleThreadItems, responseItems, activeTabIndex, threadTabs, responseReloadMenuOpen, threadFilterMenuOpen, focusedPane, tabList, responseNavBarForced]);
 
   useEffect(() => {
     if (paneLayoutMode !== "river") setThreadTitlePopup(null);
@@ -8387,6 +8472,14 @@ export default function App() {
 
   useEffect(() => {
     if (!tabsRestoredRef.current) return;
+    // 起動直後は、復元した setThreadTabs がまだ反映されていない空の状態で走る。
+    // ここで書くと保存済みのタブを空で上書きしてしまう (復元しない設定のときは
+    // 上書きしたまま誰も戻さないので、後から設定を ON にしても何も戻らなくなる)。
+    // StrictMode では effect が 2 回走るので実行回数では数えず、「このセッションで
+    // まだ一度もタブを持っていない」状態の空書き込みだけを落とす。タブを一度でも
+    // 持てば以降は空も書くので、全部閉じた状態はそのまま保存される。
+    if (threadTabs.length === 0 && !tabsDirtyRef.current) return;
+    tabsDirtyRef.current = true;
     saveUiJson(THREAD_TABS_KEY, JSON.stringify({ tabs: threadTabs, activeIndex: activeTabIndex }));
   }, [threadTabs, activeTabIndex]);
 
@@ -10247,9 +10340,13 @@ export default function App() {
       }}
     >
       <strong>書き込み</strong>
-      <span className="compose-target" title={threadTabs[activeTabIndex]?.threadUrl ?? threadUrl}>
-        {threadTabs[activeTabIndex]?.title ?? threadUrl}
-      </span>
+      {/* 固定しているときは投稿先がすぐ上に見えているので、スレタイは出さない。
+          ここに行を食わせないことでヘッダを 1 行分薄くできる。 */}
+      {composeDocked ? null : (
+        <span className="compose-target" title={threadTabs[activeTabIndex]?.threadUrl ?? threadUrl}>
+          {threadTabs[activeTabIndex]?.title ?? threadUrl}
+        </span>
+      )}
       <button
         className={`compose-header-icon${composeDocked ? " active-toggle" : ""}`}
         aria-pressed={composeDocked}
@@ -10261,7 +10358,13 @@ export default function App() {
       ) : (
         <button className="compose-header-icon" title="サイズと位置をリセット" onClick={() => { setComposeSize(null); setComposePos(null); }}><RotateCcw size={14} /></button>
       )}
-      <button onClick={() => { setComposeOpen(false); setComposeResult(null); setUploadPanelOpen(false); setUploadResults([]); setEmojiPickerTarget((t) => (t === "compose" ? null : t)); }}>閉じる</button>
+      {/* 固定時のヘッダ高さを決めていたのはこのボタン (素の button は padding 6px /
+          文字 12px)。アイコンに替えると他のヘッダアイコンと同じ高さに収まる。 */}
+      <button
+        className={composeDocked ? "compose-header-icon" : undefined}
+        title={composeDocked ? "書き込み欄を閉じる" : undefined}
+        onClick={() => { setComposeOpen(false); setComposeResult(null); setUploadPanelOpen(false); setUploadResults([]); setEmojiPickerTarget((t) => (t === "compose" ? null : t)); }}
+      >{composeDocked ? <X size={14} /> : "閉じる"}</button>
     </header>
     <div className="compose-grid">
       <label>
@@ -10525,6 +10628,7 @@ export default function App() {
         setThreadMenu(null);
         setResponseMenu(null);
         setTabMenu(null);
+        setTabList(null);
         setFavBoardMenu(null);
         setOpenMenu(null);
         setIdPopup(null);
@@ -11505,7 +11609,7 @@ export default function App() {
               </span>
             </div>
           )}
-          <div className="thread-tab-bar-wrap">
+          <div className={`thread-tab-bar-wrap${tabWidth === "narrow" ? " tabs-narrow" : ""}`}>
           <div className="thread-tab-bar" ref={tabBarRef}>
             {threadTabs.length === 0 && (
               <div className="thread-tab placeholder active">
@@ -11602,6 +11706,20 @@ export default function App() {
           </div>
           <button className="tab-scroll-btn" onClick={() => { if (tabBarRef.current) tabBarRef.current.scrollLeft -= 150; }} title="左スクロール"><ChevronLeft size={14} /></button>
           <button className="tab-scroll-btn" onClick={() => { if (tabBarRef.current) tabBarRef.current.scrollLeft += 150; }} title="右スクロール"><ChevronRight size={14} /></button>
+          {threadTabs.length > 0 && (
+            <button
+              className="tab-scroll-btn tab-list-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (tabList) { setTabList(null); return; }
+                // ボタンの下に右端を揃えて開く。実寸でのクランプは useMenuReclamp が行う。
+                const r = e.currentTarget.getBoundingClientRect();
+                setTabList(clampMenuPosition(r.right - TAB_LIST_WIDTH, r.bottom, TAB_LIST_WIDTH, Math.min(320, 8 + threadTabs.length * 24)));
+              }}
+              title="開いているタブの一覧"
+              aria-expanded={tabList !== null}
+            ><ChevronDown size={14} /></button>
+          )}
           </div>
           <div
             ref={responseBodyRef}
@@ -12498,7 +12616,7 @@ export default function App() {
               </div>
             )}
             </div>
-            {responseNavBarVisible && (
+            {(responseNavBarVisible || responseNavBarForced) && (
             <div className="response-nav-bar">
               <span className="nav-info">
                 着:{visibleResponseItems.length}{ngFilteredCount > 0 ? `(NG${ngFilteredCount})` : ""}
@@ -12915,10 +13033,19 @@ export default function App() {
           <div className="ng-panel-options">
             <label
               className="ng-chain-setting"
-              title="非表示・あぼーんになったレスへ安価 (>>N) を打ったレスも、あぼーんにします。返信の返信にも波及します。>>1 への安価と範囲アンカー (>>1-100) は対象外です。"
+              title="非表示・あぼーんになったレスへ安価 (>>N) を打ったレスも NG にします。返信の返信にも波及します。>>1 への安価と範囲アンカー (>>1-100) は対象外です。"
             >
               <input type="checkbox" checked={ngChainReplies} onChange={(e) => setNgChainReplies(e.target.checked)} />
-              NGレスへの返信も連鎖あぼーん
+              NGレスへの返信も連鎖
+              <select
+                className="ng-mode-select"
+                value={ngChainRepliesMode}
+                disabled={!ngChainReplies}
+                onChange={(e) => setNgChainRepliesMode(e.target.value as NgMode)}
+              >
+                <option value="hide">非表示</option>
+                <option value="abone">あぼーん</option>
+              </select>
             </label>
             <label
               className="ng-postcount-setting"
@@ -13649,6 +13776,35 @@ export default function App() {
           <button onClick={() => { openAllUnreadFavoritesFromAnywhere(); setFavBoardMenu(null); }}>新着をすべて開く</button>
         </div>
       )}
+      {tabList && threadTabs.length > 0 && (
+        <div
+          ref={tabListRef}
+          className="tab-list-dropdown"
+          style={{ left: tabList.x, top: tabList.y }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          {threadTabs.map((tab, i) => (
+            <div
+              key={tab.threadUrl}
+              className={`tab-list-item${i === activeTabIndex ? " active" : ""}`}
+              title={tab.title || tab.threadUrl}
+              onClick={() => {
+                setTabList(null);
+                onTabClick(i);
+                setTimeout(() => {
+                  responseScrollRef.current?.focus({ preventScroll: true });
+                }, 60);
+              }}
+            >
+              <span className="tab-list-item-title">{tab.title || tab.threadUrl}</span>
+              {tabCacheRef.current.has(tab.threadUrl) && (
+                <span className="tab-list-item-count">({tabCacheRef.current.get(tab.threadUrl)!.responses.length})</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       {tabMenu && (
         <div ref={tabMenuRef} className="thread-menu tab-menu" style={{ left: tabMenu.x, top: tabMenu.y }} onClick={(e) => e.stopPropagation()}>
           <button onClick={() => { closeTab(tabMenu.tabIndex); setTabMenu(null); }}>タブを閉じる</button>
@@ -14092,6 +14248,7 @@ export default function App() {
                 ["Ctrl+Shift+↑/↓", "レス選択の上下移動"],
                 ["Ctrl+Alt+←/→", "スレペイン幅の調整"],
                 ["Ctrl+Alt+↑/↓", "レス分割比の調整"],
+                ["Ctrl+F", "検索欄へフォーカス (レスナビバーを隠していても出す)"],
                 ["Ctrl+E", "書き込みウィンドウを開く"],
                 ["Ctrl+1", "ツールバーの表示/非表示"],
                 ["Ctrl+2", "レスナビバーの表示/非表示"],
@@ -14217,6 +14374,19 @@ export default function App() {
                       <option key={o.value} value={String(o.value)}>{o.label}</option>
                     ))}
                   </select>
+                </label>
+                <label className="settings-row">
+                  <span>タブ幅</span>
+                  <select
+                    className="tab-width-select"
+                    value={tabWidth}
+                    onChange={(e) => setTabWidth(e.target.value as TabWidthPref)}
+                  >
+                    {TAB_WIDTH_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                  <span className="settings-hint">「狭い」はタブの文字と枠を詰めて、一度に見えるタブを増やします</span>
                 </label>
                 <label className="settings-row">
                   <span>タッチ操作</span>
