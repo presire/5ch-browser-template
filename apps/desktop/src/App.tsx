@@ -4038,8 +4038,23 @@ export default function App() {
   // レスを選択しつつ、autoScrollToSelected の設定に関わらず必ず表示位置までスクロールする。
   // Top/New/続き/End/ジャンプ など明示的な移動操作用。
   const selectResponseAndScroll = (id: number) => {
-    forceResponseScrollRef.current = true;
+    // 進行中の読書位置復元・末尾追従ループを打ち切る (scrollResponsesToTop と同じ seq 更新)。
+    // scrollToResponseNo は最大 2 秒かけて再アンカーし続けるので、タブに戻った直後に
+    // New や「続き」を押すと、飛んだ先から元の読書位置へ引き戻されていた。
+    scrollAnchorSeqRef.current++;
+    // 選択の変化に頼らず自分でスクロールする。setSelectedResponse だけでは、すでに同じ
+    // レスを選択していると state が変わらず selectedResponse の effect が起動せず、
+    // New を 2 回目以降押しても「ここから新着」へまったく動かなかった。
+    // 着地も上端合わせになる。effect の scrollIntoView({ block: "nearest" }) は対象が
+    // 画面より下にあると下端合わせになるため、新着の数レス手前に着地していた。
+    forceResponseScrollRef.current = false;
     setSelectedResponse(id);
+    if (id <= 1) {
+      const container = responseScrollRef.current;
+      if (container) container.scrollTop = 0;
+    } else {
+      scrollToResponseNo(id);
+    }
   };
 
   const toggleCategory = (name: string) => {
@@ -4099,7 +4114,7 @@ export default function App() {
       if (existingIndex === activeTabIndex) {
         setThreadUrl(url);
         setLocationInput(url);
-        void fetchResponsesFromCurrent(url, { keepSelection: true });
+        void fetchResponsesFromCurrent(url, { keepSelection: true, isRefresh: true });
         return;
       }
       if (activeTabIndex >= 0 && activeTabIndex < threadTabs.length) {
@@ -4857,7 +4872,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startupBoardFetchDone, favorites.threads, recentOpenedThreads, recentPostedThreads]);
 
-  const fetchResponsesFromCurrent = async (targetThreadUrl?: string, opts?: { keepSelection?: boolean; resetScroll?: boolean }) => {
+  const fetchResponsesFromCurrent = async (targetThreadUrl?: string, opts?: { keepSelection?: boolean; resetScroll?: boolean; isRefresh?: boolean }) => {
     const url = (targetThreadUrl ?? threadUrl).trim();
     if (!url) return;
     if (!/\/test\/read\.cgi\/[^/]+\/[^/]+/.test(new URL(url, "https://dummy").pathname)) {
@@ -4895,10 +4910,11 @@ export default function App() {
         // auto-refresh: keep current selection, don't reset
         // scroll to first new response if there are new ones
         if (prevCount > 0 && rows.length > prevCount) {
-          setTimeout(() => {
-            const newEl = responseScrollRef.current?.querySelector(`[data-response-no="${prevCount + 1}"]`);
-            if (newEl) newEl.scrollIntoView({ block: "start" });
-          }, 50);
+          // scrollIntoView を一度呼ぶだけだと、読書位置の復元 (scrollToResponseNo) が
+          // 最大 2 秒かけて再アンカーし続けるため新着位置から引き戻されていた。
+          // スレ一覧から開いているスレへ戻ると、復元と新着ジャンプが必ずこの順で重なる。
+          // scrollToResponseNo は進行中の再アンカーを打ち切るので、こちらが後勝ちになる。
+          scrollToResponseNo(prevCount + 1);
         }
       } else if (opts?.resetScroll) {
         setSelectedResponse(rows.length > 0 ? rows[0].responseNo : 1);
@@ -4965,6 +4981,15 @@ export default function App() {
       if (prevCount > 0 && rows.length > prevCount) {
         setNewResponseStart(prevCount + 1);
         setStatus(`新着 ${rows.length - prevCount} レス (${rows.length})`);
+      } else if (opts?.keepSelection && !opts?.isRefresh) {
+        // 自動更新の空振りと URL 欄からの表示だけは既存のマーカーを消さない。
+        // 読んでいる最中にタイマーが一度空振りしただけで、「ここから新着」と
+        // New ボタンが勝手に消えていたため。
+        // レスが減った (dat の取り直し) ときだけ範囲外になるので畳む。
+        // 新着取得 (isRefresh: 新着取得ボタン / タブのダブルクリック / スレ一覧からの選び直し) は
+        // 0 件ならマーカーを消す — 下の else へ落とす。
+        setNewResponseStart((prev) => (prev !== null && prev <= rows.length ? prev : null));
+        setStatus(`responses loaded: ${rows.length}`);
       } else {
         setNewResponseStart(null);
         setStatus(`responses loaded: ${rows.length}`);
@@ -7498,7 +7523,7 @@ export default function App() {
 
   const fetchNewResponses = () => {
     runOnActiveThread((url) => {
-      void fetchResponsesFromCurrent(url, { keepSelection: true }).then(() => {
+      void fetchResponsesFromCurrent(url, { keepSelection: true, isRefresh: true }).then(() => {
         setTimeout(() => {
           responseScrollRef.current?.focus({ preventScroll: true });
         }, 60);
@@ -11483,7 +11508,9 @@ export default function App() {
                         const alreadyOpen = threadTabs.some((tab) => tab.threadUrl === clickedUrl);
                         openThreadInTab(clickedUrl, t.title);
                         if (alreadyOpen && !isActiveTab) {
-                          void fetchResponsesFromCurrent(clickedUrl, { keepSelection: true });
+                          // スレ一覧から選び直すのも新着取得扱いにする。
+                          // 新着 0 件なら「ここから新着」と New を消す (isRefresh)。
+                          void fetchResponsesFromCurrent(clickedUrl, { keepSelection: true, isRefresh: true });
                         }
                         // persist read status
                         if (showFavoritesOnly || showRecentOpenedOnly || showRecentPostedOnly || showThreadSearchOnly) {
@@ -11664,7 +11691,7 @@ export default function App() {
                   }, 60);
                 }}
                 onDoubleClick={() => {
-                  void fetchResponsesFromCurrent(tab.threadUrl, { keepSelection: true }).then(() => {
+                  void fetchResponsesFromCurrent(tab.threadUrl, { keepSelection: true, isRefresh: true }).then(() => {
                     setTimeout(() => {
                       responseScrollRef.current?.focus({ preventScroll: true });
                     }, 60);
