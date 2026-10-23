@@ -3171,6 +3171,10 @@ export default function App() {
     if (responseNavBarVisible) setResponseNavBarForced(false);
   }, [responseNavBarVisible]);
   const [statusBarVisible, setStatusBarVisible] = useState(true);
+  // スレタブバー (タブ + 左右スクロール + タブ一覧の ▼ + 段数つまみ) をまとめて隠すか。
+  // 隠している間はタブの右クリックメニューが出ないのでロックの掛け外しはできないが、
+  // 閉じるのを拒否する判定は closeTab() 側なのでロック自体は効き続ける。
+  const [tabBarVisible, setTabBarVisible] = useState(true);
   const [keepSortOnRefresh, setKeepSortOnRefresh] = useState(false);
   const keepSortOnRefreshRef = useRef(keepSortOnRefresh);
   keepSortOnRefreshRef.current = keepSortOnRefresh;
@@ -3606,6 +3610,9 @@ export default function App() {
   const [boardsFontSize, setBoardsFontSize] = useState(12);
   const [threadsFontSize, setThreadsFontSize] = useState(12);
   const [responsesFontSize, setResponsesFontSize] = useState(12);
+  // スレタブの文字サイズ。板 / スレ / レスの文字サイズはタブに効かないので別に持つ。
+  // あちらは 12px 起点だがタブの CSS は 11px 起点なので、既定も 11 = 従来どおりの見た目。
+  const [tabFontSize, setTabFontSize] = useState(11);
   type PaneName = "boards" | "threads" | "responses";
   const [focusedPane, setFocusedPane] = useState<PaneName>("responses");
   const [fontFamily, setFontFamily] = useState("");
@@ -8669,9 +8676,14 @@ export default function App() {
   const beginTabRowsResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
-    // 段の高さの実体は CSS の --tab-row-h。タブ幅「狭い」で変わるので毎回読む。
+    // 段の高さの実体は CSS の --tab-row-h。タブ幅「狭い」とタブの文字サイズで変わるので
+    // 毎回読む。ただし --tab-row-h は calc() 入りのカスタムプロパティで、
+    // getComputedStyle では px に解決されず calc(22px + 0px) のまま返ってくるため、
+    // 実際に並んでいるタブの高さを測る。つまみは多段表示のときしか出さず、
+    // 多段のタブは height: var(--tab-row-h) かつ border-box なので段の高さそのもの。
     const wrap = event.currentTarget.previousElementSibling as HTMLElement | null;
-    const rowH = wrap ? parseFloat(getComputedStyle(wrap).getPropertyValue("--tab-row-h")) : NaN;
+    const tabEl = wrap?.querySelector(".thread-tab") as HTMLElement | null;
+    const rowH = tabEl ? tabEl.getBoundingClientRect().height : NaN;
     resizeDragRef.current = {
       mode: "tab-rows",
       startY: event.clientY,
@@ -8783,11 +8795,17 @@ export default function App() {
         return;
       }
       if (isTypingTarget(e.target)) return;
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "1" || e.key === "2" || e.key === "3")) {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "1" || e.key === "2" || e.key === "3" || e.key === "4")) {
         e.preventDefault();
         if (e.key === "1") setToolBarVisible((v) => !v);
         else if (e.key === "2") setResponseNavBarVisible((v) => !v);
-        else setStatusBarVisible((v) => !v);
+        else if (e.key === "3") setStatusBarVisible((v) => !v);
+        else {
+          // タブ一覧はタブバーの外に浮かせてあるので、閉じないままバーを消すと
+          // 開く手段 (▼) が無い一覧だけが残る。
+          setTabList(null);
+          setTabBarVisible((v) => !v);
+        }
         return;
       }
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "r") {
@@ -8941,6 +8959,7 @@ export default function App() {
           boardsFontSize?: number;
           threadsFontSize?: number;
           responsesFontSize?: number;
+          tabFontSize?: number;
           darkMode?: boolean;
           glassMode?: boolean;
           glassLite?: boolean;
@@ -8952,6 +8971,7 @@ export default function App() {
           toolBarVisible?: boolean;
           responseNavBarVisible?: boolean;
           statusBarVisible?: boolean;
+          tabBarVisible?: boolean;
           keepSortOnRefresh?: boolean;
           composeSubmitKey?: "shift" | "ctrl";
           typingConfettiEnabled?: boolean;
@@ -9025,6 +9045,7 @@ export default function App() {
         setBoardsFontSize(typeof parsed.boardsFontSize === "number" ? parsed.boardsFontSize : fallbackFs);
         setThreadsFontSize(typeof parsed.threadsFontSize === "number" ? parsed.threadsFontSize : fallbackFs);
         setResponsesFontSize(typeof parsed.responsesFontSize === "number" ? parsed.responsesFontSize : fallbackFs);
+        if (typeof parsed.tabFontSize === "number") setTabFontSize(clamp(Math.round(parsed.tabFontSize), 8, 20));
         if (typeof parsed.darkMode === "boolean") setDarkMode(parsed.darkMode);
         if (typeof parsed.glassMode === "boolean") setGlassMode(parsed.glassMode);
         if (typeof parsed.glassLite === "boolean") setGlassLite(parsed.glassLite);
@@ -9038,6 +9059,7 @@ export default function App() {
         if (typeof parsed.toolBarVisible === "boolean") setToolBarVisible(parsed.toolBarVisible);
         if (typeof parsed.responseNavBarVisible === "boolean") setResponseNavBarVisible(parsed.responseNavBarVisible);
         if (typeof parsed.statusBarVisible === "boolean") setStatusBarVisible(parsed.statusBarVisible);
+        if (typeof parsed.tabBarVisible === "boolean") setTabBarVisible(parsed.tabBarVisible);
         if (typeof parsed.keepSortOnRefresh === "boolean") setKeepSortOnRefresh(parsed.keepSortOnRefresh);
         if (parsed.composeSubmitKey === "shift" || parsed.composeSubmitKey === "ctrl") setComposeSubmitKey(parsed.composeSubmitKey);
         if (typeof parsed.typingConfettiEnabled === "boolean") setTypingConfettiEnabled(parsed.typingConfettiEnabled);
@@ -10013,6 +10035,7 @@ export default function App() {
       boardsFontSize,
       threadsFontSize,
       responsesFontSize,
+      tabFontSize,
       darkMode,
       glassMode,
       glassLite,
@@ -10024,6 +10047,7 @@ export default function App() {
       toolBarVisible,
       responseNavBarVisible,
       statusBarVisible,
+      tabBarVisible,
       keepSortOnRefresh,
       composeSubmitKey,
       typingConfettiEnabled,
@@ -10076,7 +10100,7 @@ export default function App() {
       layoutPrefsPendingRef.current = payload;
       flushLayoutPrefs();
     }
-  }, [layoutPrefsLoaded, boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, threadPaneAutoToggle, threadPaneBackRestore, boardsFontSize, threadsFontSize, responsesFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, favBoardButtonEnabled, toolBarVisible, responseNavBarVisible, statusBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, typingComboEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, hoverPreviewFitEnabled, hotResponseThreshold, hotResponseRedEnabled, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, thumbAutoLoadEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, disabledShortcuts, composeSize, composePos, composeDocked, composeDockPx, tabRows, threadColVisible, threadColOrder, responseBodyBottomPad, collapseLongEnabled, collapseLongLines, collapseLongChars, collapsePreviewChars, responseMetaInline, showResponseMail, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
+  }, [layoutPrefsLoaded, boardPanePx, threadPanePx, responseTopRatio, paneLayoutMode, boardPaneHidden, threadPaneHidden, threadPaneAutoToggle, threadPaneBackRestore, boardsFontSize, threadsFontSize, responsesFontSize, tabFontSize, darkMode, glassMode, glassLite, glassUltraLite, fontFamily, threadColWidths, showBoardButtons, favBoardButtonEnabled, toolBarVisible, responseNavBarVisible, statusBarVisible, tabBarVisible, keepSortOnRefresh, composeSubmitKey, typingConfettiEnabled, typingComboEnabled, imageSizeLimit, hoverPreviewEnabled, idPopupEnabled, selectedBoard, hoverPreviewDelay, hoverPreviewFitEnabled, hotResponseThreshold, hotResponseRedEnabled, thumbSize, thumbMaskEnabled, thumbMaskStrength, thumbMaskForceOnStart, youtubeThumbsEnabled, thumbAutoLoadEnabled, restoreSession, autoRefreshInterval, alwaysOnTop, mouseGestureEnabled, gestureBindings, threadAgeColorEnabled, disabledShortcuts, composeSize, composePos, composeDocked, composeDockPx, tabRows, threadColVisible, threadColOrder, responseBodyBottomPad, collapseLongEnabled, collapseLongLines, collapseLongChars, collapsePreviewChars, responseMetaInline, showResponseMail, titleClickRefresh, autoScrollSpeed, autoScrollToSelected, wheelRowScrollEnabled, wheelScrollRows]);
 
   useEffect(() => {
     if (!typingConfettiEnabled && !typingComboEnabled) return;
@@ -11667,6 +11691,8 @@ export default function App() {
             { text: "sep" },
             { text: showBoardButtons ? "板ボタンを非表示" : "板ボタンを表示", action: () => setShowBoardButtons((v) => !v) },
             { text: "sep" },
+            { text: tabBarVisible ? "スレタブを非表示" : "スレタブを表示", action: () => { setTabList(null); setTabBarVisible((v) => !v); } },
+            { text: "sep" },
             { text: alwaysOnTop ? "最前面表示を解除" : "最前面に固定", action: () => setAlwaysOnTop((v) => !v) },
             { text: "sep" },
             { text: mouseGestureEnabled ? "マウスジェスチャを無効化" : "マウスジェスチャを有効化", action: () => setMouseGestureEnabled((v) => !v) },
@@ -12590,9 +12616,14 @@ export default function App() {
               </span>
             </div>
           )}
+          {/* 画面を縦に広く使いたいときはタブバーごと畳める (Ctrl+4)。左右スクロールと
+              タブ一覧の ▼ もバーの中なので一緒に消える。タブの切替は Ctrl+Tab /
+              Ctrl+←→ / ジェスチャで続けられるし、読んでいるスレはこの上の
+              スレタイトルバーに出たままになる。 */}
+          {tabBarVisible && (
           <div
             className={`thread-tab-bar-wrap${tabWidth === "narrow" ? " tabs-narrow" : ""}${tabMultiRow ? " tabs-multi-row" : ""}`}
-            style={{ "--tab-rows": tabRows } as React.CSSProperties}
+            style={{ "--tab-rows": tabRows, "--tab-fs-delta": `${tabFontSize - 11}px` } as React.CSSProperties}
           >
           <div className="thread-tab-bar" ref={tabBarRef}>
             {threadTabs.length === 0 && (
@@ -12697,7 +12728,7 @@ export default function App() {
                     title="ロック中 (クリックで解除)"
                     onClick={(e) => { e.stopPropagation(); toggleTabLock(i); }}
                   >
-                    <Lock size={11} />
+                    <Lock size={tabFontSize} />
                   </button>
                 ) : (
                   <button
@@ -12732,9 +12763,10 @@ export default function App() {
             ><ChevronDown size={14} /></button>
           )}
           </div>
+          )}
           {/* 多段のときだけ段数を変えるつまみを出す。1 段では掴む意味がないうえ、
               つまみ自体が 6px ぶん縦を食うので出さない。 */}
-          {tabMultiRow && (
+          {tabBarVisible && tabMultiRow && (
             <div
               className="row-splitter tab-rows-splitter"
               role="separator"
@@ -15327,6 +15359,7 @@ export default function App() {
                 ["Ctrl+1", "ツールバーの表示/非表示"],
                 ["Ctrl+2", "レスナビバーの表示/非表示"],
                 ["Ctrl+3", "ステータスバーの表示/非表示"],
+                ["Ctrl+4", "スレタブバーの表示/非表示"],
                 ["R", "選択レスを引用して書き込み", "key-r-quote"],
                 ["A", "オートスクロールのオン/オフ", "key-a-autoscroll"],
                 ["Escape", "ライトボックス/ダイアログを閉じる"],
@@ -15522,6 +15555,11 @@ export default function App() {
                   <input type="number" value={responsesFontSize} min={8} max={20} onChange={(e) => setResponsesFontSize(Number(e.target.value))} />
                 </label>
                 <label className="settings-row">
+                  <span>文字サイズ (タブ)</span>
+                  <input type="number" className="tab-font-size-input" value={tabFontSize} min={8} max={20} onChange={(e) => setTabFontSize(clamp(Math.round(Number(e.target.value) || 11), 8, 20))} />
+                  <span className="settings-hint">スレタブだけの文字サイズ。タブの高さと多段の段の高さも一緒に伸びます</span>
+                </label>
+                <label className="settings-row">
                   <span>自動更新間隔 (秒)</span>
                   <input type="number" value={autoRefreshInterval} min={10} max={600} onChange={(e) => setAutoRefreshInterval(Number(e.target.value))} />
                 </label>
@@ -15564,6 +15602,11 @@ export default function App() {
                 <label className="settings-row">
                   <input type="checkbox" checked={responseNavBarVisible} onChange={(e) => setResponseNavBarVisible(e.target.checked)} />
                   <span>レスナビバー</span>
+                </label>
+                <label className="settings-row">
+                  <input type="checkbox" checked={tabBarVisible} onChange={(e) => { setTabList(null); setTabBarVisible(e.target.checked); }} />
+                  <span>スレタブバー</span>
+                  <span className="settings-hint">Ctrl+4 で切替。隠している間はタブのロックを掛け外しできません</span>
                 </label>
                 <label className="settings-row">
                   <input type="checkbox" checked={composeDocked} onChange={(e) => setComposeDocked(e.target.checked)} />
